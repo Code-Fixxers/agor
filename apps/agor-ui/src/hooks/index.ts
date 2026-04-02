@@ -14,6 +14,7 @@ export * from './useBoardActions';
 export * from './useLocalStorage';
 export * from './useMessages';
 export * from './usePermissions';
+export * from './usePWAInstall';
 export * from './useRecentBoards';
 export * from './useSessionActions';
 export * from './useSettingsRoute';
