@@ -29,6 +29,13 @@ if (import.meta.hot) {
   });
 }
 
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch((error) => {
+      console.warn('[PWA] Service worker registration failed:', error);
+    });
+  });
+}
 createRoot(document.getElementById('root')!).render(
   // Temporarily disable StrictMode to avoid double socket connections in dev
   // TODO: Make useAgorClient StrictMode-compatible by handling double-mount properly
