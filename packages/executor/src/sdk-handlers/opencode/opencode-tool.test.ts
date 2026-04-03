@@ -586,6 +586,76 @@ describe('OpenCodeTool', () => {
     });
   });
 
+  describe('Response content mapping', () => {
+    it('should treat reasoning-only responses as regular text blocks', () => {
+      const tool = new OpenCodeTool(
+        { enabled: true, serverUrl: 'http://localhost:4096' },
+        mockMessagesService
+      );
+
+      const result = (tool as any).buildContentBlocksFromParts([
+        {
+          type: 'reasoning',
+          text: 'Final answer from model',
+        },
+      ]);
+
+      expect(result.contentBlocks).toEqual([
+        {
+          type: 'text',
+          text: 'Final answer from model',
+        },
+      ]);
+    });
+
+    it('should keep reasoning as thinking when text blocks exist', () => {
+      const tool = new OpenCodeTool(
+        { enabled: true, serverUrl: 'http://localhost:4096' },
+        mockMessagesService
+      );
+
+      const result = (tool as any).buildContentBlocksFromParts([
+        {
+          type: 'reasoning',
+          text: 'Internal reasoning',
+        },
+        {
+          type: 'text',
+          text: 'User-visible answer',
+        },
+      ]);
+
+      expect(result.contentBlocks).toEqual([
+        {
+          type: 'thinking',
+          text: 'Internal reasoning',
+        },
+        {
+          type: 'text',
+          text: 'User-visible answer',
+        },
+      ]);
+    });
+
+    it('should prefer text parts for display text and fall back to reasoning', () => {
+      const tool = new OpenCodeTool(
+        { enabled: true, serverUrl: 'http://localhost:4096' },
+        mockMessagesService
+      );
+
+      const withText = (tool as any).extractDisplayTextFromParts([
+        { type: 'reasoning', text: 'Reasoning text' },
+        { type: 'text', text: 'Final response text' },
+      ]);
+      expect(withText).toBe('Final response text');
+
+      const reasoningOnly = (tool as any).extractDisplayTextFromParts([
+        { type: 'reasoning', text: 'Reasoning as fallback output' },
+      ]);
+      expect(reasoningOnly).toBe('Reasoning as fallback output');
+    });
+  });
+
   describe('createSession with workingDirectory', () => {
     it('should use directory-scoped client when workingDirectory is provided', async () => {
       const tool = new OpenCodeTool(
