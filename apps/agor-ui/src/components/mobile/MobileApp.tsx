@@ -6,6 +6,7 @@ import { Route, Routes } from 'react-router-dom';
 import { MobileCommentsPage } from './MobileCommentsPage';
 import { MobileHeader } from './MobileHeader';
 import { MobileNavTree } from './MobileNavTree';
+import { PWAInstallBanner } from './PWAInstallBanner';
 import { SessionPage } from './SessionPage';
 
 const { Content } = Layout;
@@ -75,6 +76,8 @@ export const MobileApp: React.FC<MobileAppProps> = ({
           onNavigate={() => setDrawerOpen(false)}
         />
       </Drawer>
+
+      <PWAInstallBanner />
 
       <Routes>
         {/* Home page - just shows header, drawer opened by hamburger */}
