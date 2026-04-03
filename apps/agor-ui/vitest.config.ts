@@ -7,6 +7,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      '@agor/core/types': path.resolve(__dirname, '../../packages/core/src/types/index.ts'),
     },
   },
   test: {
