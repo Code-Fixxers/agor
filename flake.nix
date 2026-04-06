@@ -31,7 +31,7 @@
 
             SRC_DIR="${src}"
             REV="${if self ? rev then self.rev else "dirty"}"
-            WORKDIR_BASE="${XDG_CACHE_HOME:-$HOME/.cache}/agor-live-flake"
+            WORKDIR_BASE="''${XDG_CACHE_HOME:-$HOME/.cache}/agor-live-flake"
             WORKDIR="$WORKDIR_BASE/$REV"
 
             mkdir -p "$WORKDIR_BASE"
@@ -117,7 +117,7 @@
               exit 1
             fi
 
-            if [ -z "${NPM_TOKEN:-}" ]; then
+            if [ -z "''${NPM_TOKEN:-}" ]; then
               echo "NPM_TOKEN is not set."
               echo "Export your token first, e.g.:"
               echo "  export NPM_TOKEN=..."
@@ -134,7 +134,7 @@
             trap cleanup EXIT
 
             cat > "$TMP_NPMRC" <<NPMRC
-//registry.npmjs.org/:_authToken=${NPM_TOKEN}
+//registry.npmjs.org/:_authToken=''${NPM_TOKEN}
 always-auth=true
 NPMRC
 
