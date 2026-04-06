@@ -1,0 +1,66 @@
+name: Publish agor-live (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to publish (branch, tag, or SHA)'
+        required: false
+        default: 'main'
+      dry_run:
+        description: 'Run npm publish with --dry-run instead of publishing'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: publish-agor-live
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish agor-live
+    runs-on: self-hosted
+    permissions:
+      contents: read
+
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Validate NPM token is configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "NPM_TOKEN secret is not configured for this repository/environment."
+            exit 1
+          fi
+
+      - name: Publish with flake wrapper (dry-run)
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix run .#build-agor-live
+          cd packages/agor-live
+          TMP_NPMRC="$(mktemp)"
+          trap 'rm -f "$TMP_NPMRC"' EXIT
+          cat > "$TMP_NPMRC" <<NPMRC
+          //registry.npmjs.org/:_authToken=${NPM_TOKEN}
+          always-auth=true
+          NPMRC
+          NPM_CONFIG_USERCONFIG="$TMP_NPMRC" npm whoami
+          NPM_CONFIG_USERCONFIG="$TMP_NPMRC" npm publish --access public --dry-run
+
+      - name: Publish with flake wrapper
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          nix run .#publish-agor-live
