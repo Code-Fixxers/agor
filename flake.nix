@@ -16,18 +16,31 @@
           bash
           coreutils
           findutils
+          gawk
+          git
+          gnumake
           gnugrep
           gnused
           jq
           nodejs_22
+          pkg-config
           pnpm
+          python3
+          stdenv.cc
         ];
+
+        nodeBuildEnv = ''
+          export npm_config_nodedir="${pkgs.nodejs_22}"
+          export npm_config_python="${pkgs.python3}/bin/python3"
+        '';
 
         launcher = pkgs.writeShellApplication {
           name = "agor-live";
           runtimeInputs = runtimeInputs;
           text = ''
             set -euo pipefail
+
+            ${nodeBuildEnv}
 
             SRC_DIR="${src}"
             REV="${if self ? rev then self.rev else "dirty"}"
@@ -63,6 +76,8 @@
           text = ''
             set -euo pipefail
 
+            ${nodeBuildEnv}
+
             ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
             PKG_DIR="$ROOT/packages/agor-live"
 
@@ -81,6 +96,8 @@
           runtimeInputs = runtimeInputs;
           text = ''
             set -euo pipefail
+
+            ${nodeBuildEnv}
 
             ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
             PKG_DIR="$ROOT/packages/agor-live"
@@ -108,6 +125,8 @@
           runtimeInputs = runtimeInputs;
           text = ''
             set -euo pipefail
+
+            ${nodeBuildEnv}
 
             ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
             PKG_DIR="$ROOT/packages/agor-live"
