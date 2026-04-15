@@ -395,15 +395,8 @@ function AppContent() {
         >
           <Alert
             type="error"
-            message="Failed to connect to Agor daemon"
-            description={
-              <div>
-                <p>{connectionError}</p>
-                <p>
-                  Start the daemon with: <code>cd apps/agor-daemon && pnpm dev</code>
-                </p>
-              </div>
-            }
+            message="Failed to connect to Agor"
+            description={<p>{connectionError}</p>}
             showIcon
           />
         </div>

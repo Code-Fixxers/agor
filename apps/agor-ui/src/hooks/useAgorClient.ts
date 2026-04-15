@@ -153,7 +153,7 @@ export function useAgorClient(options: UseAgorClientOptions = {}): UseAgorClient
           // Only show error on initial connection failure, not during reconnection attempts
           // If we've connected before, keep showing "reconnecting" state instead of error
           if (!hasConnectedOnce) {
-            setError('Daemon is not running. Start it with: cd apps/agor-daemon && pnpm dev');
+            setError("Can't reach the Agor server. Check your connection and try again.");
             setConnecting(false);
             setConnected(false);
           } else {
@@ -168,32 +168,20 @@ export function useAgorClient(options: UseAgorClientOptions = {}): UseAgorClient
       // Now manually connect the socket
       client.io.connect();
 
-      // Wait for connection before authenticating
+      // Wait for connection before authenticating. Socket.IO already has its
+      // own 20s `timeout` + reconnection logic (see createClient); we just
+      // await its decision instead of racing with a shorter timer that only
+      // produced confusing error messages on slow mobile networks.
       try {
-        await new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            reject(new Error('Connection timeout'));
-          }, 5000);
-
-          if (client.io.connected) {
-            clearTimeout(timeout);
-            resolve();
-            return;
-          }
-
-          client.io.once('connect', () => {
-            clearTimeout(timeout);
-            resolve();
+        if (!client.io.connected) {
+          await new Promise<void>((resolve, reject) => {
+            client.io.once('connect', () => resolve());
+            client.io.once('connect_error', (err) => reject(err));
           });
-
-          client.io.once('connect_error', (err) => {
-            clearTimeout(timeout);
-            reject(err);
-          });
-        });
+        }
       } catch (_err) {
         if (mounted) {
-          setError('Failed to connect to daemon. Make sure it is running on :3030');
+          setError("Can't reach the Agor server. Check your connection and try again.");
           setConnecting(false);
           setConnected(false);
         }
