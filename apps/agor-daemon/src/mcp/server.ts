@@ -14,6 +14,7 @@
  */
 
 import type { Database } from '@agor/core/db';
+import { UserApiKeysRepository } from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
 import type { DaemonServicesConfig, ServiceGroupName, SessionID, UserID } from '@agor/core/types';
 import { getServiceTier, SERVICE_GROUP_TO_MCP_DOMAINS, SERVICE_TIER_RANK } from '@agor/core/types';
@@ -427,8 +428,9 @@ export function setupMCPRoutes(
 
       // Reject session tokens in query strings — they leak via Referer, browser
       // history, reverse-proxy access logs, and any verbose request logger that
-      // captures req.url. The canonical carrier for MCP streamable HTTP auth is
-      // `Authorization: Bearer <token>`.
+      // captures req.url. The canonical carriers for MCP streamable HTTP auth
+      // are `Authorization: Bearer <sessionToken|agor_sk_*>` and
+      // `X-API-Key: agor_sk_*`.
       //
       // We check for the presence of the query parameter (not its value) so we
       // don't echo or log the token itself.
@@ -445,50 +447,78 @@ export function setupMCPRoutes(
         });
       }
 
-      // Extract session token from Authorization header only
-      let sessionToken: string | undefined;
+      // Extract credentials from headers only.
+      // Supports:
+      // - Authorization: Bearer <sessionToken|agor_sk_*>
+      // - X-API-Key: agor_sk_*
+      let credential: string | undefined;
       const authHeader = req.headers.authorization;
       if (authHeader?.startsWith('Bearer ')) {
-        sessionToken = authHeader.slice(7);
+        credential = authHeader.slice(7);
+      }
+      if (!credential) {
+        const xApiKey = req.headers['x-api-key'];
+        if (typeof xApiKey === 'string' && xApiKey.startsWith('agor_sk_')) {
+          credential = xApiKey;
+        }
       }
 
-      if (!sessionToken) {
-        console.warn('⚠️  MCP request missing Authorization header');
+      if (!credential) {
+        console.warn('⚠️  MCP request missing credentials');
         return res.status(401).json({
           jsonrpc: '2.0',
           id: (req.body as { id?: unknown })?.id,
           error: {
             code: -32001,
             message:
-              'Authentication required: session token must be provided via Authorization: Bearer header',
+              'Authentication required: provide Authorization: Bearer <sessionToken|agor_sk_*> or X-API-Key: agor_sk_*',
           },
         });
       }
 
-      // Validate token and extract context
-      const context = await validateSessionToken(app, sessionToken);
-      if (!context) {
-        console.warn('⚠️  Invalid MCP session token');
-        return res.status(401).json({
-          jsonrpc: '2.0',
-          id: (req.body as { id?: unknown })?.id,
-          error: {
-            code: -32001,
-            message: 'Invalid or expired session token',
-          },
-        });
-      }
-
-      console.log(
-        `🔌 MCP request authenticated (user: ${context.userId.substring(0, 8)}, session: ${context.sessionId.substring(0, 8)})`
-      );
-
-      // Fetch the authenticated user
+      // Support long-lived personal API keys for external orchestrators (Hermes, etc.).
       let authenticatedUser: AuthenticatedUser;
-      try {
-        authenticatedUser = await app.service('users').get(context.userId);
-      } catch (error) {
-        if (error instanceof NotFoundError) {
+      let userId: UserID;
+      let sessionId: SessionID;
+
+      if (credential.startsWith('agor_sk_')) {
+        const apiKeysRepo = new UserApiKeysRepository(db);
+        const keyRow = await apiKeysRepo.verifyKey(credential);
+        if (!keyRow) {
+          console.warn('⚠️  Invalid MCP API key');
+          return res.status(401).json({
+            jsonrpc: '2.0',
+            id: (req.body as { id?: unknown })?.id,
+            error: {
+              code: -32001,
+              message: 'Invalid API key',
+            },
+          });
+        }
+
+        apiKeysRepo.updateLastUsed(keyRow.id).catch((err: unknown) => {
+          console.warn('⚠️  Failed to update MCP API key last_used_at:', err);
+        });
+
+        userId = keyRow.user_id as UserID;
+        authenticatedUser = await app.service('users').get(userId);
+
+        // Session context for tools like agor_sessions_get_current/agor_sessions_spawn.
+        // In API key mode, allow explicit session selection via query/header.
+        const requestedSessionId =
+          coerceString(req.query.sessionId as string | undefined) ||
+          coerceString(
+            typeof req.headers['x-agor-session-id'] === 'string'
+              ? req.headers['x-agor-session-id']
+              : undefined
+          );
+
+        sessionId = requestedSessionId as SessionID;
+      } else {
+        // Existing deterministic MCP session-token flow.
+        const context = await validateSessionToken(app, credential);
+        if (!context) {
+          console.warn('⚠️  Invalid MCP session token');
           return res.status(401).json({
             jsonrpc: '2.0',
             id: (req.body as { id?: unknown })?.id,
@@ -498,7 +528,41 @@ export function setupMCPRoutes(
             },
           });
         }
-        throw error;
+
+        userId = context.userId;
+        sessionId = context.sessionId;
+
+        try {
+          authenticatedUser = await app.service('users').get(userId);
+        } catch (error) {
+          if (error instanceof NotFoundError) {
+            return res.status(401).json({
+              jsonrpc: '2.0',
+              id: (req.body as { id?: unknown })?.id,
+              error: {
+                code: -32001,
+                message: 'Invalid or expired session token',
+              },
+            });
+          }
+          throw error;
+        }
+      }
+
+      console.log(
+        `🔌 MCP request authenticated (user: ${userId.substring(0, 8)}, session: ${sessionId?.substring(0, 8) || 'none'})`
+      );
+
+      if (!sessionId) {
+        return res.status(400).json({
+          jsonrpc: '2.0',
+          id: (req.body as { id?: unknown })?.id,
+          error: {
+            code: -32002,
+            message:
+              'Session context required for MCP tools that depend on current session. Pass ?sessionId=<uuid> or X-Agor-Session-Id header when using API keys.',
+          },
+        });
       }
 
       const baseServiceParams: Pick<AuthenticatedParams, 'user' | 'authenticated' | 'provider'> = {
@@ -516,8 +580,8 @@ export function setupMCPRoutes(
         {
           app,
           db,
-          userId: context.userId,
-          sessionId: context.sessionId,
+          userId,
+          sessionId,
           authenticatedUser,
           baseServiceParams,
         },
