@@ -423,8 +423,9 @@ export function setupMCPRoutes(
 
       // Reject session tokens in query strings — they leak via Referer, browser
       // history, reverse-proxy access logs, and any verbose request logger that
-      // captures req.url. The canonical carrier for MCP streamable HTTP auth is
-      // `Authorization: Bearer <token>`.
+      // captures req.url. The canonical carriers for MCP streamable HTTP auth
+      // are `Authorization: Bearer <sessionToken|agor_sk_*>` and
+      // `X-API-Key: agor_sk_*`.
       //
       // We check for the presence of the query parameter (not its value) so we
       // don't echo or log the token itself.
