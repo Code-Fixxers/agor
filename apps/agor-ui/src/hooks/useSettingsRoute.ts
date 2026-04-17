@@ -14,7 +14,6 @@ export const SETTINGS_SECTIONS = [
   'artifacts',
   'personal-api-keys',
   'mcp',
-  'personal-api-keys',
   'agentic-tools',
   'gateway',
   'users',
