@@ -13,7 +13,7 @@
  * JSON across requests, which is critical for client-side KV prefix caching.
  */
 
-import type { Database } from '@agor/core/db';
+import { type Database, UserApiKeysRepository } from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
 import type { SessionID, UserID } from '@agor/core/types';
 import { NotFoundError } from '@agor/core/utils/errors';
@@ -300,16 +300,19 @@ export function setupMCPRoutes(app: Application, db: Database, toolSearchEnabled
     try {
       console.log(`🔌 Incoming MCP request: ${req.method} /mcp`);
 
-      // Extract session token from query params or Authorization header
-      let sessionToken = req.query.sessionToken as string | undefined;
-      if (!sessionToken) {
+      // Extract token from query params or Authorization header
+      // Supported formats:
+      // - sessionToken (legacy/session-scoped MCP auth)
+      // - agor_sk_* personal API key (long-lived user auth)
+      let authToken = req.query.sessionToken as string | undefined;
+      if (!authToken) {
         const authHeader = req.headers.authorization;
         if (authHeader?.startsWith('Bearer ')) {
-          sessionToken = authHeader.slice(7);
+          authToken = authHeader.slice(7);
         }
       }
 
-      if (!sessionToken) {
+      if (!authToken) {
         console.warn('⚠️  MCP request missing sessionToken');
         return res.status(401).json({
           jsonrpc: '2.0',
@@ -322,18 +325,63 @@ export function setupMCPRoutes(app: Application, db: Database, toolSearchEnabled
         });
       }
 
-      // Validate token and extract context
-      const context = await validateSessionToken(app, sessionToken);
-      if (!context) {
-        console.warn('⚠️  Invalid MCP session token');
-        return res.status(401).json({
-          jsonrpc: '2.0',
-          id: (req.body as { id?: unknown })?.id,
-          error: {
-            code: -32001,
-            message: 'Invalid or expired session token',
-          },
+      let context: { userId: UserID; sessionId: SessionID } | null = null;
+
+      // Path 1: Long-lived personal API key (agor_sk_...)
+      if (authToken.startsWith('agor_sk_')) {
+        const apiKeysRepo = new UserApiKeysRepository(db);
+        const keyRow = await apiKeysRepo.verifyKey(authToken);
+
+        if (!keyRow) {
+          return res.status(401).json({
+            jsonrpc: '2.0',
+            id: (req.body as { id?: unknown })?.id,
+            error: {
+              code: -32001,
+              message: 'Invalid API key',
+            },
+          });
+        }
+
+        // Update last_used_at asynchronously
+        apiKeysRepo.updateLastUsed(keyRow.id).catch((err: unknown) => {
+          console.warn('Failed to update API key last_used_at:', err);
         });
+
+        // API-key mode requires explicit session context for current-session tools
+        const explicitSessionId =
+          coerceString(req.query.sessionId) ?? coerceString(req.headers['x-agor-session-id']);
+        if (!explicitSessionId) {
+          return res.status(400).json({
+            jsonrpc: '2.0',
+            id: (req.body as { id?: unknown })?.id,
+            error: {
+              code: -32602,
+              message:
+                'sessionId is required when authenticating MCP with an API key. Provide ?sessionId=... or X-Agor-Session-Id header.',
+            },
+          });
+        }
+
+        context = {
+          userId: keyRow.user_id as UserID,
+          sessionId: explicitSessionId as SessionID,
+        };
+      } else {
+        // Path 2: Legacy session-scoped MCP token
+        const sessionContext = await validateSessionToken(app, authToken);
+        if (!sessionContext) {
+          console.warn('⚠️  Invalid MCP session token');
+          return res.status(401).json({
+            jsonrpc: '2.0',
+            id: (req.body as { id?: unknown })?.id,
+            error: {
+              code: -32001,
+              message: 'Invalid or expired session token',
+            },
+          });
+        }
+        context = sessionContext;
       }
 
       console.log(
@@ -367,6 +415,23 @@ export function setupMCPRoutes(app: Application, db: Database, toolSearchEnabled
         authenticated: true,
         provider: 'mcp',
       };
+
+      // Validate session context exists (especially important for API-key auth mode)
+      try {
+        await app.service('sessions').get(context.sessionId);
+      } catch (error) {
+        if (error instanceof NotFoundError) {
+          return res.status(400).json({
+            jsonrpc: '2.0',
+            id: (req.body as { id?: unknown })?.id,
+            error: {
+              code: -32602,
+              message: `Invalid sessionId: ${context.sessionId}`,
+            },
+          });
+        }
+        throw error;
+      }
 
       // Create a per-request McpServer with all tools registered
       const mcpServer = createMcpServer(
