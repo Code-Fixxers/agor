@@ -13,6 +13,7 @@ export const SETTINGS_SECTIONS = [
   'cards',
   'artifacts',
   'mcp',
+  'personal-api-keys',
   'agentic-tools',
   'gateway',
   'users',
