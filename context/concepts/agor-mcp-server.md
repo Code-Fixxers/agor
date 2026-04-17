@@ -30,8 +30,11 @@ The built-in toolset mirrors Agor's primitives:
 
 1. Start the daemon (`pnpm dev` in `apps/agor-daemon`).
 2. In the UI, open Session Settings → MCP Tokens → "Generate MCP Token".
-3. Configure your agent (Claude Desktop, Cursor MCP, etc.) to hit `http://localhost:3030/mcp` with that token in `sessionToken` metadata.
-4. Call tools like:
+3. Configure your agent (Claude Desktop, Cursor MCP, Hermes, etc.) to hit `http://localhost:3030/mcp` with one of:
+   - session token in `sessionToken` metadata (session-scoped), or
+   - personal API key in `Authorization: Bearer agor_sk_...` / `X-API-Key` (long-lived).
+4. If using API key auth, pass a session context for "current session" tools via `?sessionId=<uuid>` or `X-Agor-Session-Id: <uuid>`.
+5. Call tools like:
    - `agor_repos_create_remote` to clone new repositories
    - `agor_worktrees_create` to create worktrees
    - `agor_boards_update` to create zones and organize boards

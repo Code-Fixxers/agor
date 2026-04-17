@@ -28,6 +28,7 @@ import {
   ExperimentOutlined,
   FolderOutlined,
   InfoCircleOutlined,
+  KeyOutlined,
   MessageOutlined,
   RobotOutlined,
   TeamOutlined,
@@ -47,6 +48,7 @@ import { BoardsTable } from './BoardsTable';
 import { CardsTable } from './CardsTable';
 import { GatewayChannelsTable } from './GatewayChannelsTable';
 import { MCPServersTable } from './MCPServersTable';
+import { PersonalApiKeysTab } from './PersonalApiKeysTab';
 import { ReposTable } from './ReposTable';
 import { UsersTable } from './UsersTable';
 import { WorktreesTable } from './WorktreesTable';
@@ -291,6 +293,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ]
             : []),
           {
+            key: 'personal-api-keys',
+            label: 'Personal API Keys',
+            icon: <KeyOutlined />,
+          },
+          {
             key: 'agentic-tools',
             label: 'Agentic Tools',
             icon: <ThunderboltOutlined />,
@@ -424,6 +431,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             onDelete={onDeleteMCPServer}
           />
         );
+      case 'personal-api-keys':
+        return <PersonalApiKeysTab client={client} />;
       case 'agentic-tools':
         return <AgenticToolsSection client={client} />;
       case 'gateway':
