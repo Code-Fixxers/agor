@@ -531,17 +531,9 @@ export function setupMCPRoutes(
         `🔌 MCP request authenticated (user: ${userId.substring(0, 8)}, session: ${sessionId?.substring(0, 8) || 'none'})`
       );
 
-      if (!sessionId) {
-        return res.status(400).json({
-          jsonrpc: '2.0',
-          id: (req.body as { id?: unknown })?.id,
-          error: {
-            code: -32002,
-            message:
-              'Session context required for MCP tools that depend on current session. Pass ?sessionId=<uuid> or X-Agor-Session-Id header when using API keys.',
-          },
-        });
-      }
+      // Sessionless access is permitted for personal API keys. Tools that need
+      // a current session (e.g. agor_sessions_get_current, spawn) will surface
+      // their own error if called without ?sessionId=/X-Agor-Session-Id set.
 
       const baseServiceParams: Pick<AuthenticatedParams, 'user' | 'authenticated' | 'provider'> = {
         user: {
