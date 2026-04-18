@@ -32,8 +32,17 @@ export function getDaemonUrl(): string {
   const daemonPort = import.meta.env.VITE_DAEMON_PORT || String(DAEMON.DEFAULT_PORT);
 
   if (typeof window !== 'undefined') {
-    // If served from /ui path, we're on the same host as daemon
-    // Use origin directly (handles Codespaces forwarded URLs correctly)
+    // Production builds: the daemon serves the UI on the same origin
+    // (typically under /ui/, but may also be reverse-proxied to /). Always
+    // use the current origin so that WebSocket connections stay same-origin.
+    // This avoids cross-origin WS blocks on phones/Brave/Firefox and works
+    // through HTTPS reverse proxies that forward both UI and /socket.io.
+    if (!import.meta.env.DEV) {
+      return window.location.origin;
+    }
+
+    // Legacy heuristic for any non-standard build: if served from /ui,
+    // assume daemon is on same origin.
     if (window.location.pathname.startsWith('/ui')) {
       return window.location.origin;
     }
