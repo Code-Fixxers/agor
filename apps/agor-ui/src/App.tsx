@@ -18,12 +18,11 @@ import type {
 import { getRepoReferenceOptions } from '@agor-live/client';
 import { Alert, App as AntApp, ConfigProvider, Spin, theme } from 'antd';
 import { useEffect, useState } from 'react';
-import { BrowserRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AVAILABLE_AGENTS } from './components/AgentSelectionGrid';
 import { App as AgorApp } from './components/App';
 import { ForcePasswordChangeModal } from './components/ForcePasswordChangeModal';
 import { LoginPage } from './components/LoginPage';
-import { MobileApp } from './components/mobile/MobileApp';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { SandboxBanner } from './components/SandboxBanner';
 import type { WorktreeUpdate } from './components/WorktreeModal/tabs/GeneralTab';
@@ -39,52 +38,14 @@ import {
   useSessionActions,
 } from './hooks';
 import { StreamdownDemoPage } from './pages/StreamdownDemoPage';
-import { isMobileDevice } from './utils/deviceDetection';
+import { getLegacyMobileRedirectPath } from './routing/legacyMobileRedirect';
 import { useThemedMessage } from './utils/message';
 
-/**
- * DeviceRouter - Redirects users to mobile or desktop site based on device detection
- * Responds to window resize events for responsive switching
- */
-function DeviceRouter() {
+function LegacyMobileRedirect() {
   const location = useLocation();
-  const navigate = useNavigate();
+  const redirectPath = getLegacyMobileRedirectPath(location.pathname) ?? '/';
 
-  useEffect(() => {
-    const checkAndRoute = () => {
-      const isMobile = isMobileDevice();
-      const isOnMobilePath = location.pathname.startsWith('/m');
-
-      // Redirect mobile devices to mobile site
-      if (isMobile && !isOnMobilePath) {
-        navigate('/m', { replace: true });
-      }
-      // Redirect desktop devices away from mobile site
-      else if (!isMobile && isOnMobilePath) {
-        navigate('/', { replace: true });
-      }
-    };
-
-    // Check on mount and route change
-    checkAndRoute();
-
-    // Debounced resize handler to avoid excessive redirects
-    let resizeTimeout: NodeJS.Timeout;
-    const handleResize = () => {
-      clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(checkAndRoute, 200);
-    };
-
-    // Listen for window resize events for responsive switching
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      clearTimeout(resizeTimeout);
-    };
-  }, [location.pathname, navigate]);
-
-  return null;
+  return <Navigate to={redirectPath} replace />;
 }
 
 function AppContent() {
@@ -179,7 +140,7 @@ function AppContent() {
   }, [location.pathname, location.search]);
 
   // Per-session prompt drafts (persists across session switches)
-  const [promptDrafts, setPromptDrafts] = useState<Map<string, string>>(new Map());
+  const [, setPromptDrafts] = useState<Map<string, string>>(new Map());
 
   // Track if we've successfully loaded data at least once
   // This prevents UI from unmounting during reconnections
@@ -504,19 +465,6 @@ function AppContent() {
       );
       return null;
     }
-  };
-
-  // Update draft for a specific session
-  const handleUpdateDraft = (sessionId: string, draft: string) => {
-    setPromptDrafts((prev) => {
-      const next = new Map(prev);
-      if (draft.trim()) {
-        next.set(sessionId, draft);
-      } else {
-        next.delete(sessionId); // Clean up empty drafts
-      }
-      return next;
-    });
   };
 
   // Clear draft for a specific session
@@ -1173,39 +1121,16 @@ function AppContent() {
           systemCredentials={onboardingConfig?.systemCredentials}
         />
 
-        <DeviceRouter />
         <Routes>
           {/* Demo route */}
           <Route path="/demo/streamdown" element={<StreamdownDemoPage />} />
 
-          {/* Mobile routes */}
-          <Route
-            path="/m/*"
-            element={
-              <MobileApp
-                client={client}
-                user={user}
-                sessionById={sessionById}
-                sessionsByWorktree={sessionsByWorktree}
-                boardById={boardById}
-                commentById={commentById}
-                repoById={repoById}
-                worktreeById={worktreeById}
-                userById={userById}
-                onSendPrompt={handleSendPrompt}
-                onSendComment={handleSendComment}
-                onReplyComment={handleReplyComment}
-                onResolveComment={handleResolveComment}
-                onToggleReaction={handleToggleReaction}
-                onDeleteComment={handleDeleteComment}
-                onLogout={logout}
-                promptDrafts={promptDrafts}
-                onUpdateDraft={handleUpdateDraft}
-              />
-            }
-          />
+          {/* Legacy mobile compatibility routes (temporary redirects) */}
+          <Route path="/m/comments/:boardId" element={<LegacyMobileRedirect />} />
+          <Route path="/m/session/:sessionId" element={<LegacyMobileRedirect />} />
+          <Route path="/m/*" element={<LegacyMobileRedirect />} />
 
-          {/* Desktop routes - board with session (Django-style trailing slash) */}
+          {/* Canonical routes - board with session (Django-style trailing slash) */}
           <Route
             path="/b/:boardParam/:sessionParam/"
             element={
@@ -1289,7 +1214,7 @@ function AppContent() {
             }
           />
 
-          {/* Desktop routes - board only (Django-style trailing slash) */}
+          {/* Canonical routes - board only (Django-style trailing slash) */}
           <Route
             path="/b/:boardParam/"
             element={
@@ -1373,7 +1298,7 @@ function AppContent() {
             }
           />
 
-          {/* Desktop routes - fallback for root path */}
+          {/* Canonical routes - fallback for root path */}
           <Route
             path="/*"
             element={

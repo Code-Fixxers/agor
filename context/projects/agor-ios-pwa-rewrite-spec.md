@@ -26,7 +26,8 @@
 - **iOS baseline:** Sidebar tree (board → worktree → session), “Important Sessions”, “Needs Attention”.
 - **PWA target:**
   - Keep worktree-centric navigation model from current Agor UI.
-  - Mobile route `/m` remains primary compact mode.
+  - Canonical route tree is shared across desktop + phone (no feature-trimmed route split).
+  - Legacy `/m/*` links are temporary compatibility redirects only.
   - Add fast filters for running/attention/favorites in mobile nav drawer.
 
 ### 2) Chat + Streaming
@@ -118,6 +119,14 @@
   - recover from connection interruptions.
 - No server API changes required for parity.
 
+## Release Regression Checklist
+
+- [ ] Phone viewport (`~390x844`) on canonical routes can run board + session workflows without forced route changes.
+- [ ] Navigating to `/` never auto-redirects to `/m`; resizing/orientation changes do not trigger route churn.
+- [ ] Legacy `/m/*` paths redirect to canonical routes (temporary compatibility only).
+- [ ] PWA install + relaunch under daemon-served `/ui` opens inside `/ui` namespace.
+- [ ] Service worker offline navigation fallback under `/ui` resolves to `/ui/index.html` app shell.
+
 ## Risks
 
 1. **iOS PWA limitations** (install prompt/event and background behavior vary by Safari version).
@@ -129,4 +138,3 @@
 - Provide browser-specific install guidance fallback.
 - Keep in-app reconnect and attention UX strong even when background notifications are limited.
 - Use collapsible blocks and pagination defaults aggressively on mobile.
-
