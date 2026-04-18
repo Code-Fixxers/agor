@@ -7,7 +7,7 @@
 
 ## Overview
 
-Agor exposes itself as a **Model Context Protocol server** so agents can introspect worktrees, sessions, boards, and users without hard-coded CLI calls. The daemon mounts a JSON-RPC endpoint at `POST /mcp` that authenticates with the current session's MCP token and routes requests through Feathers services.
+Agor exposes itself as a **Model Context Protocol server** so agents can introspect worktrees, sessions, boards, and users without hard-coded CLI calls. The daemon mounts MCP at `/mcp` (POST/GET/DELETE): POST for JSON-RPC calls, GET for SSE streams, and DELETE for session termination. It authenticates with session tokens or personal API keys and routes requests through Feathers services.
 
 The built-in toolset mirrors Agor's primitives:
 
