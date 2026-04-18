@@ -13,6 +13,7 @@
  * JSON across requests, which is critical for client-side KV prefix caching.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { Database } from '@agor/core/db';
 import { UserApiKeysRepository } from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
@@ -422,6 +423,22 @@ export function setupMCPRoutes(
     console.log(`✅ MCP tool registry built (${cachedRegistry!.size} tools cached)`);
   }
 
+  // Stateful transports for streamable HTTP sessions (enables GET SSE + DELETE).
+  const transports = new Map<
+    string,
+    {
+      transport: StreamableHTTPServerTransport;
+      server: McpServer;
+      userId: UserID;
+    }
+  >();
+
+  const isInitializeRequest = (body: unknown): boolean => {
+    if (!body || typeof body !== 'object') return false;
+    const maybeRequest = body as { method?: unknown };
+    return maybeRequest.method === 'initialize';
+  };
+
   const handler = async (req: Request, res: Response) => {
     try {
       console.log(`🔌 Incoming MCP request: ${req.method} /mcp`);
@@ -572,33 +589,110 @@ export function setupMCPRoutes(
         provider: 'mcp',
       };
 
-      // Create a per-request McpServer with tools registered per service tier
-      const mcpServer = createMcpServer(
-        {
-          app,
-          db,
-          userId,
-          sessionId,
-          authenticatedUser,
-          baseServiceParams,
+      const mcpSessionId = coerceString(req.headers['mcp-session-id']);
+
+      // ─────────────────────────────────────────────────────────────────────────────
+      // Stateful mode (streamable HTTP sessions): supports GET /mcp SSE + DELETE /mcp
+      // ─────────────────────────────────────────────────────────────────────────────
+      if (req.method === 'GET' || req.method === 'DELETE' || mcpSessionId) {
+        if (!mcpSessionId || !transports.has(mcpSessionId)) {
+          return res.status(400).json({
+            jsonrpc: '2.0',
+            id: (req.body as { id?: unknown })?.id,
+            error: {
+              code: -32000,
+              message: 'Bad Request: Invalid or missing MCP session ID',
+            },
+          });
+        }
+
+        const existing = transports.get(mcpSessionId)!;
+        if (existing.userId !== userId) {
+          return res.status(403).json({
+            jsonrpc: '2.0',
+            id: (req.body as { id?: unknown })?.id,
+            error: {
+              code: -32003,
+              message: 'Forbidden: MCP session belongs to a different user',
+            },
+          });
+        }
+
+        await existing.transport.handleRequest(req, res, req.body);
+        return;
+      }
+
+      // Initialize a new stateful streamable HTTP session
+      if (req.method === 'POST' && isInitializeRequest(req.body)) {
+        const mcpServer = createMcpServer(
+          {
+            app,
+            db,
+            userId,
+            sessionId,
+            authenticatedUser,
+            baseServiceParams,
+          },
+          toolSearchEnabled,
+          servicesConfig
+        );
+
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (newSessionId) => {
+            transports.set(newSessionId, { transport, server: mcpServer, userId });
+          },
+        });
+
+        transport.onclose = () => {
+          const sid = transport.sessionId;
+          if (sid) transports.delete(sid);
+          mcpServer.close().catch(() => {});
+        };
+
+        await mcpServer.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+        return;
+      }
+
+      // ─────────────────────────────────────────────────────────────────────────────
+      // Stateless fallback mode: preserves legacy behavior for direct POST usage
+      // ─────────────────────────────────────────────────────────────────────────────
+      if (req.method === 'POST') {
+        const mcpServer = createMcpServer(
+          {
+            app,
+            db,
+            userId,
+            sessionId,
+            authenticatedUser,
+            baseServiceParams,
+          },
+          toolSearchEnabled,
+          servicesConfig
+        );
+
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+        });
+
+        await mcpServer.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+
+        res.on('close', () => {
+          transport.close().catch(() => {});
+          mcpServer.close().catch(() => {});
+        });
+        return;
+      }
+
+      return res.status(405).json({
+        jsonrpc: '2.0',
+        id: (req.body as { id?: unknown })?.id,
+        error: {
+          code: -32005,
+          message: `Method ${req.method} not allowed on /mcp`,
         },
-        toolSearchEnabled,
-        servicesConfig
-      );
-
-      // Create stateless transport (one per request, no session tracking)
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-      });
-
-      // Connect and handle the request
-      await mcpServer.connect(transport);
-      await transport.handleRequest(req, res, req.body);
-
-      // Clean up after response is done
-      res.on('close', () => {
-        transport.close().catch(() => {});
-        mcpServer.close().catch(() => {});
       });
     } catch (error) {
       console.error('❌ MCP request failed:', error);
@@ -614,6 +708,12 @@ export function setupMCPRoutes(
   // Register as Express POST route
   // @ts-expect-error - FeathersJS app extends Express
   app.post('/mcp', handler);
+  // GET supports SSE stream in streamable HTTP transport
+  // @ts-expect-error - FeathersJS app extends Express
+  app.get('/mcp', handler);
+  // DELETE supports streamable HTTP session termination
+  // @ts-expect-error - FeathersJS app extends Express
+  app.delete('/mcp', handler);
 
-  console.log('✅ MCP routes registered at POST /mcp');
+  console.log('✅ MCP routes registered at /mcp (POST + GET + DELETE)');
 }
