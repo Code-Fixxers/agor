@@ -83,7 +83,7 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
     async (args) => {
       const query: Record<string, unknown> = {};
       if (args.repoId) query.repo_id = await resolveRepoId(ctx, args.repoId);
-      if (args.limit) query.$limit = args.limit;
+      query.$limit = args.limit ?? 50;
       if (args.archived === true) {
         query.archived = true;
       } else if (!args.includeArchived) {
