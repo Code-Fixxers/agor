@@ -605,7 +605,6 @@ export const App: React.FC<AppProps> = ({
     isCompact,
     'event-stream'
   );
-
   // Update browser tab title based on current board
   useBoardTitle(currentBoard);
 

@@ -1236,6 +1236,7 @@ function AppContent() {
         onStartEnvironment={handleStartEnvironment}
         onStopEnvironment={handleStopEnvironment}
         onNukeEnvironment={handleNukeEnvironment}
+        onExecuteScheduleNow={handleExecuteScheduleNow}
         onCreateUser={handleCreateUser}
         onUpdateUser={handleUpdateUser}
         onDeleteUser={handleDeleteUser}
@@ -1250,6 +1251,7 @@ function AppContent() {
         onUpdateArtifact={handleUpdateArtifact}
         onDeleteArtifact={handleDeleteArtifact}
         onUpdateSessionMcpServers={handleUpdateSessionMcpServers}
+        onUpdateSessionEnvSelections={handleUpdateSessionEnvSelections}
         onSendComment={handleSendComment}
         onReplyComment={handleReplyComment}
         onResolveComment={handleResolveComment}
