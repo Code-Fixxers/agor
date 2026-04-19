@@ -471,9 +471,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
         mcpServerIds: z
           .array(z.string())
           .optional()
-          .describe(
-            'MCP server IDs to attach. Overrides parent session inheritance. Omit to inherit from parent. Pass empty array for no MCPs.'
-          ),
+          .describe('MCP server IDs. Omit to inherit, [] for none.'),
         modelConfig: modelConfigInputSchema,
       }),
     },
@@ -537,9 +535,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
         mcpServerIds: z
           .array(z.string())
           .optional()
-          .describe(
-            'MCP server IDs for subsession mode. Overrides parent inheritance. Omit to inherit from parent. Pass empty array for no MCPs.'
-          ),
+          .describe('Subsession MCP IDs. Omit to inherit, [] for none.'),
         modelConfig: modelConfigInputSchema,
       }),
     },
@@ -710,9 +706,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
         mcpServerIds: z
           .array(z.string())
           .optional()
-          .describe(
-            'MCP server IDs to attach. Overrides worktree and user default inheritance. Omit to use worktree config > user defaults.'
-          ),
+          .describe('MCP IDs. Omit to inherit.'),
         modelConfig: modelConfigInputSchema,
       }),
     },
