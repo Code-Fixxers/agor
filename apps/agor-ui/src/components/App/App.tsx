@@ -38,6 +38,7 @@ import { useEventStream } from '../../hooks/useEventStream';
 import { useFaviconStatus } from '../../hooks/useFaviconStatus';
 import { useIsCompactViewport } from '../../hooks/useIsCompactViewport';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useMobileDrawerHistory } from '../../hooks/useMobileDrawerHistory';
 import { usePresence } from '../../hooks/usePresence';
 import { useRecentBoards } from '../../hooks/useRecentBoards';
 import { useSettingsRoute } from '../../hooks/useSettingsRoute';
@@ -622,6 +623,26 @@ export const App: React.FC<AppProps> = ({
   // Compact viewport (phones, narrow tablets) get a list/drawer-based layout
   // instead of the React Flow canvas which is hard to navigate on touch.
   const isCompact = useIsCompactViewport();
+
+  // Bind full-screen mobile drawers to the browser history stack so the
+  // system back gesture closes them instead of navigating off the board.
+  const closeSessionDrawer = useCallback(() => setSelectedSessionId(null), []);
+  const closeCommentsDrawer = useCallback(
+    () => setCommentsPanelCollapsed(true),
+    [setCommentsPanelCollapsed]
+  );
+  const closeEventStreamDrawer = useCallback(
+    () => setEventStreamPanelCollapsed(true),
+    [setEventStreamPanelCollapsed]
+  );
+  useMobileDrawerHistory(!!effectiveSelectedSessionId, closeSessionDrawer, isCompact, 'session');
+  useMobileDrawerHistory(!commentsPanelCollapsed, closeCommentsDrawer, isCompact, 'comments');
+  useMobileDrawerHistory(
+    !eventStreamPanelCollapsed && !effectiveSelectedSessionId,
+    closeEventStreamDrawer,
+    isCompact,
+    'event-stream'
+  );
 
   // Update browser tab title based on current board
   useBoardTitle(currentBoard);
