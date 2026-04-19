@@ -14,6 +14,7 @@ export * from './useBoardActions';
 export * from './useIsCompactViewport';
 export * from './useLocalStorage';
 export * from './useMessages';
+export * from './useMobileDrawerHistory';
 export * from './usePermissions';
 export * from './usePWAInstall';
 export * from './usePWAUpdate';
