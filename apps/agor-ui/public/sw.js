@@ -62,6 +62,8 @@ const NO_CACHE_PREFIXES = [
   'socket.io',
   'mcp',
   'static',
+  'api',
+  'opencode',
 ];
 
 self.addEventListener('install', (event) => {
