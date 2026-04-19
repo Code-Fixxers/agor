@@ -16,8 +16,7 @@ export function registerUserTools(server: McpServer, ctx: McpContext): void {
       }),
     },
     async (args) => {
-      const query: Record<string, unknown> = {};
-      if (args.limit) query.$limit = args.limit;
+      const query: Record<string, unknown> = { $limit: args.limit ?? 50 };
       const users = await ctx.app.service('users').find({ query, ...ctx.baseServiceParams });
       return textResult(users);
     }

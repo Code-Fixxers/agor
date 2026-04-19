@@ -31,7 +31,7 @@ import {
   resolveWorktreeId,
 } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { textResult } from '../server.js';
+import { requireCurrentSession, textResult } from '../server.js';
 import { listAttachedMcpServers } from './mcp-servers.js';
 
 /**
@@ -112,43 +112,30 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'agor_sessions_list',
     {
-      description:
-        'List all sessions accessible to the current user. Each session includes a `url` field with a clickable link to view the session in the UI.',
+      description: 'List sessions accessible to the user. Each result includes a `url` field.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        limit: z.number().optional().describe('Maximum number of sessions to return (default: 50)'),
+        limit: z.number().optional().describe('Default: 50'),
         status: z
           .enum(['idle', 'running', 'completed', 'failed'])
           .optional()
-          .describe('Filter by session status'),
-        boardId: z.string().optional().describe('Filter sessions by board ID (UUIDv7 or short ID)'),
-        worktreeId: z.string().optional().describe('Filter sessions by worktree ID'),
-        includeArchived: z
-          .boolean()
-          .optional()
-          .describe(
-            'Include archived sessions in results (default: false). By default, archived sessions are excluded.'
-          ),
-        archived: z
-          .boolean()
-          .optional()
-          .describe(
-            'Filter to show ONLY archived sessions. When true, returns only archived sessions. Overrides includeArchived.'
-          ),
+          .describe('Filter by status'),
+        boardId: z.string().optional().describe('Filter by board'),
+        worktreeId: z.string().optional().describe('Filter by worktree'),
+        includeArchived: z.boolean().optional().describe('Include archived (default: false)'),
+        archived: z.boolean().optional().describe('ONLY archived (overrides includeArchived)'),
         sessionType: z
           .enum(['gateway', 'scheduled', 'agent'])
           .optional()
-          .describe(
-            "Filter by session type. 'gateway' = sessions from messaging integrations (Slack, Discord, GitHub). 'scheduled' = sessions created by worktree schedules. 'agent' = manually created sessions (excludes gateway and scheduled)."
-          ),
+          .describe('Filter: gateway (messaging) | scheduled | agent (manual)'),
       }),
     },
     async (args) => {
       const query: Record<string, unknown> = {};
       // When sessionType is set, skip service-level pagination (it runs before our filter)
       // and apply the requested limit ourselves after filtering.
-      const requestedLimit = args.limit;
-      if (!args.sessionType && requestedLimit) query.$limit = requestedLimit;
+      const requestedLimit = args.limit ?? 50;
+      if (!args.sessionType) query.$limit = requestedLimit;
       if (args.status) query.status = args.status;
       if (args.boardId) query.board_id = await resolveBoardId(ctx, args.boardId);
       if (args.worktreeId) query.worktree_id = await resolveWorktreeId(ctx, args.worktreeId);
@@ -182,10 +169,10 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
     'agor_sessions_get',
     {
       description:
-        'Get detailed information about a specific session, including genealogy, current state, and the MCP servers currently attached to it (with OAuth status — check `attached_mcp_servers[].oauth_authenticated` to spot servers needing auth). The response includes a `url` field with a clickable link to view the session in the UI.',
+        'Get a session with genealogy, state, a `url` field, and attached MCP servers including OAuth auth status.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        sessionId: z.string().describe('Session ID (UUIDv7 or short ID like 01a1b2c3)'),
+        sessionId: z.string().describe('Session ID (UUIDv7 or short ID)'),
       }),
     },
     async (args) => {
@@ -207,11 +194,12 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
     'agor_sessions_get_current',
     {
       description:
-        'Get information about the current session (the one making this MCP call). Returns session details, denormalized worktree/repo/board context, and the MCP servers attached to this session (each with `oauth_authenticated` so callers can spot servers needing auth). To browse the broader catalog of servers eligible to attach, use `agor_mcp_servers_list`.',
+        'Get the current session plus denormalized worktree/repo/board context and attached MCP servers with OAuth auth status.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({}),
     },
     async () => {
+      const currentSessionId = requireCurrentSession(ctx, 'agor_sessions_get_current');
       const currentSessionParams: SessionParams = {
         ...ctx.baseServiceParams,
         _include_last_message: true,
@@ -219,7 +207,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       };
       const session = await ctx.app
         .service('sessions')
-        .get(ctx.sessionId, currentSessionParams as Parameters<SessionsServiceImpl['get']>[1]);
+        .get(currentSessionId, currentSessionParams as Parameters<SessionsServiceImpl['get']>[1]);
 
       // Denormalize worktree, repo, and board context
       let worktree: Record<string, unknown> | null = null;
@@ -270,7 +258,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
         }
       }
 
-      const attached_mcp_servers = await listAttachedMcpServers(ctx, ctx.sessionId);
+      const attached_mcp_servers = await listAttachedMcpServers(ctx, currentSessionId);
 
       return textResult({
         session,
@@ -289,23 +277,22 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
     'agor_sessions_get_current_context',
     {
       description:
-        'Get a lean orientation snapshot for the current session in ONE call. Returns deduplicated context: session identity, user, git state, worktree (zone, issue/PR, notes, environment), board (with zones), repo (slug, default branch), genealogy, and sibling sessions. Every field appears exactly once. Use get_current or entity-specific tools for full details.',
+        'Lean orientation snapshot for the current session: identity, user, git, worktree, board, repo, genealogy, siblings. Deduplicated.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         includeSiblings: z
           .boolean()
           .optional()
-          .describe(
-            'Include other active sessions in the same worktree (default: true). Set false to reduce response size.'
-          ),
+          .describe('Include sibling sessions in same worktree (default: true)'),
       }),
     },
     async (args) => {
+      const currentSessionId = requireCurrentSession(ctx, 'agor_sessions_get_current_context');
       const includeSiblings = args.includeSiblings !== false;
 
       // Fetch session and user in parallel (no dependencies)
       const [session, user] = await Promise.all([
-        ctx.app.service('sessions').get(ctx.sessionId, ctx.baseServiceParams),
+        ctx.app.service('sessions').get(currentSessionId, ctx.baseServiceParams),
         ctx.app.service('users').get(ctx.userId, ctx.baseServiceParams),
       ]);
 
@@ -466,34 +453,28 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
     'agor_sessions_spawn',
     {
       description:
-        'Spawn a child session (subsession) for delegating work to another agent. Inherits the current worktree and tracks parent-child genealogy. Use for subtasks like "run tests", "review this code", or "fix linting errors". Configuration is inherited from parent (same agent) or user defaults (different agent).',
+        'Spawn a child session in the current worktree. Tracks parent-child genealogy. Config inherits from parent.',
       inputSchema: z.object({
-        prompt: z.string().describe('The prompt/task for the subsession agent to execute'),
-        title: z
-          .string()
-          .optional()
-          .describe('Optional title for the session (defaults to first 100 chars of prompt)'),
+        prompt: z.string().describe('Prompt for the subsession'),
+        title: z.string().optional().describe('Defaults to first 100 chars of prompt'),
         agenticTool: z
           .enum(['claude-code', 'codex', 'gemini', 'opencode'])
           .optional()
-          .describe('Which agent to use for the subsession (defaults to same as parent)'),
+          .describe('Agent (default: parent)'),
         enableCallback: z
           .boolean()
           .optional()
-          .describe('Enable callback to parent on completion (default: true)'),
+          .describe('Callback parent on completion (default: true)'),
         includeLastMessage: z
           .boolean()
           .optional()
-          .describe("Include child's final result in callback (default: true)"),
+          .describe('Include final result in callback (default: true)'),
         includeOriginalPrompt: z
           .boolean()
           .optional()
-          .describe('Include original spawn prompt in callback (default: false)'),
-        extraInstructions: z
-          .string()
-          .optional()
-          .describe('Extra instructions appended to spawn prompt'),
-        taskId: z.string().optional().describe('Optional task ID to link the spawned session to'),
+          .describe('Include spawn prompt in callback (default: false)'),
+        extraInstructions: z.string().optional().describe('Appended to spawn prompt'),
+        taskId: z.string().optional().describe('Link to task'),
         mcpServerIds: z
           .array(z.string())
           .optional()
@@ -504,6 +485,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       }),
     },
     async (args) => {
+      const currentSessionId = requireCurrentSession(ctx, 'agor_sessions_spawn');
       const spawnData: Partial<import('@agor/core/types').SpawnConfig> = {
         prompt: args.prompt,
         title: args.title,
@@ -519,7 +501,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
 
       const childSession = await (
         ctx.app.service('sessions') as unknown as SessionsServiceImpl
-      ).spawn(ctx.sessionId, spawnData, ctx.baseServiceParams);
+      ).spawn(currentSessionId, spawnData, ctx.baseServiceParams);
 
       const task = await ctx.app.service('/sessions/:id/prompt').create(
         {
@@ -547,23 +529,19 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
     'agor_sessions_prompt',
     {
       description:
-        'Prompt an existing session to continue work. Supports four modes: continue (append to conversation), fork (branch at decision point), subsession (delegate to child agent), or btw (ephemeral fork — ask a side question without disrupting the target session, even if running). Configuration is inherited from parent session or user defaults.',
+        'Prompt a session. Modes: continue (append), fork (sibling), subsession (child), btw (ephemeral fork; auto-callback + auto-archive).',
       inputSchema: z.object({
-        sessionId: z.string().describe('Session ID to prompt (UUIDv7 or short ID)'),
-        prompt: z.string().describe('The prompt/task to execute'),
+        sessionId: z.string().describe('Target session ID'),
+        prompt: z.string().describe('Prompt to execute'),
         mode: z
           .enum(['continue', 'fork', 'subsession', 'btw'])
-          .describe(
-            'How to route the work: continue (add to existing session), fork (create sibling session), subsession (create child session), btw (ephemeral fork — works even on running sessions, auto-callbacks result to caller, auto-archives when done)'
-          ),
+          .describe('continue | fork | subsession | btw'),
         agenticTool: z
           .enum(['claude-code', 'codex', 'gemini'])
           .optional()
-          .describe(
-            'Agent for subsession (subsession mode only, defaults to parent agent). Fork mode always uses parent agent.'
-          ),
-        title: z.string().optional().describe('Session title (for fork/subsession only)'),
-        taskId: z.string().optional().describe('Fork/spawn point task ID (optional)'),
+          .describe('subsession mode only; defaults to parent'),
+        title: z.string().optional().describe('For fork/subsession'),
+        taskId: z.string().optional().describe('Fork/spawn point task ID'),
         mcpServerIds: z
           .array(z.string())
           .optional()
@@ -628,10 +606,11 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
         if (args.title) forkPatch.title = args.title;
 
         if (mode === 'btw') {
+          const currentSessionId = requireCurrentSession(ctx, 'agor_sessions_prompt');
           forkPatch.fork_origin = 'btw';
           forkPatch.callback_config = {
             enabled: true,
-            callback_session_id: ctx.sessionId,
+            callback_session_id: currentSessionId,
             callback_created_by: ctx.userId,
             callback_mode: 'once',
           };
@@ -707,50 +686,34 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
     'agor_sessions_create',
     {
       description:
-        'Create a new session in an existing worktree. Use for starting fresh work on a new task in the same codebase (e.g., new feature branch, separate investigation). Unlike spawn, this creates an independent session with no parent-child relationship. MCP servers are inherited from the worktree (if configured) or user defaults, or can be overridden via `mcpServerIds`. Model selection falls back to user defaults and can be overridden via `modelConfig` (accepts either a model ID string like "claude-opus-4-6" or a full {mode, model, effort, provider} object — call `agor_models_list` to discover valid model IDs per agenticTool). Supports optional callbacks to notify the creating session when the new session completes.',
+        'Create an independent session in a worktree (no parent-child link). MCPs inherit from worktree > user defaults unless overridden; `modelConfig` can pin a model.',
       inputSchema: z.object({
-        worktreeId: z.string().describe('Worktree ID where the session will run (required)'),
-        agenticTool: z
-          .enum(['claude-code', 'codex', 'gemini'])
-          .describe('Which agent to use for this session (required)'),
-        title: z.string().optional().describe('Session title (optional)'),
-        description: z.string().optional().describe('Session description (optional)'),
-        contextFiles: z
-          .array(z.string())
-          .optional()
-          .describe('Context file paths to load (optional)'),
-        initialPrompt: z
-          .string()
-          .optional()
-          .describe('Initial prompt to execute immediately after creating the session (optional)'),
+        worktreeId: z.string().describe('Worktree ID (required)'),
+        agenticTool: z.enum(['claude-code', 'codex', 'gemini']).describe('Agent (required)'),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        contextFiles: z.array(z.string()).optional().describe('Context file paths'),
+        initialPrompt: z.string().optional().describe('Prompt to execute immediately'),
         enableCallback: z
           .boolean()
           .optional()
-          .describe(
-            'Enable callback to the creating session when the new session completes (default: false). When true, the creating session will receive a completion notification.'
-          ),
+          .describe('Notify creator on completion (default: false)'),
         callbackSessionId: z
           .string()
           .optional()
-          .describe(
-            'Session ID to notify on completion (defaults to the current/creating session when enableCallback is true)'
-          ),
+          .describe('Session to notify (default: creating session)'),
         includeLastMessage: z
           .boolean()
           .optional()
-          .describe(
-            "Include the new session's final result in the callback message (default: true)"
-          ),
+          .describe('Include final result in callback (default: true)'),
         includeOriginalPrompt: z
           .boolean()
           .optional()
-          .describe('Include the original prompt in the callback message (default: false)'),
+          .describe('Include original prompt in callback (default: false)'),
         callbackMode: z
           .enum(['once', 'persistent'])
           .optional()
-          .describe(
-            'Callback firing mode: "once" (default) fires on first completion then auto-disables, "persistent" fires on every completion'
-          ),
+          .describe('"once" (default) or "persistent"'),
         mcpServerIds: z
           .array(z.string())
           .optional()
@@ -812,7 +775,11 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       const callbackConfig: Record<string, unknown> = {};
 
       // Determine the effective callback target session ID
-      const effectiveCallbackSessionId = args.callbackSessionId || ctx.sessionId;
+      const currentSessionId =
+        args.callbackSessionId || args.enableCallback
+          ? requireCurrentSession(ctx, 'agor_sessions_create')
+          : undefined;
+      const effectiveCallbackSessionId = args.callbackSessionId || currentSessionId;
       const wantsCallback = args.enableCallback || args.callbackSessionId;
 
       // Validate user has prompt permission on the callback target session's worktree

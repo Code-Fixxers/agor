@@ -11,6 +11,11 @@
 
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 
+const TOOL_DESCRIPTION_MAX = 180;
+const TOOL_SUMMARY_DESCRIPTION_MAX = 100;
+const ROOT_SCHEMA_DESCRIPTION_MAX = 120;
+const NESTED_SCHEMA_DESCRIPTION_MAX = 80;
+
 export interface ToolEntry {
   name: string;
   description: string;
@@ -41,20 +46,49 @@ export interface SearchOptions {
 
 /** Domain descriptions for the domain listing. */
 const DOMAIN_DESCRIPTIONS: Record<string, string> = {
-  sessions: 'Agent conversations with genealogy (fork/spawn), task tracking, and message history',
-  repos: 'Repository registration and management',
-  worktrees: 'Git worktrees with isolated branches, board placement, and zone pinning',
-  environment: 'Start/stop/health/logs/nuke for worktree dev environments',
-  boards: 'Spatial canvases with zones for organizing worktrees and cards',
-  cards: 'Kanban-style cards and card type definitions on boards',
-  users: 'User accounts, profiles, preferences, and administration',
-  analytics: 'Usage and cost tracking leaderboard',
-  'mcp-servers': 'External MCP server configuration and OAuth management',
-  proxies: 'Configured HTTP proxies for third-party APIs (Shortcut, Linear, Jira, etc.)',
+  sessions: 'Agent sessions, genealogy, prompts, tasks, messages',
+  repos: 'Repositories',
+  worktrees: 'Git worktrees, zones, assistants',
+  environment: 'Worktree dev environments',
+  boards: 'Spatial canvases',
+  cards: 'Kanban cards + types',
+  artifacts: 'Sandpack artifacts',
+  users: 'Users & admin',
+  analytics: 'Usage leaderboard',
+  'mcp-servers': 'External MCP configs',
+  proxies: 'Configured HTTP proxies for third-party APIs',
 };
 
 /** Tools always visible in `tools/list` even when search mode is enabled. */
 const ALWAYS_VISIBLE = new Set(['agor_search_tools', 'agor_execute_tool']);
+
+function normalizeText(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function compactJsonSchema(value: unknown, depth = 0): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => compactJsonSchema(item, depth + 1));
+  }
+  if (!value || typeof value !== 'object') return value;
+
+  const input = value as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
+
+  for (const [key, child] of Object.entries(input)) {
+    if (key === 'title') continue;
+    if (key === 'description' && typeof child === 'string') {
+      const maxLength = depth <= 1 ? ROOT_SCHEMA_DESCRIPTION_MAX : NESTED_SCHEMA_DESCRIPTION_MAX;
+      output[key] = normalizeText(child, maxLength);
+      continue;
+    }
+    output[key] = compactJsonSchema(child, depth + 1);
+  }
+
+  return output;
+}
 
 export class ToolRegistry {
   private tools: Map<string, ToolEntry> = new Map();
@@ -66,7 +100,12 @@ export class ToolRegistry {
   }
 
   register(entry: Omit<ToolEntry, 'domain'>): void {
-    this.tools.set(entry.name, { ...entry, domain: this.currentDomain });
+    this.tools.set(entry.name, {
+      ...entry,
+      description: normalizeText(entry.description, TOOL_DESCRIPTION_MAX),
+      inputSchema: compactJsonSchema(entry.inputSchema) as Record<string, unknown>,
+      domain: this.currentDomain,
+    });
   }
 
   get size(): number {
@@ -151,7 +190,7 @@ export class ToolRegistry {
   static toSummaries(entries: ToolEntry[]): ToolSummary[] {
     return entries.map((e) => ({
       name: e.name,
-      description: e.description,
+      description: normalizeText(e.description, TOOL_SUMMARY_DESCRIPTION_MAX),
       domain: e.domain,
     }));
   }

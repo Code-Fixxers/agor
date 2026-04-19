@@ -89,17 +89,17 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'agor_cards_list',
     {
-      description:
-        'List cards with optional filtering by board, card type, zone, search query, or archive status.',
+      description: 'List cards. Archived cards are excluded by default.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         boardId: z.string().optional().describe('Filter by board ID'),
         cardTypeId: z.string().optional().describe('Filter by card type ID'),
         zoneId: z.string().optional().describe('Filter by zone ID (requires boardId)'),
         search: z.string().optional().describe('Search query for card titles/descriptions'),
-        archived: z.boolean().optional().describe('Filter by archive status'),
-        limit: z.number().optional().describe('Maximum number of results (default: 50)'),
-        offset: z.number().optional().describe('Number of results to skip (default: 0)'),
+        includeArchived: z.boolean().optional().describe('Include archived (default: false)'),
+        archived: z.boolean().optional().describe('ONLY archived (overrides includeArchived)'),
+        limit: z.number().optional().describe('Default: 50'),
+        offset: z.number().optional().describe('Default: 0'),
       }),
     },
     async (args) => {
@@ -109,32 +109,48 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
       const cardTypeId = coerceString(args.cardTypeId);
       const zoneId = coerceString(args.zoneId);
       const search = coerceString(args.search);
-      const archived = args.archived === true;
+      // archived semantics: true = only archived, false/undefined with includeArchived = both, otherwise only non-archived
+      const archivedFilter: boolean | undefined =
+        args.archived === true ? true : args.includeArchived ? undefined : false;
       const limit = typeof args.limit === 'number' ? args.limit : 50;
       const offset = typeof args.offset === 'number' ? args.offset : 0;
 
       let cardsList: Card[];
       if (zoneId && boardId) {
-        cardsList = await cardsService.findByZoneId(boardId as never, zoneId);
+        const all = await cardsService.findByZoneId(boardId as never, zoneId);
+        const filtered =
+          archivedFilter === undefined
+            ? all
+            : all.filter((c) => Boolean(c.archived) === archivedFilter);
+        cardsList = filtered.slice(offset, offset + limit);
       } else if (search) {
         cardsList = await cardsService.searchCards(search, {
           boardId: boardId as never,
-          archived,
+          ...(archivedFilter !== undefined && { archived: archivedFilter }),
           limit,
           offset,
         });
       } else if (cardTypeId) {
-        cardsList = await cardsService.findByCardTypeId(cardTypeId as never, { limit, offset });
+        // Pull a larger window so post-filter can still fill `limit`.
+        const all = await cardsService.findByCardTypeId(cardTypeId as never, {
+          limit: limit + offset,
+          offset: 0,
+        });
+        const filtered =
+          archivedFilter === undefined
+            ? all
+            : all.filter((c) => Boolean(c.archived) === archivedFilter);
+        cardsList = filtered.slice(offset, offset + limit);
       } else if (boardId) {
         cardsList = await cardsService.findByBoardId(boardId as never, {
-          archived,
+          ...(archivedFilter !== undefined && { archived: archivedFilter }),
           limit,
           offset,
         });
       } else {
-        const result = await cardsService.find({
-          query: { $limit: limit, $skip: offset },
-        } as never);
+        const query: Record<string, unknown> = { $limit: limit, $skip: offset };
+        if (archivedFilter !== undefined) query.archived = archivedFilter;
+        const result = await cardsService.find({ query } as never);
         cardsList = 'data' in result ? result.data : result;
       }
 

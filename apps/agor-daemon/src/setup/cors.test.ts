@@ -7,6 +7,7 @@
  *   - Sandpack origins are reachable but excluded from `isAllowedOrigin`
  *     (so they don't get credentials / private-network).
  *   - Configured methods/headers/max_age are passed through to cors().
+ *   - MCP streamable-HTTP headers are always allowed/exposed.
  */
 
 import type { AgorConfig } from '@agor/core/config';
@@ -142,8 +143,25 @@ describe('buildCorsConfig', () => {
       }),
     });
     expect(result.extraOptions.methods).toEqual(['GET', 'POST']);
-    expect(result.extraOptions.allowedHeaders).toEqual(['Authorization', 'X-MCP-Token']);
+    expect(result.extraOptions.allowedHeaders).toEqual([
+      'Authorization',
+      'X-MCP-Token',
+      'X-API-Key',
+      'X-Agor-Session-Id',
+      'mcp-session-id',
+    ]);
     expect(result.extraOptions.maxAge).toBe(600);
+    expect(result.extraOptions.exposedHeaders).toEqual(['mcp-session-id']);
+  });
+
+  it('exposes mcp-session-id even when allowedHeaders is unset', () => {
+    const result = buildCorsConfig({
+      uiPort: 5173,
+      isCodespaces: false,
+      resolved: resolve(),
+    });
+    expect(result.extraOptions.allowedHeaders).toBeUndefined();
+    expect(result.extraOptions.exposedHeaders).toEqual(['mcp-session-id']);
   });
 
   it('mode=null-origin only accepts Origin: null', () => {
