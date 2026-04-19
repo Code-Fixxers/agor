@@ -1,5 +1,7 @@
 /**
- * Device detection utilities for mobile site routing
+ * Device detection utilities for responsive UX affordances.
+ *
+ * Note: these helpers must never be used to control route ownership.
  */
 
 /**
@@ -26,9 +28,9 @@ export function isMobileDevice(): boolean {
 }
 
 /**
- * Check if we're currently on a mobile route
+ * Check if viewport should be treated as touch-first for UI affordances.
  */
-export function isOnMobileRoute(): boolean {
+export function isCompactViewport(): boolean {
   if (typeof window === 'undefined') return false;
-  return window.location.pathname.includes('/m');
+  return window.innerWidth < 768;
 }
