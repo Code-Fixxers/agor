@@ -34,17 +34,20 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
   server.registerTool(
     'agor_worktrees_get',
     {
-      description:
-        'Get detailed information about a worktree, including path, branch, and git state',
+      description: 'Get a worktree (path, branch, git state). Sessions omitted by default.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         worktreeId: z.string().describe('Worktree ID (UUIDv7 or short ID)'),
+        includeSessions: z
+          .boolean()
+          .optional()
+          .describe('Include sessions in response (default: false)'),
       }),
     },
     async (args) => {
       const worktreeParams: WorktreeParams = {
         ...ctx.baseServiceParams,
-        _include_sessions: true,
+        _include_sessions: args.includeSessions === true,
         _last_message_truncation_length: 500,
       };
       const worktree = await ctx.app
@@ -343,87 +346,46 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
     'agor_worktrees_update',
     {
       description:
-        'Update metadata for an existing worktree (issue/PR URLs, notes, board placement, custom context, RBAC permissions, owners)',
+        'Update worktree metadata (issue/PR URLs, notes, board, custom context, RBAC, owners).',
       annotations: { idempotentHint: true },
       inputSchema: z.object({
         worktreeId: z
           .string()
           .optional()
-          .describe(
-            'Worktree ID to update. Optional when calling from a session with a bound worktree.'
-          ),
+          .describe('Optional when current session has a bound worktree'),
         issueUrl: z
           .string()
           .nullable()
           .optional()
-          .describe('Issue URL to associate. Pass null to clear. Must be http(s) when provided.'),
+          .describe('Issue URL (http(s)). null to clear.'),
         pullRequestUrl: z
           .string()
           .nullable()
           .optional()
-          .describe(
-            'Pull request URL to associate. Pass null to clear. Must be http(s) when provided.'
-          ),
-        notes: z
-          .string()
-          .nullable()
-          .optional()
-          .describe(
-            'Freeform notes about the worktree (markdown supported). Pass null or empty string to clear.'
-          ),
-        boardId: z
-          .string()
-          .nullable()
-          .optional()
-          .describe('Board ID to place this worktree on. Pass null to remove from any board.'),
+          .describe('PR URL (http(s)). null to clear.'),
+        notes: z.string().nullable().optional().describe('Markdown notes. null/"" to clear.'),
+        boardId: z.string().nullable().optional().describe('Board ID. null to unplace.'),
         customContext: z
           .record(z.string(), z.unknown())
           .nullable()
           .optional()
-          .describe(
-            'Custom context object for templates and automations. Pass null to clear existing context.'
-          ),
+          .describe('Template/automation context. null to clear.'),
         mcpServerIds: z
           .array(z.string())
           .nullable()
           .optional()
-          .describe(
-            'Default MCP server IDs for new sessions in this worktree. Sessions inherit these unless they explicitly specify their own. Pass null to clear.'
-          ),
+          .describe('Default MCP IDs for new sessions. null to clear.'),
         // RBAC fields (optional, safe to ignore for single-user setups)
         othersCan: z
           .enum(WORKTREE_PERMISSION_LEVELS)
           .optional()
-          .describe(
-            'App-layer permission for non-owner users. ' +
-              '"none" = no access, "view" = read-only, "session" = can create & prompt own sessions, ' +
-              '"prompt" = can prompt ANY session (including other users\'), "all" = full access. ' +
-              'Always effective regardless of Unix isolation mode. Single-user setups can ignore this.'
-          ),
+          .describe('Non-owner permission: none | view | session | prompt | all'),
         othersFsAccess: z
           .enum(['none', 'read', 'write'])
           .optional()
-          .describe(
-            'OS-level filesystem permission for non-owner users. ' +
-              '"none" = no filesystem access, "read" = read-only, "write" = read-write. ' +
-              'Only effective when Unix isolation (AGOR_UNIX_MODE) is configured. ' +
-              'Has no effect in simple mode. Single-user setups can ignore this.'
-          ),
-        addOwnerIds: z
-          .array(z.string())
-          .optional()
-          .describe(
-            'User IDs to ADD as owners of this worktree. ' +
-              'Owners have full access regardless of othersCan/othersFsAccess settings. ' +
-              'Idempotent — adding an existing owner is a no-op.'
-          ),
-        removeOwnerIds: z
-          .array(z.string())
-          .optional()
-          .describe(
-            'User IDs to REMOVE as owners of this worktree. ' +
-              'Idempotent — removing a non-owner is a no-op.'
-          ),
+          .describe('Non-owner filesystem: none | read | write (requires Unix isolation mode)'),
+        addOwnerIds: z.array(z.string()).optional().describe('User IDs to add as owners'),
+        removeOwnerIds: z.array(z.string()).optional().describe('User IDs to remove as owners'),
       }),
     },
     async (args) => {

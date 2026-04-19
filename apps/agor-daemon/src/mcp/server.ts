@@ -85,44 +85,14 @@ export function coerceJsonRecord(value: unknown): unknown {
  */
 export function textResult(data: unknown) {
   return {
-    content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+    content: [{ type: 'text' as const, text: JSON.stringify(data) }],
   };
 }
 
 /** Server instructions shown to agents when tool search is enabled. */
-const SERVER_INSTRUCTIONS = `Agor is a multiplayer canvas for orchestrating AI coding agents. It manages git worktrees, tracks AI conversations, visualizes work on spatial boards, and enables real-time collaboration.
-
-This server uses progressive tool discovery. Only 2 tools are listed directly — use them to discover and call all available tools:
-
-- agor_search_tools: Browse/search tools by keyword, domain, or annotation. Call with no args for a domains overview.
-- agor_execute_tool: Call any discovered tool by name with arguments.
-
-Domains:
-- sessions: Agent conversations with genealogy (fork/spawn), task tracking, and message history
-- repos: Repository registration and management
-- worktrees: Git worktrees with isolated branches, board placement, zone pinning, and assistant discovery
-- environment: Start/stop/health/logs for worktree dev environments
-- boards: Spatial canvases with zones for organizing worktrees and cards
-- cards: Kanban-style cards and card type definitions on boards
-- users: User accounts, profiles, preferences, and administration
-- analytics: Usage and cost tracking leaderboard
-- mcp-servers: External MCP server configuration and OAuth management
-
-Common workflows:
-
-Create a worktree and start a session:
-1. agor_repos_list → get repoId
-2. agor_boards_list → get boardId
-3. agor_worktrees_create(repoId, boardId, worktreeName) → get worktreeId
-4. agor_sessions_create(worktreeId, agenticTool, initialPrompt)
-
-Delegate a subtask to a child agent:
-1. agor_sessions_spawn(prompt) — inherits current worktree, tracks parent-child genealogy
-
-Continue or fork an existing session:
-1. agor_sessions_prompt(sessionId, prompt, mode:"continue"|"fork"|"subsession")
-
-Discover tools: search (list detail) → search (full detail for schemas) → execute`;
+const SERVER_INSTRUCTIONS = `Agor MCP uses progressive tool discovery. Two meta-tools are listed:
+- agor_search_tools: browse/filter tools. No args = domains overview. Use detail:"full" to fetch inputSchema.
+- agor_execute_tool: invoke any tool by name. Args go under \`arguments\` (or flattened at top level).`;
 
 /**
  * Module-level cached registry and tools/list response.

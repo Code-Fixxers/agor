@@ -41,15 +41,16 @@ export interface SearchOptions {
 
 /** Domain descriptions for the domain listing. */
 const DOMAIN_DESCRIPTIONS: Record<string, string> = {
-  sessions: 'Agent conversations with genealogy (fork/spawn), task tracking, and message history',
-  repos: 'Repository registration and management',
-  worktrees: 'Git worktrees with isolated branches, board placement, and zone pinning',
-  environment: 'Start/stop/health/logs/nuke for worktree dev environments',
-  boards: 'Spatial canvases with zones for organizing worktrees and cards',
-  cards: 'Kanban-style cards and card type definitions on boards',
-  users: 'User accounts, profiles, preferences, and administration',
-  analytics: 'Usage and cost tracking leaderboard',
-  'mcp-servers': 'External MCP server configuration and OAuth management',
+  sessions: 'Agent sessions, genealogy, prompts, tasks, messages',
+  repos: 'Repositories',
+  worktrees: 'Git worktrees, zones, assistants',
+  environment: 'Worktree dev environments',
+  boards: 'Spatial canvases',
+  cards: 'Kanban cards + types',
+  artifacts: 'Sandpack artifacts',
+  users: 'Users & admin',
+  analytics: 'Usage leaderboard',
+  'mcp-servers': 'External MCP configs',
 };
 
 /** Tools always visible in `tools/list` even when search mode is enabled. */
