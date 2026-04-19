@@ -41,6 +41,10 @@ describe('PWA base-path compatibility', () => {
     const serviceWorker = readFileSync(serviceWorkerPath, 'utf8');
     expect(serviceWorker).toContain('NO_CACHE_PREFIXES');
     expect(serviceWorker).toContain('isNoCacheRequest');
+    // `/api/v1/*` (personal API keys) and `/opencode/*` (health, models) are
+    // JSON endpoints that must not be served from the asset SWR cache.
+    expect(serviceWorker).toMatch(/['"]api['"]/);
+    expect(serviceWorker).toMatch(/['"]opencode['"]/);
   });
 
   it('service worker handles SKIP_WAITING message for updates', () => {
