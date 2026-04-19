@@ -77,34 +77,21 @@ export function registerSearchTools(server: McpServer, registry: ToolRegistry): 
     'agor_search_tools',
     {
       description:
-        'Search and browse available Agor MCP tools. Call with no args to see domains overview. Filter by domain, keyword, or annotation. Use detail="full" to get input schemas before calling agor_execute_tool.',
+        'Browse/search Agor MCP tools. No args = domains overview. Use detail:"full" to get inputSchema.',
       inputSchema: z.object({
-        query: z
-          .string()
-          .optional()
-          .describe(
-            'Search keywords (e.g. "worktree create", "cards", "environment"). Omit to browse by domain.'
-          ),
-        domain: z
-          .string()
-          .optional()
-          .describe(
-            'Filter by domain (e.g. "sessions", "worktrees", "boards", "cards", "environment")'
-          ),
+        query: z.string().optional().describe('Keywords (omit to browse by domain)'),
+        domain: z.string().optional().describe('Filter by domain'),
         detail: z
           .enum(['list', 'full'])
           .optional()
-          .describe(
-            'Detail level: "list" returns name+description (default), "full" includes inputSchema and annotations'
-          ),
-        read_only: z.boolean().optional().describe('Filter to read-only tools only'),
-        destructive: z.boolean().optional().describe('Filter to destructive tools only'),
-        max_results: z.number().optional().describe('Max results to return (default: 10)'),
+          .describe('"list" (default) = name+description; "full" = includes inputSchema'),
+        read_only: z.boolean().optional().describe('Filter read-only tools'),
+        destructive: z.boolean().optional().describe('Filter destructive tools'),
+        max_results: z.number().optional().describe('Default: 10'),
       }),
       annotations: { readOnlyHint: true },
     },
     async (args) => {
-      const domains = registry.listDomains();
       const detail = args.detail ?? 'list';
 
       // No query and no domain filter — return domains overview only
@@ -115,9 +102,8 @@ export function registerSearchTools(server: McpServer, registry: ToolRegistry): 
         args.destructive === undefined
       ) {
         return textResult({
-          total_available: registry.size,
-          domains,
-          hint: 'Use domain or query params to discover specific tools. Use detail="full" to get input schemas.',
+          total: registry.size,
+          domains: registry.listDomains(),
         });
       }
 
@@ -131,9 +117,7 @@ export function registerSearchTools(server: McpServer, registry: ToolRegistry): 
       const tools = detail === 'full' ? results : ToolRegistry.toSummaries(results);
 
       return textResult({
-        total_available: registry.size,
-        domains,
-        results_count: results.length,
+        count: results.length,
         tools,
       });
     }
@@ -142,11 +126,10 @@ export function registerSearchTools(server: McpServer, registry: ToolRegistry): 
   server.registerTool(
     'agor_execute_tool',
     {
-      description:
-        'Execute an Agor MCP tool by name. Use agor_search_tools first to discover available tools and their input schemas, then call this to invoke them.',
+      description: 'Invoke an Agor MCP tool by name. Discover tools via agor_search_tools first.',
       inputSchema: z
         .object({
-          tool_name: z.string().describe('The tool name to execute (e.g. "agor_worktrees_list")'),
+          tool_name: z.string().describe('Tool name (e.g. "agor_worktrees_list")'),
           arguments: z
             .preprocess(
               // Some MCP clients double-serialize nested objects as JSON strings.
@@ -155,7 +138,7 @@ export function registerSearchTools(server: McpServer, registry: ToolRegistry): 
               z.record(z.string(), z.unknown())
             )
             .optional()
-            .describe('Arguments to pass to the tool, matching its input schema'),
+            .describe('Arguments matching the tool\'s inputSchema'),
         })
         .passthrough(),
     },
