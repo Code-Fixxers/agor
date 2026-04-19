@@ -47,6 +47,7 @@ const DOMAIN_DESCRIPTIONS: Record<string, string> = {
   environment: 'Start/stop/health/logs/nuke for worktree dev environments',
   boards: 'Spatial canvases with zones for organizing worktrees and cards',
   cards: 'Kanban-style cards and card type definitions on boards',
+  artifacts: 'Live Sandpack artifacts published to boards',
   users: 'User accounts, profiles, preferences, and administration',
   analytics: 'Usage and cost tracking leaderboard',
   'mcp-servers': 'External MCP server configuration and OAuth management',
