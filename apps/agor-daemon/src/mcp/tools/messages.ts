@@ -25,7 +25,7 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
     'agor_messages_list',
     {
       description:
-        'Page through session conversation messages or search across sessions by keyword. When sessionId is provided, returns messages chronologically (like reading a transcript). When search is provided without sessionId, finds messages across all sessions. Tool calls are filtered out by default for cleaner output.',
+        'Page through a session\'s messages or search across sessions. With sessionId: chronological transcript. Without sessionId: searches active sessions only (archived excluded unless includeArchived=true). Tool calls filtered by default.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         sessionId: z
@@ -60,6 +60,12 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
             'Sort order by message index. Default: "asc" when browsing a session, "desc" when searching.'
           ),
         role: z.enum(['user', 'assistant']).optional().describe('Filter by message role'),
+        includeArchived: z
+          .boolean()
+          .optional()
+          .describe(
+            'Include messages from archived sessions (default: false). Ignored when sessionId/taskId is explicitly set.'
+          ),
       }),
     },
     async (args) => {
@@ -73,6 +79,7 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
 
       const sessionId = sessionIdRaw ? await resolveSessionId(ctx, sessionIdRaw) : undefined;
       const taskId = taskIdRaw ? await resolveTaskId(ctx, taskIdRaw) : undefined;
+      const includeArchived = args.includeArchived === true;
 
       const includeToolCalls = args.includeToolCalls === true;
       const contentMode = args.contentMode === 'full' ? 'full' : 'preview';
@@ -114,6 +121,22 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
             ? and(...orGroups[0])
             : or(...orGroups.map((andTerms) => and(...andTerms)));
         if (searchCondition) conditions.push(searchCondition);
+      }
+
+      // Default-exclude messages from archived sessions for unscoped queries.
+      // An explicit sessionId/taskId (caller opted in) bypasses this filter.
+      if (!sessionId && !taskId && !includeArchived) {
+        const activeSessions = await ctx.app.service('sessions').find({
+          query: { archived: false, $limit: 10000, $select: ['session_id'] },
+          ...ctx.baseServiceParams,
+        });
+        const activeIds = (
+          Array.isArray(activeSessions) ? activeSessions : activeSessions.data
+        ).map((s: { session_id: string }) => s.session_id);
+        if (activeIds.length === 0) {
+          return textResult({ messages: [], total: 0, offset, limit });
+        }
+        conditions.push(inArray(messagesTable.session_id, activeIds));
       }
 
       // RBAC enforcement: when worktree_rbac is enabled, restrict this search
