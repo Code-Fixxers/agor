@@ -90,9 +90,17 @@ export function textResult(data: unknown) {
 }
 
 /** Server instructions shown to agents when tool search is enabled. */
-const SERVER_INSTRUCTIONS = `Agor MCP uses progressive tool discovery. Two meta-tools are listed:
-- agor_search_tools: browse/filter tools. No args = domains overview. Use detail:"full" to fetch inputSchema.
-- agor_execute_tool: invoke any tool by name. Args go under \`arguments\` (or flattened at top level).`;
+const SERVER_INSTRUCTIONS = `Agor: multiplayer canvas for orchestrating AI coding agents (git worktrees, session genealogy, spatial boards).
+
+Progressive tool discovery — only two tools are listed:
+- agor_search_tools: no args = domains overview. Pass a domain or query to list tools. Use detail:"full" to fetch inputSchema before execute.
+- agor_execute_tool: invoke any tool by name. Args go under \`arguments\` (or flattened at top level).
+
+Common workflows:
+- Orient yourself: agor_execute_tool agor_sessions_get_current_context
+- Create a worktree + start a session: agor_repos_list → agor_boards_list → agor_worktrees_create → agor_sessions_create
+- Delegate a subtask: agor_sessions_spawn(prompt) — inherits current worktree, tracks parent-child genealogy
+- Continue/fork an existing session: agor_sessions_prompt(sessionId, prompt, mode:"continue"|"fork"|"subsession"|"btw")`;
 
 /**
  * Module-level cached registry and tools/list response.
