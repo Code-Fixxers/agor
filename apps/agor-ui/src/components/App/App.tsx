@@ -22,7 +22,7 @@ import type {
   Worktree,
 } from '@agor-live/client';
 import { hasMinimumRole, PermissionScope } from '@agor-live/client';
-import { Layout, Upload } from 'antd';
+import { Drawer, Layout, Upload } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   type ImperativePanelHandle,
@@ -36,6 +36,7 @@ import { AppEntityDataProvider, AppLiveDataProvider } from '../../contexts/AppDa
 import { useBoardTitle } from '../../hooks/useBoardTitle';
 import { useEventStream } from '../../hooks/useEventStream';
 import { useFaviconStatus } from '../../hooks/useFaviconStatus';
+import { useIsCompactViewport } from '../../hooks/useIsCompactViewport';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { usePresence } from '../../hooks/usePresence';
 import { useRecentBoards } from '../../hooks/useRecentBoards';
@@ -52,6 +53,7 @@ import type { AssistantTabResult } from '../CreateDialog/tabs/AssistantTab';
 import type { WorktreeTabConfig } from '../CreateDialog/tabs/WorktreeTab';
 import { EnvironmentLogsModal } from '../EnvironmentLogsModal';
 import { EventStreamPanel } from '../EventStreamPanel';
+import { MobileBoardView } from '../mobile/MobileBoardView';
 import { NewSessionButton } from '../NewSessionButton';
 import { type NewSessionConfig, NewSessionModal } from '../NewSessionModal';
 import { SessionCanvas, type SessionCanvasRef } from '../SessionCanvas';
@@ -617,6 +619,10 @@ export const App: React.FC<AppProps> = ({
   const sessionSettingsSession = sessionSettingsId ? sessionById.get(sessionSettingsId) : null;
   const currentBoard = boardById.get(currentBoardId);
 
+  // Compact viewport (phones, narrow tablets) get a list/drawer-based layout
+  // instead of the React Flow canvas which is hard to navigate on touch.
+  const isCompact = useIsCompactViewport();
+
   // Update browser tab title based on current board
   useBoardTitle(currentBoard);
 
@@ -814,6 +820,109 @@ export const App: React.FC<AppProps> = ({
               instanceDescription={instanceDescription}
             />
             <Content style={{ position: 'relative', overflow: 'hidden', display: 'flex' }}>
+              {isCompact ? (
+                <div
+                  style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}
+                >
+                  <MobileBoardView
+                    board={currentBoard || null}
+                    worktrees={boardWorktrees}
+                    sessionsByWorktree={sessionsByWorktree}
+                    commentById={commentById}
+                    boardObjectById={boardObjectById}
+                    repoById={repoById}
+                    onSessionClick={handleSessionClick}
+                    onCreateSession={() => {
+                      setNewWorktreeDefaultPosition(null);
+                      setCreateDialogOpen(true);
+                    }}
+                    onOpenComments={() => setCommentsPanelCollapsed(false)}
+                    onOpenWorktree={(worktreeId) => setWorktreeModalWorktreeId(worktreeId)}
+                    onCreateSessionForWorktree={(worktreeId) => setNewSessionWorktreeId(worktreeId)}
+                  />
+                  <Drawer
+                    open={!!effectiveSelectedSessionId}
+                    onClose={handleCloseSessionPanel}
+                    placement="right"
+                    width="100%"
+                    destroyOnClose={false}
+                    styles={{ body: { padding: 0 }, header: { display: 'none' } }}
+                    rootStyle={{ zIndex: 1050 }}
+                    closable={false}
+                  >
+                    {effectiveSelectedSessionId && (
+                      <SessionPanel
+                        client={client}
+                        session={selectedSession}
+                        worktree={selectedSessionWorktree}
+                        currentUserId={user?.user_id}
+                        sessionMcpServerIds={
+                          sessionMcpServerIds.get(effectiveSelectedSessionId) ?? EMPTY_STRING_ARRAY
+                        }
+                        open={!!effectiveSelectedSessionId}
+                        onClose={handleCloseSessionPanel}
+                      />
+                    )}
+                  </Drawer>
+                  <Drawer
+                    open={!commentsPanelCollapsed}
+                    onClose={() => setCommentsPanelCollapsed(true)}
+                    placement="left"
+                    width="100%"
+                    title="Comments"
+                    styles={{ body: { padding: 0 } }}
+                    rootStyle={{ zIndex: 1040 }}
+                  >
+                    <CommentsPanel
+                      client={client}
+                      boardId={currentBoardId || ''}
+                      comments={mapToArray(commentById).filter(
+                        (c: BoardComment) => c.board_id === currentBoardId
+                      )}
+                      userById={userById}
+                      currentUserId={user?.user_id || 'unknown'}
+                      boardObjects={currentBoard?.objects}
+                      worktreeById={worktreeById}
+                      collapsed={false}
+                      onToggleCollapse={() => setCommentsPanelCollapsed(true)}
+                      onSendComment={(content) => onSendComment?.(currentBoardId || '', content)}
+                      onReplyComment={onReplyComment}
+                      onResolveComment={onResolveComment}
+                      onToggleReaction={onToggleReaction}
+                      onDeleteComment={onDeleteComment}
+                      hoveredCommentId={hoveredCommentId}
+                      selectedCommentId={selectedCommentId}
+                    />
+                  </Drawer>
+                  <Drawer
+                    open={!eventStreamPanelCollapsed && !effectiveSelectedSessionId}
+                    onClose={() => setEventStreamPanelCollapsed(true)}
+                    placement="bottom"
+                    height="80%"
+                    title="Event stream"
+                    styles={{ body: { padding: 0 } }}
+                    rootStyle={{ zIndex: 1040 }}
+                  >
+                    <EventStreamPanel
+                      collapsed={false}
+                      onToggleCollapse={() => setEventStreamPanelCollapsed(true)}
+                      events={events}
+                      onClear={clearEvents}
+                      currentUserId={user?.user_id}
+                      selectedSessionId={effectiveSelectedSessionId}
+                      currentBoard={currentBoard}
+                      client={client}
+                      worktreeActions={{
+                        onSessionClick: handleSessionClick,
+                        onCreateSession: (worktreeId) => setNewSessionWorktreeId(worktreeId),
+                        onOpenSettings: (worktreeId) => setWorktreeModalWorktreeId(worktreeId),
+                        onNukeEnvironment,
+                      }}
+                    />
+                  </Drawer>
+                </div>
+              ) : (
+ 
               <PanelGroup
                 id="main-layout"
                 direction="horizontal"
@@ -1014,8 +1123,10 @@ export const App: React.FC<AppProps> = ({
                   </PanelGroup>
                 </Panel>
               </PanelGroup>
-            </Content>
-            {/* Invisible mount of antd Upload so its CSS-in-JS styles stay
+            )}
+          </Content>
+          {/* Invisible mount of antd Upload so its CSS-in-JS styles stay
+ 
               registered even after the SessionPanel (which contains FileUpload)
               unmounts. Without this, antd GC's the Upload CSS on panel close. */}
             <Upload
