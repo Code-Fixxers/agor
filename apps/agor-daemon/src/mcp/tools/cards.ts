@@ -89,8 +89,7 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'agor_cards_list',
     {
-      description:
-        'List cards. Archived cards are excluded by default.',
+      description: 'List cards. Archived cards are excluded by default.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         boardId: z.string().optional().describe('Filter by board ID'),
