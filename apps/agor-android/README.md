@@ -60,6 +60,32 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 For the emulator, Agor's daemon at `http://localhost:3030` on the host is reachable
 from the emulator at `http://10.0.2.2:3030`.
 
+### NixOS / Nix
+
+The repo flake defines a fully-pinned Android build environment (SDK 35,
+build-tools 35.0.0, NDK 27.1.12297006, CMake 3.22.1, JDK 17). On NixOS:
+
+```bash
+# One-shot build → drops agor-android-debug-<sha>.apk in the repo root
+nix run .#build-agor-android-apk
+
+# Or drop into a dev shell with all toolchains on PATH
+nix develop .#android
+cd apps/agor-android
+./gradlew :app:assembleDebug
+```
+
+Set `SKIP_WHISPER=1` before `nix run` to skip vendoring `whisper.cpp` (faster
+build, on-device transcription falls back to `SpeechRecognizer`).
+
+### CI (GitHub Actions)
+
+Every push to the Android branch and every PR touching `apps/agor-android/**`
+triggers `.github/workflows/build-android-apk.yml`, which builds a debug APK
+and uploads it as a downloadable artifact named
+`agor-android-debug-<short-sha>`. Open the Actions run, scroll to **Artifacts**,
+download the zip, then `adb install -r` the APK inside.
+
 ## On-device transcription (optional)
 
 By default, voice mode uses Android's built-in `SpeechRecognizer`. For private,
