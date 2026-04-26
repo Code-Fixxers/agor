@@ -25,7 +25,7 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
     'agor_messages_list',
     {
       description:
-        'Page through a session\'s messages or search across sessions. With sessionId: chronological transcript. Without sessionId: searches active sessions only (archived excluded unless includeArchived=true). Tool calls filtered by default.',
+        "Page through a session's messages or search across sessions. With sessionId: chronological transcript. Without sessionId: searches active sessions only (archived excluded unless includeArchived=true). Tool calls filtered by default.",
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         sessionId: z
