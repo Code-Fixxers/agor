@@ -354,11 +354,7 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
           .string()
           .optional()
           .describe('Optional when current session has a bound worktree'),
-        issueUrl: z
-          .string()
-          .nullable()
-          .optional()
-          .describe('Issue URL (http(s)). null to clear.'),
+        issueUrl: z.string().nullable().optional().describe('Issue URL (http(s)). null to clear.'),
         pullRequestUrl: z
           .string()
           .nullable()

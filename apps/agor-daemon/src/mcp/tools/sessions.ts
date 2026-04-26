@@ -456,7 +456,10 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
           .enum(['claude-code', 'codex', 'gemini', 'opencode'])
           .optional()
           .describe('Agent (default: parent)'),
-        enableCallback: z.boolean().optional().describe('Callback parent on completion (default: true)'),
+        enableCallback: z
+          .boolean()
+          .optional()
+          .describe('Callback parent on completion (default: true)'),
         includeLastMessage: z
           .boolean()
           .optional()
@@ -675,9 +678,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
         'Create an independent session in a worktree (no parent-child link). MCPs inherit from worktree > user defaults.',
       inputSchema: z.object({
         worktreeId: z.string().describe('Worktree ID (required)'),
-        agenticTool: z
-          .enum(['claude-code', 'codex', 'gemini'])
-          .describe('Agent (required)'),
+        agenticTool: z.enum(['claude-code', 'codex', 'gemini']).describe('Agent (required)'),
         title: z.string().optional(),
         description: z.string().optional(),
         contextFiles: z.array(z.string()).optional().describe('Context file paths'),
@@ -702,10 +703,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
           .enum(['once', 'persistent'])
           .optional()
           .describe('"once" (default) or "persistent"'),
-        mcpServerIds: z
-          .array(z.string())
-          .optional()
-          .describe('MCP IDs. Omit to inherit.'),
+        mcpServerIds: z.array(z.string()).optional().describe('MCP IDs. Omit to inherit.'),
         modelConfig: modelConfigInputSchema,
       }),
     },

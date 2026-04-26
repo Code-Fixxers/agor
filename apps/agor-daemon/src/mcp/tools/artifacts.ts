@@ -125,7 +125,7 @@ export function registerArtifactTools(server: McpServer, ctx: McpContext): void 
     'agor_artifacts_status',
     {
       description:
-        "Get artifact build status, Sandpack errors, and console logs. Live fields (sandpack_error, console_logs) require a browser viewing the artifact.",
+        'Get artifact build status, Sandpack errors, and console logs. Live fields (sandpack_error, console_logs) require a browser viewing the artifact.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         artifactId: z.string().describe('Artifact ID'),

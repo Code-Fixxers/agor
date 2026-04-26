@@ -138,7 +138,7 @@ export function registerSearchTools(server: McpServer, registry: ToolRegistry): 
               z.record(z.string(), z.unknown())
             )
             .optional()
-            .describe('Arguments matching the tool\'s inputSchema'),
+            .describe("Arguments matching the tool's inputSchema"),
         })
         .passthrough(),
     },
