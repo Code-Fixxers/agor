@@ -210,23 +210,55 @@ export class CodexPromptService {
       users: this.usersRepo,
     });
 
-    // Create per-session CODEX_HOME (no race conditions!)
-    // Use mode 0o700 (rwx------) to prevent other users from reading session metadata
-    //
-    // NOTE: We try os.tmpdir() first, but fall back to ~/.agor/tmp if /tmp is unavailable
-    // (e.g., in sandboxed executor environments or containers without /tmp mounted)
-    const tmpBase = os.tmpdir();
     const sessionDirName = `agor-codex-${sessionId}`;
-    let sessionCodexHome = path.join(tmpBase, sessionDirName);
+    const legacySessionCodexHome = path.join(os.tmpdir(), sessionDirName);
+    const persistentSessionCodexHome = path.join(
+      os.homedir(),
+      '.agor',
+      'tmp',
+      sessionDirName
+    );
+    let sessionCodexHome = persistentSessionCodexHome;
 
+    const pathExists = async (candidatePath: string): Promise<boolean> => {
+      try {
+        await fs.stat(candidatePath);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    // Prefer persistent CODEX_HOME under ~/.agor/tmp, but migrate state from
+    // legacy /tmp sessions if needed.
     try {
-      await fs.mkdir(sessionCodexHome, { recursive: true, mode: 0o700 });
+      const hasPersistentHome = await pathExists(persistentSessionCodexHome);
+      const hasLegacyHome = await pathExists(legacySessionCodexHome);
+      if (!hasPersistentHome && hasLegacyHome) {
+        console.log(
+          `🔄 [Codex] Migrating legacy CODEX_HOME for session ${sessionId.substring(0, 8)} from ${legacySessionCodexHome} to ${persistentSessionCodexHome}`
+        );
+        try {
+          await fs.mkdir(path.dirname(persistentSessionCodexHome), { recursive: true, mode: 0o700 });
+          await fs.rename(legacySessionCodexHome, persistentSessionCodexHome);
+        } catch (migrateError) {
+          console.warn(
+            `⚠️  [Codex] Failed to rename legacy CODEX_HOME to persistent location (${(migrateError as Error).message}); attempting copy+cleanup fallback`
+          );
+          await fs.cp(legacySessionCodexHome, persistentSessionCodexHome, {
+            recursive: true,
+            force: true,
+          });
+          await fs.rm(legacySessionCodexHome, { recursive: true, force: true });
+        }
+      }
+
+      await fs.mkdir(persistentSessionCodexHome, { recursive: true, mode: 0o700 });
     } catch (mkdirError) {
-      const fallbackBase = path.join(os.homedir(), '.agor', 'tmp');
       console.warn(
-        `⚠️  [Codex] Failed to create CODEX_HOME in ${tmpBase} (${(mkdirError as Error).message}), falling back to ${fallbackBase}`
+        `⚠️  [Codex] Failed to create persistent CODEX_HOME at ${persistentSessionCodexHome} (${(mkdirError as Error).message}), falling back to legacy ${legacySessionCodexHome}`
       );
-      sessionCodexHome = path.join(fallbackBase, sessionDirName);
+      sessionCodexHome = legacySessionCodexHome;
       await fs.mkdir(sessionCodexHome, { recursive: true, mode: 0o700 });
     }
 
@@ -684,7 +716,7 @@ export class CodexPromptService {
     );
 
     // Create per-session CODEX_HOME with Agor context (avoids race conditions!)
-    // Returns temp directory path like /tmp/agor-codex-{sessionId}
+    // Returns persistent temp directory path like ~/.agor/tmp/agor-codex-{sessionId}
     const sessionCodexHome = await this.ensureCodexSessionContext(sessionId);
 
     // Set CODEX_HOME for this session (Codex SDK will use it)
@@ -785,7 +817,31 @@ export class CodexPromptService {
     if (session.sdk_session_id) {
       console.log(`🔄 [Codex] Resuming thread: ${session.sdk_session_id}`);
 
-      thread = this.codex.resumeThread(session.sdk_session_id, threadOptions);
+      try {
+        thread = this.codex.resumeThread(session.sdk_session_id, threadOptions);
+      } catch (resumeError) {
+        const message = resumeError instanceof Error ? resumeError.message : String(resumeError);
+        const likelyRolledOver =
+          message.includes('No thread with id') ||
+          message.includes('Could not load thread') ||
+          message.includes('thread not found') ||
+          message.includes('rollout');
+
+        if (likelyRolledOver) {
+          console.warn(
+            `⚠️  [Codex] Failed to resume thread ${session.sdk_session_id.substring(0, 8)} ` +
+              `(${message}). Starting a fresh thread instead to recover.`
+          );
+          await this.sessionsRepo.update(sessionId, { sdk_session_id: undefined });
+          session.sdk_session_id = undefined;
+          console.log(
+            `🔁 [Codex] Retrying prompt with a new thread for session ${sessionId.substring(0, 8)}`
+          );
+          thread = this.codex.startThread(threadOptions);
+        } else {
+          throw resumeError;
+        }
+      }
 
       // If approval policy changed, send slash command to update thread settings
       if (approvalPolicyChanged) {
