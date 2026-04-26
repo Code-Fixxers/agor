@@ -23,7 +23,7 @@ import type { AgenticToolName } from '@agor/core/types';
  * Mirrors the logic in executor's prompt-service.ts ensureCodexSessionContext().
  */
 export function getCodexHome(agorSessionId: string): string {
-  return path.join(os.tmpdir(), `agor-codex-${agorSessionId}`);
+  return path.join(os.homedir(), '.agor', 'tmp', `agor-codex-${agorSessionId}`);
 }
 
 export function getSessionFilePath(
@@ -69,23 +69,31 @@ export async function findCodexSessionFile(
   codexHome: string,
   threadId: string
 ): Promise<string | null> {
-  const sessionsDir = path.join(codexHome, 'sessions');
+  const newHomeSessionPath = path.join(codexHome, 'sessions');
+  const legacySessionPath = path.join(os.tmpdir(), path.basename(codexHome), 'sessions');
+  const searchHomes = [newHomeSessionPath, legacySessionPath];
 
-  // First check the canonical flat path (used by pull/restore)
-  const canonicalPath = path.join(sessionsDir, `${threadId}.jsonl`);
-  try {
-    await stat(canonicalPath);
-    return canonicalPath;
-  } catch {
-    // Not at canonical path, search in date directories
-  }
+  for (const sessionsDir of searchHomes) {
+    // First check the canonical flat path (used by pull/restore)
+    const canonicalPath = path.join(sessionsDir, `${threadId}.jsonl`);
+    try {
+      await stat(canonicalPath);
+      return canonicalPath;
+    } catch {
+      // Not at canonical path, search in date directories
+    }
 
-  // Recursively search for *-{threadId}.jsonl in the sessions directory tree
-  try {
-    return await findFileRecursive(sessionsDir, threadId);
-  } catch {
-    return null;
+    // Recursively search for *-{threadId}.jsonl in the sessions directory tree
+    try {
+      const found = await findFileRecursive(sessionsDir, threadId);
+      if (found) {
+        return found;
+      }
+    } catch {
+      // Ignore and continue with next home
+    }
   }
+  return null;
 }
 
 /**

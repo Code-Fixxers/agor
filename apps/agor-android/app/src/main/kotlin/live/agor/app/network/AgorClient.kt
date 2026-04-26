@@ -114,9 +114,10 @@ class AgorClient(private val tokens: SecureTokenStore) {
             ),
         )
         val resp = unauthenticatedRequest("POST", "/authentication", body)
-        val accessToken = (resp["accessToken"] as? JsonPrimitive)?.contentOrNull
-        val refreshToken = (resp["refreshToken"] as? JsonPrimitive)?.contentOrNull
-        val userEl = resp["user"]
+        val payload = resp as? JsonObject ?: throw IOException("Login response malformed")
+        val accessToken = payload["accessToken"]?.jsonPrimitive?.contentOrNull
+        val refreshToken = payload["refreshToken"]?.jsonPrimitive?.contentOrNull
+        val userEl = payload["user"]
         val user = userEl?.let { AgorJson.decodeFromJsonElement(User.serializer(), it) }
         if (accessToken.isNullOrEmpty() || user == null) {
             throw IOException("Login response missing accessToken or user")
@@ -137,8 +138,9 @@ class AgorClient(private val tokens: SecureTokenStore) {
         )
         val resp = runCatching { unauthenticatedRequest("POST", "/authentication-refresh", body) }
             .getOrNull() ?: return@withContext false
-        val accessToken = (resp["accessToken"] as? JsonPrimitive)?.contentOrNull
-        val newRefresh = (resp["refreshToken"] as? JsonPrimitive)?.contentOrNull
+        val payload = resp as? JsonObject ?: return@withContext false
+        val accessToken = payload["accessToken"]?.jsonPrimitive?.contentOrNull
+        val newRefresh = payload["refreshToken"]?.jsonPrimitive?.contentOrNull
         if (accessToken.isNullOrEmpty()) return@withContext false
         tokens.accessToken = accessToken
         if (!newRefresh.isNullOrEmpty()) tokens.refreshToken = newRefresh
@@ -259,13 +261,13 @@ class AgorClient(private val tokens: SecureTokenStore) {
         var skip = 0
         val limit = 100
         while (true) {
-            val q = query + mapOf(
+        val q = query + mapOf(
                 "\$limit" to limit.toString(),
                 "\$skip" to skip.toString(),
             )
             val element = authenticatedRequest("GET", buildUrl(path, q), body = null)
             val data: List<JsonElement> = when {
-                element is JsonObject && element["data"] != null ->
+                element is JsonObject && element["data"] is kotlinx.serialization.json.JsonArray ->
                     (element["data"] as kotlinx.serialization.json.JsonArray).toList()
                 element is kotlinx.serialization.json.JsonArray -> element.toList()
                 else -> emptyList()

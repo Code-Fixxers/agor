@@ -52,6 +52,8 @@
 
         androidBuildInputs = with pkgs; [
           jdk17
+          android-tools
+          gradle
           git
           curl
           cacert
@@ -106,7 +108,7 @@
             echo "🔨 Building debug APK with Gradle..."
             cd "$APP_DIR"
             chmod +x ./gradlew
-            ./gradlew :app:assembleDebug --no-daemon --stacktrace
+            ./gradlew :app:assembleDebug --no-daemon --stacktrace --no-configuration-cache
 
             APK_SRC="$APP_DIR/app/build/outputs/apk/debug/app-debug.apk"
             if [ ! -f "$APK_SRC" ]; then
@@ -186,7 +188,7 @@
               exit 1
             fi
 
-            if [ -z "${NPM_TOKEN:-}" ]; then
+            if [ -z "$NPM_TOKEN" ]; then
               echo "❌ NPM_TOKEN is not set."
               echo "Export your token first, e.g.:"
               echo "  export NPM_TOKEN=..."
@@ -203,7 +205,7 @@
             trap cleanup EXIT
 
             cat > "$TMP_NPMRC" <<NPMRC
-//registry.npmjs.org/:_authToken=${NPM_TOKEN}
+//registry.npmjs.org/:_authToken=$NPM_TOKEN
 always-auth=true
 NPMRC
 
@@ -254,6 +256,7 @@ NPMRC
               nodejs_22
               pnpm
               jq
+              android-tools
             ];
           };
 

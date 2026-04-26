@@ -80,9 +80,9 @@ build, on-device transcription falls back to `SpeechRecognizer`).
 
 ### CI (GitHub Actions)
 
-Every push to the Android branch and every PR touching `apps/agor-android/**`
-triggers `.github/workflows/build-android-apk.yml`, which builds a debug APK
-and uploads it as a downloadable artifact named
+Every push to `main` and every PR touching `apps/agor-android/**` (or this
+workflow file) triggers `.github/workflows/build-android-apk.yml`, which builds a
+debug APK and uploads it as a downloadable artifact named
 `agor-android-debug-<short-sha>`. Open the Actions run, scroll to **Artifacts**,
 download the zip, then `adb install -r` the APK inside.
 

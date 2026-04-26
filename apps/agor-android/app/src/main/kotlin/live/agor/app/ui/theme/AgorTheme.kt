@@ -92,5 +92,5 @@ fun AgorTheme(useDark: Boolean = isSystemInDarkTheme(), content: @Composable () 
 }
 
 object AgorMono {
-    val FontFamily = FontFamily.Monospace
+    val Family = FontFamily.Default
 }

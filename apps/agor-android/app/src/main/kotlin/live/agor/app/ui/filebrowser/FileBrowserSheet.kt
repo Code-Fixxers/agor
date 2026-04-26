@@ -1,6 +1,7 @@
 package live.agor.app.ui.filebrowser
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Description
@@ -138,22 +140,18 @@ private fun FilePreviewView(detail: live.agor.app.models.FileDetail, onClose: ()
                 ),
             )
         } else {
-            androidx.compose.foundation.rememberScrollState().let { scroll ->
-                Text(
-                    text = detail.content.orEmpty(),
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(8.dp)
-                        .androidVerticalScroll(scroll),
-                )
-            }
+            val scrollState = rememberScrollState()
+            Text(
+                text = detail.content.orEmpty(),
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(8.dp)
+                    .verticalScroll(scrollState),
+            )
         }
     }
 }
-
-private fun Modifier.androidVerticalScroll(state: androidx.compose.foundation.ScrollState): Modifier =
-    this.then(androidx.compose.foundation.verticalScroll(state))
 
 private fun looksLikeImage(name: String): Boolean {
     val lc = name.lowercase()
