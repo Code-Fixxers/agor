@@ -57,7 +57,7 @@ coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coi
 markdown-renderer = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-android", version.ref = "markdownRenderer" }
 markdown-renderer-m3 = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-m3", version.ref = "markdownRenderer" }
 
-highlights = { group = "dev.snipme", name = "highlights-android", version.ref = "highlights" }
+highlights = { group = "dev.snipme", name = "highlights", version.ref = "highlights" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }

@@ -3,11 +3,13 @@ name: Build Android APK
 on:
   push:
     branches:
-      - claude/add-android-native-app-MZNBC
+      - main
     paths:
       - apps/agor-android/**
       - .github/workflows/build-android-apk.yml
   pull_request:
+    branches:
+      - main
     paths:
       - apps/agor-android/**
       - .github/workflows/build-android-apk.yml
@@ -111,7 +113,7 @@ jobs:
           name: agor-android-debug-${{ steps.rename.outputs.short_sha }}
           path: ${{ steps.rename.outputs.apk_path }}
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
       - name: Summary
         run: |
