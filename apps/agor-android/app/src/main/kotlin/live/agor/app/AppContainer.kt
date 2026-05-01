@@ -1,6 +1,9 @@
 package live.agor.app
 
 import android.content.Context
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import live.agor.app.auth.AuthService
 import live.agor.app.auth.SecureTokenStore
 import live.agor.app.auth.ServerProfileManager
@@ -26,4 +29,17 @@ class AppContainer(context: Context) {
     val streaming: StreamingService = StreamingService(socket, logger)
     val sidebarCache: SidebarCache = SidebarCache(appContext)
     val notifications: AgorNotificationManager = AgorNotificationManager(appContext)
+
+    private val _pendingSessionId = MutableStateFlow<String?>(null)
+    /** Latest session id requested by an external entry point (notification / deep-link). */
+    val pendingSessionId: StateFlow<String?> = _pendingSessionId.asStateFlow()
+
+    fun requestOpenSession(sessionId: String?) {
+        if (sessionId.isNullOrBlank()) return
+        _pendingSessionId.value = sessionId
+    }
+
+    fun consumePendingSessionId() {
+        _pendingSessionId.value = null
+    }
 }

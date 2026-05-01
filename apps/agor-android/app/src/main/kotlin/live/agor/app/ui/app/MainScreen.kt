@@ -20,6 +20,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -55,6 +56,17 @@ fun MainScreen(app: AppViewModel) {
 
     LaunchedEffect(Unit) { nav.start() }
     DisposableEffect(Unit) { onDispose { nav.stop() } }
+
+    // Route to a chat when an external entry point (notification tap, deep-link)
+    // requests a specific session. Consume immediately so the same id won't re-fire
+    // on recomposition or process restart.
+    val pending by app.pendingSessionId.collectAsState()
+    LaunchedEffect(pending) {
+        val id = pending ?: return@LaunchedEffect
+        route = MainRoute.Chat(id)
+        drawerState.close()
+        app.consumePendingSessionId()
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,

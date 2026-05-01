@@ -24,6 +24,18 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     private val _toast = MutableStateFlow<String?>(null)
     val toast: StateFlow<String?> = _toast.asStateFlow()
 
+    /**
+     * Session id requested by an external entry point (notification tap, deep-link).
+     * The UI observes this; on a non-null value it navigates to that chat and then
+     * calls [consumePendingSessionId] so the same id doesn't re-route on recomposition.
+     * Backed by [AppContainer] so MainActivity can push values before the VM exists.
+     */
+    val pendingSessionId: StateFlow<String?> = container.pendingSessionId
+
+    fun consumePendingSessionId() {
+        container.consumePendingSessionId()
+    }
+
     init {
         viewModelScope.launch {
             container.authService.bootstrap()
