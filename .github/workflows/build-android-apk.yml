@@ -58,7 +58,10 @@ jobs:
       - name: Install required SDK packages
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null
+          # `yes | sdkmanager --licenses` trips pipefail because `yes` keeps writing
+          # after sdkmanager exits and gets SIGPIPE. Run the licenses step in its
+          # own subshell with pipefail off, then re-enable.
+          ( set +o pipefail; yes | sdkmanager --licenses >/dev/null )
           sdkmanager \
             "platform-tools" \
             "platforms;android-35" \
