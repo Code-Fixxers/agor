@@ -49,12 +49,22 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
-            ndk;27.1.12297006
-            cmake;3.22.1
+          # The action's `packages` input mangles a multiline value into a single
+          # quoted package argument (sdkmanager fails with "Failed to find package
+          # 'platform-tools\nplatforms;android-35\n…'"). Pass an empty value here
+          # and install via sdkmanager directly in the next step.
+          packages: ''
+
+      - name: Install required SDK packages
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;27.1.12297006" \
+            "cmake;3.22.1"
 
       - name: Cache Gradle caches
         uses: actions/cache@v4
