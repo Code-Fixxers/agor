@@ -105,7 +105,10 @@ jobs:
 
       - name: Build debug APK
         working-directory: apps/agor-android
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+        # `--no-configuration-cache` mirrors the Nix flake script: the build.gradle.kts
+        # `gitShortSha()` helper shells out to `git` at configuration time, which the
+        # configuration cache forbids. The Nix path has the same flag — keep them aligned.
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace --no-configuration-cache
 
       - name: Rename APK with commit SHA
         id: rename
