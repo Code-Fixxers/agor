@@ -22,8 +22,12 @@ class AgorNotificationManager(private val context: Context) {
     fun notifySessionIdle(sessionId: String, title: String, sessionUrl: String?) {
         if (!hasPostNotifPermission()) return
         val intent = Intent(context, MainActivity::class.java).apply {
+            // Carry the full session id so MainActivity can route on tap, even from
+            // a cold start. The deep-link URI is kept for browsers/share sheets, but
+            // the extra is what the in-app router consumes.
+            putExtra(EXTRA_SESSION_ID, sessionId)
             sessionUrl?.let { data = android.net.Uri.parse(it) }
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pi = PendingIntent.getActivity(
             context,
@@ -45,6 +49,10 @@ class AgorNotificationManager(private val context: Context) {
 
     fun cancelSessionIdle(sessionId: String) {
         NotificationManagerCompat.from(context).cancel("session-$sessionId-idle", 0)
+    }
+
+    companion object {
+        const val EXTRA_SESSION_ID = "live.agor.app.extra.SESSION_ID"
     }
 
     private fun hasPostNotifPermission(): Boolean {
