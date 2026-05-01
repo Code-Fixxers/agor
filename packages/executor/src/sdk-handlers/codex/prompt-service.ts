@@ -212,12 +212,7 @@ export class CodexPromptService {
 
     const sessionDirName = `agor-codex-${sessionId}`;
     const legacySessionCodexHome = path.join(os.tmpdir(), sessionDirName);
-    const persistentSessionCodexHome = path.join(
-      os.homedir(),
-      '.agor',
-      'tmp',
-      sessionDirName
-    );
+    const persistentSessionCodexHome = path.join(os.homedir(), '.agor', 'tmp', sessionDirName);
     let sessionCodexHome = persistentSessionCodexHome;
 
     const pathExists = async (candidatePath: string): Promise<boolean> => {
@@ -239,7 +234,10 @@ export class CodexPromptService {
           `🔄 [Codex] Migrating legacy CODEX_HOME for session ${sessionId.substring(0, 8)} from ${legacySessionCodexHome} to ${persistentSessionCodexHome}`
         );
         try {
-          await fs.mkdir(path.dirname(persistentSessionCodexHome), { recursive: true, mode: 0o700 });
+          await fs.mkdir(path.dirname(persistentSessionCodexHome), {
+            recursive: true,
+            mode: 0o700,
+          });
           await fs.rename(legacySessionCodexHome, persistentSessionCodexHome);
         } catch (migrateError) {
           console.warn(
