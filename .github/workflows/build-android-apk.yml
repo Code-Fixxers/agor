@@ -4,12 +4,7 @@ on:
   push:
     branches:
       - main
-    paths:
-      - apps/agor-android/**
-      - .github/workflows/build-android-apk.yml
-  pull_request:
-    branches:
-      - main
+      - 'cfx/**'
     paths:
       - apps/agor-android/**
       - .github/workflows/build-android-apk.yml
@@ -20,8 +15,10 @@ on:
         type: boolean
         default: true
 
+# `contents: write` is required so the rolling `android-latest` Release can be
+# updated with the freshly-built APK. The in-app updater reads that release.
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -103,45 +100,108 @@ jobs:
         working-directory: apps/agor-android
         run: chmod +x gradlew
 
+      - name: Compute version
+        id: version
+        run: |
+          set -euo pipefail
+          # versionCode = monotonic integer the OS uses to detect updates.
+          # Commit count is stable across rebuilds and grows monotonically.
+          VERSION_CODE=$(git rev-list --count HEAD)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          VERSION_NAME="$SHORT_SHA"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA"      >> "$GITHUB_OUTPUT"
+
       - name: Build debug APK
         working-directory: apps/agor-android
+        env:
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
         # `--no-configuration-cache` mirrors the Nix flake script: the build.gradle.kts
         # `gitShortSha()` helper shells out to `git` at configuration time, which the
         # configuration cache forbids. The Nix path has the same flag — keep them aligned.
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace --no-configuration-cache
+        run: |
+          ./gradlew :app:assembleDebug \
+            --no-daemon --stacktrace --no-configuration-cache \
+            -PversionCode="$VERSION_CODE" \
+            -PversionName="$VERSION_NAME"
 
       - name: Rename APK with commit SHA
         id: rename
         working-directory: apps/agor-android
+        env:
+          SHORT_SHA: ${{ steps.version.outputs.short_sha }}
         run: |
           set -euo pipefail
-          SHORT_SHA=$(git rev-parse --short HEAD)
           SRC=app/build/outputs/apk/debug/app-debug.apk
           DEST="agor-android-debug-${SHORT_SHA}.apk"
           cp "$SRC" "$DEST"
           ls -la "$DEST"
           echo "apk_path=apps/agor-android/$DEST" >> "$GITHUB_OUTPUT"
-          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: agor-android-debug-${{ steps.rename.outputs.short_sha }}
+          name: agor-android-debug-${{ steps.version.outputs.short_sha }}
           path: ${{ steps.rename.outputs.apk_path }}
           if-no-files-found: error
           retention-days: 7
 
+      # Push to a rolling release the in-app updater reads. Tag is moved on every
+      # successful build so the asset URL stays stable, but the underlying commit
+      # advances. We delete + recreate the asset because release assets can't be
+      # overwritten in place.
+      - name: Publish rolling android-latest release
+        if: github.ref == 'refs/heads/cfx/android-hermes-client' || github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHORT_SHA: ${{ steps.version.outputs.short_sha }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          APK_PATH: ${{ steps.rename.outputs.apk_path }}
+        run: |
+          set -euo pipefail
+          TAG="android-latest"
+          NOTES=$(cat <<EOF
+          Rolling debug build — overwritten on every push.
+
+          - commit: \`${SHORT_SHA}\`
+          - versionCode: \`${VERSION_CODE}\`
+          - versionName: \`${VERSION_NAME}\`
+
+          The in-app updater reads this tag; the underlying commit advances on every push.
+          EOF
+          )
+
+          # Move the tag to HEAD so release-creation in the next step references the
+          # newest commit. `git push --force` only touches refs/tags/$TAG.
+          git tag -f "$TAG"
+          git push origin "refs/tags/$TAG" --force
+
+          # Delete the old release (if present) so we get a clean asset slot.
+          gh release delete "$TAG" --yes --cleanup-tag=false 2>/dev/null || true
+          gh release create "$TAG" \
+            --title "Android debug — $SHORT_SHA" \
+            --notes "$NOTES" \
+            --prerelease \
+            "$APK_PATH#agor-android-debug.apk"
+
       - name: Summary
+        env:
+          SHORT_SHA: ${{ steps.version.outputs.short_sha }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
         run: |
           {
             echo "### Agor Android debug APK"
             echo ""
-            echo "- Commit: \`${{ steps.rename.outputs.short_sha }}\`"
+            echo "- Commit: \`${SHORT_SHA}\`"
+            echo "- versionCode: \`${VERSION_CODE}\`"
+            echo "- versionName: \`${VERSION_NAME}\`"
             echo "- Whisper.cpp on-device transcription: \`${WITH_WHISPER}\`"
-            echo "- Download: open the run page → **Artifacts** → \`agor-android-debug-${{ steps.rename.outputs.short_sha }}\`"
             echo ""
-            echo "Install on a device:"
-            echo "\`\`\`"
-            echo "adb install -r agor-android-debug-${{ steps.rename.outputs.short_sha }}.apk"
-            echo "\`\`\`"
+            echo "Direct download (rolling): https://github.com/Code-Fixxers/agor/releases/download/android-latest/agor-android-debug.apk"
+            echo ""
+            echo "Or in-app: open Settings → **Check for updates**."
           } >> "$GITHUB_STEP_SUMMARY"

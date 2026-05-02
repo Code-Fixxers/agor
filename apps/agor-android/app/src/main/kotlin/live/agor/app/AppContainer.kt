@@ -13,7 +13,11 @@ import live.agor.app.network.HermesClient
 import live.agor.app.network.SocketService
 import live.agor.app.network.StreamingService
 import live.agor.app.notifications.AgorNotificationManager
+import live.agor.app.update.UpdateChecker
+import live.agor.app.update.UpdateInstaller
 import live.agor.app.util.AppLogger
+import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 
 /**
  * Manual DI container — owned by AgorApplication, lifetime = process.
@@ -31,6 +35,18 @@ class AppContainer(context: Context) {
     val streaming: StreamingService = StreamingService(socket, logger)
     val sidebarCache: SidebarCache = SidebarCache(appContext)
     val notifications: AgorNotificationManager = AgorNotificationManager(appContext)
+
+    // Dedicated HTTP client for the in-app updater. Long read timeout because
+    // the APK download streams ~22 MB on slow networks; redirect-following is
+    // required because GitHub release asset URLs 302 to S3.
+    private val updateHttp: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .build()
+    val updateChecker: UpdateChecker = UpdateChecker(updateHttp)
+    val updateInstaller: UpdateInstaller = UpdateInstaller(appContext, updateHttp)
 
     private val _pendingSessionId = MutableStateFlow<String?>(null)
     /** Latest session id requested by an external entry point (notification / deep-link). */
