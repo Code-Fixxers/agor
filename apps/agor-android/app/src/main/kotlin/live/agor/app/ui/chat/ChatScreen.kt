@@ -63,7 +63,10 @@ fun ChatScreen(
         key = "chat-$sessionId",
         factory = simpleViewModelFactory { ChatViewModel(container, sessionId) },
     )
-    val state by vm.state.collectAsState()
+    val messages by vm.messages.collectAsState()
+    val tasks by vm.tasks.collectAsState()
+    val live by vm.live.collectAsState()
+    val ui by vm.uiState.collectAsState()
     val listState = rememberLazyListState()
     var showFiles by remember { mutableStateOf(false) }
 
@@ -71,8 +74,8 @@ fun ChatScreen(
 
     // Only auto-scroll when the user is already near the bottom — yanking them out
     // of mid-scroll-up reading is what makes chats feel janky on long sessions.
-    LaunchedEffect(state.messages.size) {
-        if (state.messages.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(messages.size) {
+        if (messages.isEmpty()) return@LaunchedEffect
         val info = listState.layoutInfo
         val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
         val total = info.totalItemsCount
@@ -86,12 +89,12 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        state.session?.let {
+                        ui.session?.let {
                             AgentIcon(it.agenticTool)
                             Spacer(Modifier.width(6.dp))
                         }
                         Text(
-                            state.session?.displayTitle ?: "Loading…",
+                            ui.session?.displayTitle ?: "Loading…",
                             style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
                         )
@@ -103,7 +106,7 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    state.session?.let { s ->
+                    ui.session?.let { s ->
                         StatusBadge(s.status)
                         Spacer(Modifier.width(4.dp))
                         if (s.status.isActive) {
@@ -123,34 +126,35 @@ fun ChatScreen(
         },
         bottomBar = {
             PromptInputBar(
-                draft = state.draft,
+                draft = ui.draft,
                 onDraftChange = vm::updateDraft,
                 onSend = vm::sendPrompt,
-                enabled = state.session?.isPromptable == true,
+                enabled = ui.session?.isPromptable == true,
                 modifier = Modifier.imePadding(),
             )
         },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (state.isLoading && state.messages.isEmpty()) {
+            if (ui.isLoading && messages.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("Loading…")
                 }
-            } else if (state.errorMessage != null && state.messages.isEmpty()) {
+            } else if (ui.errorMessage != null && messages.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(state.errorMessage!!, color = MaterialTheme.colorScheme.error)
+                    Text(ui.errorMessage!!, color = MaterialTheme.colorScheme.error)
                 }
             } else {
                 // Pre-flatten messages → blocks → rows. Heavy strings (JSON,
                 // joined tool-result text, merged streaming text) are computed
                 // *once* here and cached in @Immutable row records. Scroll-time
                 // recomposition reads them as plain Strings — no per-frame work.
-                val rows = remember(state.messages, state.tasks, state.live) {
+                // Phase C will move this off-Main; for now it stays here.
+                val rows = remember(messages, tasks, live) {
                     flattenChatRows(
-                        messages = state.messages,
-                        tasks = state.tasks,
-                        live = state.live,
-                        showLoadEarlier = state.messages.size >= 100,
+                        messages = messages,
+                        tasks = tasks,
+                        live = live,
+                        showLoadEarlier = messages.size >= 100,
                     )
                 }
 
@@ -199,7 +203,7 @@ fun ChatScreen(
         }
 
         if (showFiles) {
-            state.session?.let {
+            ui.session?.let {
                 FileBrowserSheet(
                     worktreeId = it.worktreeId,
                     onDismiss = { showFiles = false },
