@@ -27,6 +27,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -49,13 +50,20 @@ import live.agor.app.viewmodels.NavigationViewModel
  * collapses the entire subtree into one composition unit and defeats LazyColumn's
  * lazy layout. With ~100 sessions and a busy board this stutters badly.
  */
+@Immutable
 private sealed class SidebarRow(val key: String) {
+    @Immutable
     class Header(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, key: String) : SidebarRow(key)
+    @Immutable
     class HermesShortcut(val configured: Boolean) : SidebarRow("hermes-shortcut")
+    @Immutable
     class DividerRow(suffix: String) : SidebarRow("div-$suffix")
+    @Immutable
     class SessionItem(val session: Session, val depth: Int, keyPrefix: String) :
         SidebarRow("$keyPrefix-${session.sessionId}")
+    @Immutable
     class BoardItem(val board: Board, val isOpen: Boolean) : SidebarRow("board-${board.boardId}")
+    @Immutable
     class WorktreeItem(val worktree: Worktree, val isOpen: Boolean) :
         SidebarRow("worktree-${worktree.worktreeId}")
 }

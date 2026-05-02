@@ -20,21 +20,33 @@ import live.agor.app.util.LogLevel
 /**
  * Owns the sidebar tree (boards → worktrees → sessions) plus Important and Needs Attention
  * sections. Restores from cache on launch and refreshes from the API. Polls every 45s.
+ *
+ * `isLoading` / `errorMessage` are intentionally **not** in [State] — they live in [loadState].
+ * A 45 s polling refresh that flips loading would otherwise change `state` identity and
+ * invalidate every downstream `remember(state, …)` block (sidebar row flatten, etc.).
  */
 class NavigationViewModel(private val container: AppContainer) : ViewModel() {
 
+    @androidx.compose.runtime.Immutable
     data class State(
         val boards: List<Board> = emptyList(),
         val worktreesByBoard: Map<String, List<Worktree>> = emptyMap(),
         val sessionsByWorktree: Map<String, List<Session>> = emptyMap(),
         val sessions: List<Session> = emptyList(),
         val favorites: Set<String> = emptySet(),
+    )
+
+    @androidx.compose.runtime.Immutable
+    data class LoadState(
         val isLoading: Boolean = false,
         val errorMessage: String? = null,
     )
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+
+    private val _loadState = MutableStateFlow(LoadState())
+    val loadState: StateFlow<LoadState> = _loadState.asStateFlow()
 
     private val _expandedBoards = MutableStateFlow<Set<String>>(emptySet())
     val expandedBoards: StateFlow<Set<String>> = _expandedBoards.asStateFlow()
@@ -151,7 +163,7 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     suspend fun refresh() {
-        _state.value = _state.value.copy(isLoading = true, errorMessage = null)
+        _loadState.value = LoadState(isLoading = true, errorMessage = null)
         try {
             val boards = container.client.listBoards()
             val worktrees = container.client.listWorktrees()
@@ -161,8 +173,8 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
                 worktreesByBoard = worktrees.groupBy { it.boardId ?: "" },
                 sessionsByWorktree = sessions.groupBy { it.worktreeId },
                 sessions = sessions,
-                isLoading = false,
             )
+            _loadState.value = LoadState(isLoading = false, errorMessage = null)
             container.sidebarCache.save(
                 SidebarCache.Snapshot(
                     System.currentTimeMillis(),
@@ -173,7 +185,7 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
             )
         } catch (t: Throwable) {
             AppLogger.log("Sidebar refresh failed: ${t.message}", LogLevel.WARNING, "Nav")
-            _state.value = _state.value.copy(isLoading = false, errorMessage = t.message)
+            _loadState.value = LoadState(isLoading = false, errorMessage = t.message)
         }
     }
 

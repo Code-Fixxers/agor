@@ -1,5 +1,6 @@
 package live.agor.app.models
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -15,6 +16,7 @@ enum class TaskStatus {
     @SerialName("awaiting_input") AWAITING_INPUT,
 }
 
+@Immutable
 @Serializable
 data class AgorTask(
     @SerialName("task_id") val taskId: String,

@@ -1,5 +1,6 @@
 package live.agor.app.models
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -12,6 +13,7 @@ enum class UserRole {
     @SerialName("superadmin") SUPERADMIN,
 }
 
+@Immutable
 @Serializable
 data class User(
     @SerialName("user_id") val userId: String,
