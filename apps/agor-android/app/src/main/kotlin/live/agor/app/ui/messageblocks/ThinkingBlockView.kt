@@ -25,17 +25,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import live.agor.app.models.ContentBlock
+import live.agor.app.ui.chat.ChatRow
+
+private val ThinkingShape = RoundedCornerShape(8.dp)
 
 @Composable
-fun ThinkingBlockView(block: ContentBlock.Thinking, liveThinking: String?) {
-    var expanded by remember(block.id) { mutableStateOf(false) }
-    val text = if (!liveThinking.isNullOrEmpty()) liveThinking else block.thinking.orEmpty()
-    if (text.isEmpty()) return
+fun ThinkingBlockView(row: ChatRow.ThinkingRow) {
+    if (row.text.isEmpty()) return
+    var expanded by remember(row.key) { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant, ThinkingShape)
             .padding(8.dp),
     ) {
         Row(
@@ -45,11 +46,18 @@ fun ThinkingBlockView(block: ContentBlock.Thinking, liveThinking: String?) {
             Icon(Icons.Default.Bolt, contentDescription = null)
             Spacer(Modifier.width(6.dp))
             Text("Thinking", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
+            Icon(
+                if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+            )
         }
         if (expanded) {
             Spacer(Modifier.height(6.dp))
-            Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                row.text,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

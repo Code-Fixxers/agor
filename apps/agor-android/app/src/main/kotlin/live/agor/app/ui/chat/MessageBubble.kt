@@ -3,43 +3,36 @@ package live.agor.app.ui.chat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import live.agor.app.models.Message
-import live.agor.app.models.MessageContent
 import live.agor.app.models.MessageRole
-import live.agor.app.network.StreamingService
-import live.agor.app.ui.messageblocks.ContentBlocksView
-import live.agor.app.ui.messageblocks.InputRequestCardView
 import live.agor.app.ui.messageblocks.MarkdownText
-import live.agor.app.ui.messageblocks.PermissionCardView
 
-// Hoisted constants — allocating these per-bubble was free-ish individually but
-// cumulative across hundreds of items made first-composition (when scrolling new
-// content into view) noticeably janky.
+// Hoisted constants so each visible bubble doesn't allocate its own modifier values.
 private val BubbleShape = RoundedCornerShape(12.dp)
-private val BubbleOuterPadding = androidx.compose.foundation.layout.PaddingValues(
-    horizontal = 8.dp, vertical = 4.dp,
-)
-private val BubbleInnerPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)
+private val BubbleOuterPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+private val BubbleInnerPadding = PaddingValues(12.dp)
 private val BubbleMaxWidth = 600.dp
 
+/**
+ * Single text bubble row. Operates on a pre-resolved [ChatRow.TextBubbleRow]
+ * whose [ChatRow.TextBubbleRow.text] already incorporates any live streaming
+ * snapshot, so this composable is a near-trivial mapper: stable params in, layout
+ * out, no recompose for unrelated messages.
+ */
 @Composable
-fun MessageBubble(
-    message: Message,
-    liveSnapshot: StreamingService.StreamSnapshot?,
-    onDecidePermission: (String, Boolean) -> Unit,
-    onAnswerInputRequest: (String, List<String>) -> Unit,
-) {
-    val alignment = if (message.role == MessageRole.USER) Alignment.End else Alignment.Start
-    val bubbleColor = when (message.role) {
+fun TextBubble(row: ChatRow.TextBubbleRow) {
+    val alignment = if (row.role == MessageRole.USER) Alignment.End else Alignment.Start
+    val bubbleColor = when (row.role) {
         MessageRole.USER -> MaterialTheme.colorScheme.primaryContainer
         MessageRole.ASSISTANT -> MaterialTheme.colorScheme.surface
         MessageRole.SYSTEM -> MaterialTheme.colorScheme.surfaceVariant
@@ -55,28 +48,17 @@ fun MessageBubble(
                 .background(bubbleColor, BubbleShape)
                 .padding(BubbleInnerPadding),
         ) {
-            when (val c = message.content) {
-                is MessageContent.Text -> {
-                    val text = liveSnapshot?.text?.takeIf { it.isNotEmpty() } ?: c.text
-                    MarkdownText(markdown = text)
-                }
-                is MessageContent.Blocks -> ContentBlocksView(c.blocks, liveSnapshot)
-                is MessageContent.Permission -> PermissionCardView(
-                    request = c.request,
-                    onApprove = { onDecidePermission(c.request.permissionId, true) },
-                    onDeny = { onDecidePermission(c.request.permissionId, false) },
-                )
-                is MessageContent.InputRequest -> InputRequestCardView(
-                    request = c.request,
-                    onAnswer = { answers -> onAnswerInputRequest(c.request.inputRequestId, answers) },
-                )
-            }
+            MarkdownText(markdown = row.text)
         }
     }
 }
 
+/**
+ * Streaming-only placeholder for a snapshot whose owning message hasn't been
+ * confirmed by the server yet. Renders thinking + text inline.
+ */
 @Composable
-fun StreamingPlaceholder(snapshot: StreamingService.StreamSnapshot) {
+fun LiveOrphanBubble(row: ChatRow.LiveOrphanRow) {
     Column(modifier = Modifier.fillMaxWidth().padding(BubbleOuterPadding)) {
         Box(
             modifier = Modifier
@@ -85,14 +67,16 @@ fun StreamingPlaceholder(snapshot: StreamingService.StreamSnapshot) {
                 .padding(BubbleInnerPadding),
         ) {
             Column {
-                if (snapshot.thinking.isNotEmpty()) {
-                    androidx.compose.material3.Text(
-                        snapshot.thinking,
+                if (row.thinking.isNotEmpty()) {
+                    Text(
+                        row.thinking,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                MarkdownText(markdown = snapshot.text)
+                if (row.text.isNotEmpty()) {
+                    MarkdownText(markdown = row.text)
+                }
             }
         }
     }

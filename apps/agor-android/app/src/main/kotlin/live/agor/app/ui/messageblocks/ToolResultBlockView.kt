@@ -27,18 +27,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import live.agor.app.models.ContentBlock
+import live.agor.app.ui.chat.ChatRow
 
+private val ToolBlockShape = RoundedCornerShape(8.dp)
+
+/**
+ * Renders a [ChatRow.ToolResultRow]. The full body text is precomputed in the
+ * row, not joined per recomposition.
+ */
 @Composable
-fun ToolResultBlockView(block: ContentBlock.ToolResult) {
-    var expanded by remember(block.id) { mutableStateOf(false) }
-    val isError = block.isError == true
-    val container = if (isError) MaterialTheme.colorScheme.errorContainer
+fun ToolResultBlockView(row: ChatRow.ToolResultRow) {
+    var expanded by remember(row.key) { mutableStateOf(false) }
+    val container = if (row.isError) MaterialTheme.colorScheme.errorContainer
     else MaterialTheme.colorScheme.surfaceVariant
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(container, RoundedCornerShape(8.dp))
+            .background(container, ToolBlockShape)
             .padding(8.dp),
     ) {
         Row(
@@ -46,27 +51,25 @@ fun ToolResultBlockView(block: ContentBlock.ToolResult) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                if (isError) Icons.Default.ErrorOutline else Icons.Default.CheckCircle,
+                if (row.isError) Icons.Default.ErrorOutline else Icons.Default.CheckCircle,
                 contentDescription = null,
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                block.content?.textPreview.orEmpty(),
+                row.preview,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.weight(1f),
                 maxLines = 1,
             )
-            Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
+            Icon(
+                if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+            )
         }
         if (expanded) {
             Spacer(Modifier.height(6.dp))
-            val full = when (val c = block.content) {
-                is live.agor.app.models.ToolResultValue.Str -> c.text
-                is live.agor.app.models.ToolResultValue.Blocks -> c.blocks.mapNotNull { it.text }.joinToString("\n")
-                null -> ""
-            }
             Text(
-                full,
+                row.full,
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
             )
         }

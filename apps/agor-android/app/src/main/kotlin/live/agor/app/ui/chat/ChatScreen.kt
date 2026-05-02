@@ -38,9 +38,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import live.agor.app.LocalAppContainer
+import live.agor.app.models.ContentBlock
 import live.agor.app.ui.common.AgentIcon
 import live.agor.app.ui.common.StatusBadge
 import live.agor.app.ui.filebrowser.FileBrowserSheet
+import live.agor.app.ui.messageblocks.ImageBlockView
+import live.agor.app.ui.messageblocks.InputRequestCardView
+import live.agor.app.ui.messageblocks.PermissionCardView
+import live.agor.app.ui.messageblocks.ThinkingBlockView
+import live.agor.app.ui.messageblocks.ToolResultBlockView
+import live.agor.app.ui.messageblocks.ToolUseBlockView
 import live.agor.app.ui.simpleViewModelFactory
 import live.agor.app.viewmodels.ChatViewModel
 
@@ -64,14 +71,13 @@ fun ChatScreen(
 
     // Only auto-scroll when the user is already near the bottom — yanking them out
     // of mid-scroll-up reading is what makes chats feel janky on long sessions.
-    // Mirrors apps/agor-ios commit "only auto-scroll chat when user is near bottom".
     LaunchedEffect(state.messages.size) {
         if (state.messages.isEmpty()) return@LaunchedEffect
         val info = listState.layoutInfo
         val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
         val total = info.totalItemsCount
-        if (total == 0 || lastVisible >= total - 3) {
-            listState.animateScrollToItem(state.messages.size - 1)
+        if (total > 0 && lastVisible >= total - 3) {
+            listState.animateScrollToItem(total - 1)
         }
     }
 
@@ -135,19 +141,17 @@ fun ChatScreen(
                     Text(state.errorMessage!!, color = MaterialTheme.colorScheme.error)
                 }
             } else {
-                // Memoize the three derivations so they don't re-run on every
-                // scroll-triggered recomposition. With long task histories and
-                // active streaming, recomputing tasksById/grouped/orphans for
-                // each frame was a measurable stutter source.
-                val tasksById = remember(state.tasks) {
-                    state.tasks.associateBy { it.taskId }
-                }
-                val grouped = remember(state.messages) {
-                    groupMessagesByTask(state.messages)
-                }
-                val orphans = remember(state.live, state.messages) {
-                    val seen = state.messages.mapTo(HashSet(state.messages.size)) { it.messageId }
-                    state.live.entries.filter { it.key !in seen }.toList()
+                // Pre-flatten messages → blocks → rows. Heavy strings (JSON,
+                // joined tool-result text, merged streaming text) are computed
+                // *once* here and cached in @Immutable row records. Scroll-time
+                // recomposition reads them as plain Strings — no per-frame work.
+                val rows = remember(state.messages, state.tasks, state.live) {
+                    flattenChatRows(
+                        messages = state.messages,
+                        tasks = state.tasks,
+                        live = state.live,
+                        showLoadEarlier = state.messages.size >= 100,
+                    )
                 }
 
                 LazyColumn(
@@ -156,43 +160,40 @@ fun ChatScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(8.dp),
                 ) {
-                    if (state.messages.size >= 100) {
-                        item {
-                            TextButton(onClick = vm::loadEarlier) { Text("Load earlier messages") }
-                        }
-                    }
-                    grouped.forEach { (taskId, messages) ->
-                        val task = taskId?.let { tasksById[it] }
-                        if (task != null) {
-                            item(
-                                key = "task-${task.taskId}",
-                                contentType = "task-header",
-                            ) { TaskHeader(task) }
-                        }
-                        items(
-                            messages,
-                            key = { it.messageId },
-                            // contentType lets LazyColumn pool item layouts by category
-                            // when scrolling. Without it, every item creates a fresh
-                            // composition slot — that's the dominant cost on long chats.
-                            contentType = { it.bubbleContentType() },
-                        ) { message ->
-                            MessageBubble(
-                                message = message,
-                                liveSnapshot = state.live[message.messageId],
-                                onDecidePermission = vm::decidePermission,
-                                onAnswerInputRequest = vm::answerInputRequest,
-                            )
-                        }
-                    }
                     items(
-                        orphans,
-                        key = { "live-${it.key}" },
-                        contentType = { "live-bubble" },
-                    ) { (_, snap) ->
-                        StreamingPlaceholder(snap)
+                        rows,
+                        key = { it.key },
+                        // Distinct contentType per row variant lets LazyColumn
+                        // pool composition slots across messages — a tool-use row
+                        // scrolling into view reuses the slot of an earlier
+                        // tool-use row that just left.
+                        contentType = { it::class },
+                    ) { row ->
+                        when (row) {
+                            is ChatRow.LoadEarlier -> {
+                                TextButton(onClick = vm::loadEarlier) { Text("Load earlier messages") }
+                            }
+                            is ChatRow.TaskHeaderRow -> TaskHeader(row.task)
+                            is ChatRow.TextBubbleRow -> TextBubble(row)
+                            is ChatRow.ToolUseRow -> ToolUseBlockView(row)
+                            is ChatRow.ToolResultRow -> ToolResultBlockView(row)
+                            is ChatRow.ThinkingRow -> ThinkingBlockView(row)
+                            is ChatRow.ImageRow -> ImageBlockView(ContentBlock.Image(row.source))
+                            is ChatRow.PermissionRow -> PermissionCardView(
+                                request = row.request,
+                                onApprove = { vm.decidePermission(row.request.permissionId, true) },
+                                onDeny = { vm.decidePermission(row.request.permissionId, false) },
+                            )
+                            is ChatRow.InputRequestRow -> InputRequestCardView(
+                                request = row.request,
+                                onAnswer = { answers ->
+                                    vm.answerInputRequest(row.request.inputRequestId, answers)
+                                },
+                            )
+                            is ChatRow.LiveOrphanRow -> LiveOrphanBubble(row)
+                            is ChatRow.BottomSpacer -> Spacer(Modifier.height(60.dp))
+                        }
                     }
-                    item { Spacer(Modifier.height(60.dp)) }
                 }
             }
         }
@@ -208,30 +209,3 @@ fun ChatScreen(
     }
 }
 
-private fun groupMessagesByTask(
-    messages: List<live.agor.app.models.Message>,
-): List<Pair<String?, List<live.agor.app.models.Message>>> {
-    val out = mutableListOf<Pair<String?, MutableList<live.agor.app.models.Message>>>()
-    var currentTask: String? = null
-    var currentList: MutableList<live.agor.app.models.Message>? = null
-    for (m in messages) {
-        if (m.taskId != currentTask || currentList == null) {
-            currentTask = m.taskId
-            currentList = mutableListOf()
-            out.add(currentTask to currentList)
-        }
-        currentList.add(m)
-    }
-    return out
-}
-
-/**
- * Discriminator for LazyColumn's contentType — lets the lazy layout reuse the
- * underlying composition slot when a bubble of the same shape scrolls into view.
- */
-private fun live.agor.app.models.Message.bubbleContentType(): String = when (content) {
-    is live.agor.app.models.MessageContent.Text -> "msg-text-${role.name}"
-    is live.agor.app.models.MessageContent.Blocks -> "msg-blocks-${role.name}"
-    is live.agor.app.models.MessageContent.Permission -> "msg-permission"
-    is live.agor.app.models.MessageContent.InputRequest -> "msg-input-request"
-}
