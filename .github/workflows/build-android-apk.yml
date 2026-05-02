@@ -36,6 +36,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Need full history so `git rev-list --count HEAD` produces a real
+          # versionCode. Default depth=1 always returns 1.
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -181,11 +185,17 @@ jobs:
 
           # Delete the old release (if present) so we get a clean asset slot.
           gh release delete "$TAG" --yes --cleanup-tag=false 2>/dev/null || true
+          # Rename to a stable filename for the asset URL. The `#display-label`
+          # syntax on `gh release create` only changes the asset's display label,
+          # not the actual filename used in the download URL — so we rename the
+          # file on disk first.
+          STABLE_APK="$(dirname "$APK_PATH")/agor-android-debug.apk"
+          cp "$APK_PATH" "$STABLE_APK"
           gh release create "$TAG" \
             --title "Android debug — $SHORT_SHA" \
             --notes "$NOTES" \
             --prerelease \
-            "$APK_PATH#agor-android-debug.apk"
+            "$STABLE_APK"
 
       - name: Summary
         env:
