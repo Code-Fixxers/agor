@@ -9,6 +9,7 @@ import live.agor.app.auth.SecureTokenStore
 import live.agor.app.auth.ServerProfileManager
 import live.agor.app.data.SidebarCache
 import live.agor.app.network.AgorClient
+import live.agor.app.network.HermesClient
 import live.agor.app.network.SocketService
 import live.agor.app.network.StreamingService
 import live.agor.app.notifications.AgorNotificationManager
@@ -24,6 +25,7 @@ class AppContainer(context: Context) {
     val tokenStore: SecureTokenStore = SecureTokenStore(appContext)
     val serverProfiles: ServerProfileManager = ServerProfileManager(appContext)
     val client: AgorClient = AgorClient(tokenStore)
+    val hermesClient: HermesClient = HermesClient(tokenStore)
     val authService: AuthService = AuthService(appContext, client, tokenStore, serverProfiles)
     val socket: SocketService = SocketService(client, logger)
     val streaming: StreamingService = StreamingService(socket, logger)

@@ -41,6 +41,21 @@ class SecureTokenStore(context: Context) {
         get() = prefs.getString(KEY_LAST_EMAIL, null)
         set(value) = prefs.edit().putString(KEY_LAST_EMAIL, value).apply()
 
+    /** Hermes Agent base URL (OpenAI-compatible /v1 endpoint). e.g. http://100.101.157.56:8642 */
+    var hermesUrl: String?
+        get() = prefs.getString(KEY_HERMES_URL, null)
+        set(value) = prefs.edit().putString(KEY_HERMES_URL, value).apply()
+
+    /** Hermes API server bearer token (sops-stored hermes_api_server_key on the host). */
+    var hermesToken: String?
+        get() = prefs.getString(KEY_HERMES_TOKEN, null)
+        set(value) = prefs.edit().putString(KEY_HERMES_TOKEN, value).apply()
+
+    /** Hermes model name as advertised by API_SERVER_MODEL_NAME. Default: hermes-agent. */
+    var hermesModel: String?
+        get() = prefs.getString(KEY_HERMES_MODEL, null)
+        set(value) = prefs.edit().putString(KEY_HERMES_MODEL, value).apply()
+
     fun clearTokensKeepUrl() {
         prefs.edit()
             .remove(KEY_ACCESS_TOKEN)
@@ -57,5 +72,8 @@ class SecureTokenStore(context: Context) {
         const val KEY_REFRESH_TOKEN = "refresh_token"
         const val KEY_SERVER_URL = "server_url"
         const val KEY_LAST_EMAIL = "last_email"
+        const val KEY_HERMES_URL = "hermes_url"
+        const val KEY_HERMES_TOKEN = "hermes_token"
+        const val KEY_HERMES_MODEL = "hermes_model"
     }
 }
