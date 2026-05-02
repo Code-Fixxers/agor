@@ -51,6 +51,22 @@ android {
         }
     }
 
+    // Stable debug signing certificate.
+    //
+    // Without this, every CI run generates a fresh ~/.android/debug.keystore,
+    // so every APK is signed with a different cert and the device refuses
+    // `adb install -r` with INSTALL_FAILED_UPDATE_INCOMPATIBLE — the user has
+    // to uninstall first. Committing a project-local keystore (debug-only,
+    // not sensitive) makes builds reproducibly signature-stable.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("../debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -60,6 +76,7 @@ android {
             isMinifyEnabled = false
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
