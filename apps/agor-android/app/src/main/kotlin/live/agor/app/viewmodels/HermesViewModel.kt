@@ -3,8 +3,12 @@ package live.agor.app.viewmodels
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import live.agor.app.AppContainer
@@ -32,6 +36,20 @@ class HermesViewModel(private val container: AppContainer) : ViewModel() {
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+
+    /**
+     * One-shot event stream emitting each completed assistant reply.
+     *
+     * Consumers (e.g. the voice controller) subscribe to TTS the final text. We use
+     * a SharedFlow with replay=0 + DROP_OLDEST so a missed event during process
+     * recreation never piles up.
+     */
+    private val _replies = MutableSharedFlow<String>(
+        replay = 0,
+        extraBufferCapacity = 4,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val replies: SharedFlow<String> = _replies.asSharedFlow()
 
     private var sendJob: Job? = null
 
@@ -75,6 +93,7 @@ class HermesViewModel(private val container: AppContainer) : ViewModel() {
             }
             replaceLastAssistant(builder.toString(), streaming = false)
             _state.value = _state.value.copy(isSending = false)
+            _replies.tryEmit(builder.toString())
         } catch (t: Throwable) {
             AppLogger.log("Hermes stream failed: ${t.message}", LogLevel.WARNING, "Hermes")
             // Fallback: try non-streaming once. Some proxies mangle SSE headers.
@@ -82,6 +101,7 @@ class HermesViewModel(private val container: AppContainer) : ViewModel() {
                 .onSuccess { reply ->
                     replaceLastAssistant(reply, streaming = false)
                     _state.value = _state.value.copy(isSending = false)
+                    _replies.tryEmit(reply)
                 }
                 .onFailure { e ->
                     val turns = _state.value.turns.toMutableList()
