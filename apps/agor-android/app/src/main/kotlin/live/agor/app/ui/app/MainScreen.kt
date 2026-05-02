@@ -1,11 +1,13 @@
 package live.agor.app.ui.app
 
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -90,12 +92,27 @@ fun MainScreen(app: AppViewModel) {
                         route = MainRoute.Settings
                         scope.launch { drawerState.close() }
                     },
+                    onOpenHermes = {
+                        route = if (container.hermesClient.isConfigured) {
+                            MainRoute.Hermes
+                        } else {
+                            MainRoute.HermesSetup
+                        }
+                        scope.launch { drawerState.close() }
+                    },
                 )
             }
         },
     ) {
         when (val r = route) {
-            is MainRoute.EmptyHome -> EmptyHome(onOpenDrawer = { scope.launch { drawerState.open() } })
+            is MainRoute.EmptyHome -> EmptyHome(
+                onOpenDrawer = { scope.launch { drawerState.open() } },
+                hermesConfigured = container.hermesClient.isConfigured,
+                onOpenHermes = {
+                    route = if (container.hermesClient.isConfigured) MainRoute.Hermes
+                    else MainRoute.HermesSetup
+                },
+            )
             is MainRoute.Hermes -> HermesScreen(
                 onOpenDrawer = { scope.launch { drawerState.open() } },
                 onOpenSettings = { route = MainRoute.HermesSetup },
@@ -121,7 +138,11 @@ fun MainScreen(app: AppViewModel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EmptyHome(onOpenDrawer: () -> Unit) {
+private fun EmptyHome(
+    onOpenDrawer: () -> Unit,
+    hermesConfigured: Boolean,
+    onOpenHermes: () -> Unit,
+) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -134,14 +155,20 @@ private fun EmptyHome(onOpenDrawer: () -> Unit) {
             )
         },
     ) { padding ->
-        Box(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentAlignment = Alignment.Center,
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                "Open the drawer to pick a session",
+                if (hermesConfigured) "Tap Hermes to open the chat, or pick a session from the drawer."
+                else "Connect Hermes to start chatting with your orchestrator agent.",
                 style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.padding(bottom = 16.dp),
             )
+            Button(onClick = onOpenHermes) {
+                Text(if (hermesConfigured) "Open Hermes" else "Connect Hermes")
+            }
         }
     }
 }
