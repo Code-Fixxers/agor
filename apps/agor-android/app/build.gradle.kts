@@ -22,6 +22,28 @@ fun gitShortSha(): String {
     }
 }
 
+// Monotonic versionCode based on commit count. CI overrides via -PversionCode/-PversionName
+// so the value baked into the APK matches the rolling GitHub Release the in-app updater
+// reads. Local dev builds fall back to commit count + "dev-<sha>" name.
+fun gitCommitCount(): Int {
+    return try {
+        val out = ByteArrayOutputStream()
+        exec {
+            commandLine("git", "rev-list", "--count", "HEAD")
+            standardOutput = out
+            isIgnoreExitValue = true
+        }
+        out.toString().trim().toIntOrNull() ?: 1
+    } catch (_: Exception) {
+        1
+    }
+}
+
+val agorVersionCode: Int = (project.findProperty("versionCode") as? String)?.toIntOrNull()
+    ?: gitCommitCount()
+val agorVersionName: String = (project.findProperty("versionName") as? String)
+    ?: "dev-${gitShortSha()}"
+
 android {
     namespace = "live.agor.app"
     compileSdk = 35
@@ -32,12 +54,20 @@ android {
         applicationId = "live.agor.app"
         minSdk = 28
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = agorVersionCode
+        versionName = agorVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "GIT_SHA", "\"${gitShortSha()}\"")
-        buildConfigField("String", "VERSION_NAME", "\"1.0\"")
+        buildConfigField("String", "VERSION_NAME", "\"$agorVersionName\"")
+        buildConfigField("int", "VERSION_CODE_FIELD", "$agorVersionCode")
+        // Source of truth for in-app updates. CI keeps the rolling tag pointing at the
+        // newest debug build; the updater fetches releases/tags/<this-tag> on launch.
+        buildConfigField(
+            "String",
+            "UPDATE_RELEASE_URL",
+            "\"https://api.github.com/repos/Code-Fixxers/agor/releases/tags/android-latest\"",
+        )
 
         externalNativeBuild {
             cmake {

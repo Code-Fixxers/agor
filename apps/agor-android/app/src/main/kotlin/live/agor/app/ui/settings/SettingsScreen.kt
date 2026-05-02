@@ -28,11 +28,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import live.agor.app.BuildConfig
 import live.agor.app.LocalAppContainer
 import live.agor.app.network.ConnectionState
 import live.agor.app.ui.common.ConnectionIndicator
+import live.agor.app.ui.simpleViewModelFactory
 import live.agor.app.viewmodels.AppViewModel
+import live.agor.app.viewmodels.UpdateViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -140,6 +143,8 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Spacer(Modifier.height(8.dp))
+            UpdateRow()
 
             Spacer(Modifier.height(24.dp))
             Divider()
@@ -150,4 +155,84 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+/**
+ * "Check for updates" row, including download/install flow. Lives in Settings
+ * so it doesn't have to share state with the on-launch silent check elsewhere
+ * — scoped to the screen, the ViewModel disappears when the user navigates back.
+ */
+@Composable
+private fun UpdateRow() {
+    val container = LocalAppContainer.current
+    val vm: UpdateViewModel = viewModel(
+        key = "update",
+        factory = simpleViewModelFactory { UpdateViewModel(container) },
+    )
+    val state by vm.state.collectAsState()
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        when (val s = state) {
+            UpdateViewModel.State.Idle -> {
+                TextButton(onClick = vm::checkExplicit, modifier = Modifier.fillMaxWidth()) {
+                    Text("Check for updates")
+                }
+            }
+            UpdateViewModel.State.Checking -> {
+                Text("Checking…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            UpdateViewModel.State.UpToDate -> {
+                Text("You're up to date.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(4.dp))
+                TextButton(onClick = vm::checkExplicit, modifier = Modifier.fillMaxWidth()) {
+                    Text("Check again")
+                }
+            }
+            is UpdateViewModel.State.Available -> {
+                Text("New version available: ${s.info.versionName}",
+                    style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(4.dp))
+                TextButton(onClick = vm::download, modifier = Modifier.fillMaxWidth()) {
+                    Text("Download (${formatSize(s.info.sizeBytes)})")
+                }
+            }
+            is UpdateViewModel.State.Downloading -> {
+                val pct = if (s.total > 0) (s.downloaded.toFloat() / s.total).coerceIn(0f, 1f) else 0f
+                Text("Downloading ${(pct * 100).toInt()}%…",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            is UpdateViewModel.State.Ready -> {
+                Text("Ready to install ${s.info.versionName}",
+                    style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(4.dp))
+                TextButton(
+                    onClick = {
+                        if (!vm.install()) vm.requestInstallPermission()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (vm.canRequestInstall()) "Install" else "Allow installs, then tap again")
+                }
+            }
+            is UpdateViewModel.State.Failed -> {
+                Text(s.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
+                Spacer(Modifier.height(4.dp))
+                TextButton(onClick = vm::dismiss, modifier = Modifier.fillMaxWidth()) {
+                    Text("Dismiss")
+                }
+            }
+        }
+    }
+}
+
+private fun formatSize(bytes: Long): String {
+    if (bytes <= 0) return "?"
+    val mb = bytes / (1024.0 * 1024.0)
+    return String.format("%.1f MB", mb)
 }
