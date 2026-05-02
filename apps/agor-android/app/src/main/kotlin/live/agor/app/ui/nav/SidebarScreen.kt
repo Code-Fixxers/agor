@@ -11,12 +11,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -27,46 +25,17 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import live.agor.app.LocalAppContainer
-import live.agor.app.models.Board
 import live.agor.app.models.Session
-import live.agor.app.models.Worktree
 import live.agor.app.ui.common.AgentIcon
 import live.agor.app.ui.common.StatusBadge
 import live.agor.app.viewmodels.NavigationViewModel
-
-/**
- * Flattened sidebar rows. Building a flat List<Row> upstream of the LazyColumn is
- * critical for scroll performance: nested `forEach` inside a single `items` slot
- * collapses the entire subtree into one composition unit and defeats LazyColumn's
- * lazy layout. With ~100 sessions and a busy board this stutters badly.
- */
-@Immutable
-private sealed class SidebarRow(val key: String) {
-    @Immutable
-    class Header(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, key: String) : SidebarRow(key)
-    @Immutable
-    class HermesShortcut(val configured: Boolean) : SidebarRow("hermes-shortcut")
-    @Immutable
-    class DividerRow(suffix: String) : SidebarRow("div-$suffix")
-    @Immutable
-    class SessionItem(val session: Session, val depth: Int, keyPrefix: String) :
-        SidebarRow("$keyPrefix-${session.sessionId}")
-    @Immutable
-    class BoardItem(val board: Board, val isOpen: Boolean) : SidebarRow("board-${board.boardId}")
-    @Immutable
-    class WorktreeItem(val worktree: Worktree, val isOpen: Boolean) :
-        SidebarRow("worktree-${worktree.worktreeId}")
-}
 
 @Composable
 fun SidebarScreen(
@@ -75,27 +44,11 @@ fun SidebarScreen(
     onOpenSettings: () -> Unit,
     onOpenHermes: (() -> Unit)? = null,
 ) {
+    // Rows are pre-flattened on Dispatchers.Default in the ViewModel — no
+    // Main-thread groupBy/sort/filter on socket patches.
+    val rows by nav.rows.collectAsState()
     val state by nav.state.collectAsState()
-    val expandedBoards by nav.expandedBoards.collectAsState()
-    val expandedWorktrees by nav.expandedWorktrees.collectAsState()
     val scope = rememberCoroutineScope()
-    val container = LocalAppContainer.current
-
-    // Memoize derived lists. importantSessions() / needsAttentionSessions() were
-    // O(n) over all sessions — running them on every recomposition was a stutter
-    // source by itself.
-    val important = remember(state.sessions, state.favorites) {
-        nav.importantSessions()
-    }
-    val attention = remember(state.sessions) {
-        nav.needsAttentionSessions()
-    }
-
-    // Build a flat row list once per state change.
-    val rows = remember(state, expandedBoards, expandedWorktrees, important, attention) {
-        flatten(state, expandedBoards, expandedWorktrees, important, attention,
-            container.hermesClient.isConfigured)
-    }
 
     LazyColumn(modifier = Modifier.fillMaxWidth()) {
         item(key = "header") {
@@ -147,61 +100,6 @@ fun SidebarScreen(
         }
     }
 }
-
-private fun flatten(
-    state: NavigationViewModel.State,
-    expandedBoards: Set<String>,
-    expandedWorktrees: Set<String>,
-    important: List<Session>,
-    attention: List<Session>,
-    hermesConfigured: Boolean,
-): List<SidebarRow> {
-    val out = ArrayList<SidebarRow>(64)
-
-    // Hermes shortcut at the top — works whether configured or not so the user can
-    // discover the entry point post-install.
-    out += SidebarRow.HermesShortcut(configured = hermesConfigured)
-    out += dividerRow("after-hermes")
-
-    if (attention.isNotEmpty()) {
-        out += SidebarRow.Header("Needs Attention", Icons.Default.Notifications, "h-attention")
-        for (s in attention) out += SidebarRow.SessionItem(s, depth = 1, keyPrefix = "att")
-        out += dividerRow("after-attention")
-    }
-
-    if (important.isNotEmpty()) {
-        out += SidebarRow.Header("Important", Icons.Default.Star, "h-important")
-        for (s in important) out += SidebarRow.SessionItem(s, depth = 1, keyPrefix = "imp")
-        out += dividerRow("after-important")
-    }
-
-    out += SidebarRow.Header("Boards", Icons.Default.AccountTree, "h-boards")
-    for (board in state.boards) {
-        val boardOpen = expandedBoards.contains(board.boardId)
-        out += SidebarRow.BoardItem(board, boardOpen)
-        if (!boardOpen) continue
-
-        val worktrees = state.worktreesByBoard[board.boardId].orEmpty()
-        for (wt in worktrees) {
-            val wtOpen = expandedWorktrees.contains(wt.worktreeId)
-            out += SidebarRow.WorktreeItem(wt, wtOpen)
-            if (!wtOpen) continue
-
-            val sessions = state.sessionsByWorktree[wt.worktreeId].orEmpty()
-                .filter { it.archived != true && !it.isScheduled }
-                // Active sessions float to the top; idle/finished follow.
-                .sortedWith(compareByDescending<Session> { it.status.isActive }
-                    .thenByDescending { it.lastUpdated })
-            for (s in sessions) {
-                out += SidebarRow.SessionItem(s, depth = 3, keyPrefix = "sess-${wt.worktreeId}")
-            }
-        }
-    }
-
-    return out
-}
-
-private fun dividerRow(suffix: String): SidebarRow = SidebarRow.DividerRow(suffix)
 
 @Composable
 private fun SectionHeader(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String) {

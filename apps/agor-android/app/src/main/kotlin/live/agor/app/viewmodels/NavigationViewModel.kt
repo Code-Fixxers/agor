@@ -2,11 +2,16 @@ package live.agor.app.viewmodels
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import live.agor.app.AppContainer
 import live.agor.app.data.SidebarCache
@@ -14,6 +19,8 @@ import live.agor.app.models.Board
 import live.agor.app.models.Session
 import live.agor.app.models.SessionStatus
 import live.agor.app.models.Worktree
+import live.agor.app.ui.nav.SidebarRow
+import live.agor.app.ui.nav.flattenSidebarRows
 import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
 
@@ -53,6 +60,23 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
 
     private val _expandedWorktrees = MutableStateFlow<Set<String>>(emptySet())
     val expandedWorktrees: StateFlow<Set<String>> = _expandedWorktrees.asStateFlow()
+
+    /**
+     * Pre-flattened sidebar rows. Derived off-Main on [Dispatchers.Default] so
+     * the importance/attention scans, board → worktree → session walk, and
+     * per-worktree sort no longer block the UI thread on every patch. The
+     * `WhileSubscribed(5_000)` window keeps the result alive across short
+     * navigations (drawer hide/show, screen rotation).
+     */
+    val rows: StateFlow<List<SidebarRow>> = combine(
+        _state,
+        _expandedBoards,
+        _expandedWorktrees,
+    ) { s, eb, ew ->
+        flattenSidebarRows(s, eb, ew, container.hermesClient.isConfigured)
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private var pollJob: Job? = null
 
@@ -99,21 +123,6 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
             favorites = if (cur.contains(sessionId)) cur - sessionId else cur + sessionId,
         )
     }
-
-    fun importantSessions(): List<Session> {
-        val s = _state.value
-        return s.sessions.filter {
-            s.favorites.contains(it.sessionId) ||
-                it.status == SessionStatus.RUNNING ||
-                it.readyForPrompt == true
-        }.sortedByDescending { it.lastUpdated }
-            .take(20)
-    }
-
-    fun needsAttentionSessions(): List<Session> =
-        _state.value.sessions
-            .filter { !it.isScheduled && it.status.needsAttention }
-            .sortedByDescending { it.lastUpdated }
 
     /**
      * Targeted update — touch only the affected entries in `sessionsByWorktree`,
