@@ -62,8 +62,15 @@ fun ChatScreen(
 
     LaunchedEffect(sessionId) { vm.load() }
 
+    // Only auto-scroll when the user is already near the bottom — yanking them out
+    // of mid-scroll-up reading is what makes chats feel janky on long sessions.
+    // Mirrors apps/agor-ios commit "only auto-scroll chat when user is near bottom".
     LaunchedEffect(state.messages.size) {
-        if (state.messages.isNotEmpty()) {
+        if (state.messages.isEmpty()) return@LaunchedEffect
+        val info = listState.layoutInfo
+        val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+        val total = info.totalItemsCount
+        if (total == 0 || lastVisible >= total - 3) {
             listState.animateScrollToItem(state.messages.size - 1)
         }
     }
@@ -157,9 +164,19 @@ fun ChatScreen(
                     grouped.forEach { (taskId, messages) ->
                         val task = taskId?.let { tasksById[it] }
                         if (task != null) {
-                            item(key = "task-${task.taskId}") { TaskHeader(task) }
+                            item(
+                                key = "task-${task.taskId}",
+                                contentType = "task-header",
+                            ) { TaskHeader(task) }
                         }
-                        items(messages, key = { it.messageId }) { message ->
+                        items(
+                            messages,
+                            key = { it.messageId },
+                            // contentType lets LazyColumn pool item layouts by category
+                            // when scrolling. Without it, every item creates a fresh
+                            // composition slot — that's the dominant cost on long chats.
+                            contentType = { it.bubbleContentType() },
+                        ) { message ->
                             MessageBubble(
                                 message = message,
                                 liveSnapshot = state.live[message.messageId],
@@ -168,7 +185,11 @@ fun ChatScreen(
                             )
                         }
                     }
-                    items(orphans, key = { "live-${it.key}" }) { (_, snap) ->
+                    items(
+                        orphans,
+                        key = { "live-${it.key}" },
+                        contentType = { "live-bubble" },
+                    ) { (_, snap) ->
                         StreamingPlaceholder(snap)
                     }
                     item { Spacer(Modifier.height(60.dp)) }
@@ -202,4 +223,15 @@ private fun groupMessagesByTask(
         currentList.add(m)
     }
     return out
+}
+
+/**
+ * Discriminator for LazyColumn's contentType — lets the lazy layout reuse the
+ * underlying composition slot when a bubble of the same shape scrolls into view.
+ */
+private fun live.agor.app.models.Message.bubbleContentType(): String = when (content) {
+    is live.agor.app.models.MessageContent.Text -> "msg-text-${role.name}"
+    is live.agor.app.models.MessageContent.Blocks -> "msg-blocks-${role.name}"
+    is live.agor.app.models.MessageContent.Permission -> "msg-permission"
+    is live.agor.app.models.MessageContent.InputRequest -> "msg-input-request"
 }

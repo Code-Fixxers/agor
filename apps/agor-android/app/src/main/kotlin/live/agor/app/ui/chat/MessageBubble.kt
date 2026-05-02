@@ -21,6 +21,16 @@ import live.agor.app.ui.messageblocks.InputRequestCardView
 import live.agor.app.ui.messageblocks.MarkdownText
 import live.agor.app.ui.messageblocks.PermissionCardView
 
+// Hoisted constants — allocating these per-bubble was free-ish individually but
+// cumulative across hundreds of items made first-composition (when scrolling new
+// content into view) noticeably janky.
+private val BubbleShape = RoundedCornerShape(12.dp)
+private val BubbleOuterPadding = androidx.compose.foundation.layout.PaddingValues(
+    horizontal = 8.dp, vertical = 4.dp,
+)
+private val BubbleInnerPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)
+private val BubbleMaxWidth = 600.dp
+
 @Composable
 fun MessageBubble(
     message: Message,
@@ -36,14 +46,14 @@ fun MessageBubble(
     }
 
     Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 8.dp),
+        modifier = Modifier.fillMaxWidth().padding(BubbleOuterPadding),
         horizontalAlignment = alignment,
     ) {
         Box(
             modifier = Modifier
-                .widthIn(max = 600.dp)
-                .background(bubbleColor, RoundedCornerShape(12.dp))
-                .padding(12.dp),
+                .widthIn(max = BubbleMaxWidth)
+                .background(bubbleColor, BubbleShape)
+                .padding(BubbleInnerPadding),
         ) {
             when (val c = message.content) {
                 is MessageContent.Text -> {
@@ -67,12 +77,12 @@ fun MessageBubble(
 
 @Composable
 fun StreamingPlaceholder(snapshot: StreamingService.StreamSnapshot) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 8.dp)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(BubbleOuterPadding)) {
         Box(
             modifier = Modifier
-                .widthIn(max = 600.dp)
-                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))
-                .padding(12.dp),
+                .widthIn(max = BubbleMaxWidth)
+                .background(MaterialTheme.colorScheme.surface, BubbleShape)
+                .padding(BubbleInnerPadding),
         ) {
             Column {
                 if (snapshot.thinking.isNotEmpty()) {
