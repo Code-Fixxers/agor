@@ -221,12 +221,45 @@ NPMRC
             echo "✅ Publish completed."
           '';
         };
+        # ------------------------------------------------------------------
+        # Hermes — orchestrator container.
+        #
+        # Standalone TS service (apps/agor-hermes) that the Android app talks
+        # to over Tailscale. Proxies LLM calls to LiteLLM, drives Agor via MCP,
+        # stores memory in AnythingLLM. See apps/agor-hermes/README.md.
+        # ------------------------------------------------------------------
+        runHermesScript = pkgs.writeShellApplication {
+          name = "run-hermes";
+          runtimeInputs = sharedRuntimeInputs;
+          text = ''
+            set -euo pipefail
+
+            ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+            APP_DIR="$ROOT/apps/agor-hermes"
+
+            if [ ! -d "$APP_DIR" ]; then
+              echo "❌ Could not find apps/agor-hermes from: $ROOT"
+              exit 1
+            fi
+
+            if [ -z "''${HERMES_BEARER_TOKEN:-}" ]; then
+              echo "❌ HERMES_BEARER_TOKEN must be set (>=16 chars)."
+              exit 1
+            fi
+
+            (cd "$APP_DIR" && pnpm install --silent)
+            echo "▶️  Starting hermes (port ''${HERMES_PORT:-4040})..."
+            cd "$APP_DIR"
+            pnpm exec tsx src/main.ts
+          '';
+        };
       in {
         packages = {
           build-agor-live-wrapper = buildScript;
           run-agor-live-wrapper = runScript;
           publish-agor-live-wrapper = publishScript;
           build-agor-android-apk = buildAgorAndroidApkScript;
+          run-hermes = runHermesScript;
           default = runScript;
         };
 
@@ -246,6 +279,10 @@ NPMRC
           build-agor-android-apk = {
             type = "app";
             program = "${buildAgorAndroidApkScript}/bin/build-agor-android-apk";
+          };
+          run-hermes = {
+            type = "app";
+            program = "${runHermesScript}/bin/run-hermes";
           };
           default = self.apps.${system}.run-agor-live;
         };
