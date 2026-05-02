@@ -63,9 +63,8 @@ fun ChatScreen(
         key = "chat-$sessionId",
         factory = simpleViewModelFactory { ChatViewModel(container, sessionId) },
     )
+    val rows by vm.rows.collectAsState()
     val messages by vm.messages.collectAsState()
-    val tasks by vm.tasks.collectAsState()
-    val live by vm.live.collectAsState()
     val ui by vm.uiState.collectAsState()
     val listState = rememberLazyListState()
     var showFiles by remember { mutableStateOf(false) }
@@ -144,20 +143,10 @@ fun ChatScreen(
                     Text(ui.errorMessage!!, color = MaterialTheme.colorScheme.error)
                 }
             } else {
-                // Pre-flatten messages → blocks → rows. Heavy strings (JSON,
-                // joined tool-result text, merged streaming text) are computed
-                // *once* here and cached in @Immutable row records. Scroll-time
-                // recomposition reads them as plain Strings — no per-frame work.
-                // Phase C will move this off-Main; for now it stays here.
-                val rows = remember(messages, tasks, live) {
-                    flattenChatRows(
-                        messages = messages,
-                        tasks = tasks,
-                        live = live,
-                        showLoadEarlier = messages.size >= 100,
-                    )
-                }
-
+                // `rows` is pre-flattened on Dispatchers.Default in the ViewModel.
+                // Heavy strings (JSON, joined tool-result text, merged streaming
+                // text) are precomputed and cached in @Immutable row records, so
+                // recomposition during scroll reads them as plain Strings.
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),

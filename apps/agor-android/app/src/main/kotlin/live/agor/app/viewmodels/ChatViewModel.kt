@@ -2,10 +2,13 @@ package live.agor.app.viewmodels
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -20,6 +23,8 @@ import live.agor.app.models.MessageContent
 import live.agor.app.models.PermissionStatus
 import live.agor.app.models.Session
 import live.agor.app.network.StreamingService
+import live.agor.app.ui.chat.ChatRow
+import live.agor.app.ui.chat.flattenChatRows
 import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
 
@@ -70,6 +75,27 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
     val pendingInputRequestId: StateFlow<String?> = _messages
         .map(::firstPendingInput)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * Pre-flattened, render-ready rows for the chat LazyColumn.
+     *
+     * Runs on [Dispatchers.Default], not Main — so the JSON serialization,
+     * string joins, and merged streaming text in [flattenChatRows] no longer
+     * block the UI thread on every streaming chunk. The previous design ran
+     * the flatten inside `remember(...)` in the Composable, which executed
+     * on Main on every state change.
+     *
+     * `WhileSubscribed(5_000)` keeps the result alive across short navigations
+     * (drawer toggle, file browser sheet) so re-entry doesn't trigger a cold
+     * recomputation.
+     */
+    val rows: StateFlow<List<ChatRow>> = combine(
+        _messages,
+        _tasks,
+        live,
+    ) { m, t, l -> flattenChatRows(m, t, l, m.size >= 100) }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
         container.socket.onMessageCreated { msg ->
