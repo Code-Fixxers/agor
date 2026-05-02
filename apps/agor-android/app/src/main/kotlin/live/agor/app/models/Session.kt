@@ -1,5 +1,6 @@
 package live.agor.app.models
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -64,6 +65,7 @@ enum class PermissionMode {
     @SerialName("allow-all") ALLOW_ALL,
 }
 
+@Immutable
 @Serializable
 data class GitState(
     val ref: String? = null,
@@ -71,6 +73,7 @@ data class GitState(
     @SerialName("current_sha") val currentSha: String? = null,
 )
 
+@Immutable
 @Serializable
 data class SessionGenealogy(
     @SerialName("forked_from_session_id") val forkedFromSessionId: String? = null,
@@ -82,11 +85,13 @@ data class SessionGenealogy(
     val children: List<String> = emptyList(),
 )
 
+@Immutable
 @Serializable
 data class PermissionConfig(
     val mode: PermissionMode? = null,
 )
 
+@Immutable
 @Serializable
 data class ModelConfig(
     val mode: String? = null,
@@ -99,6 +104,7 @@ data class ModelConfig(
     val effort: String? = null,
 )
 
+@Immutable
 @Serializable
 data class Session(
     @SerialName("session_id") val sessionId: String,
