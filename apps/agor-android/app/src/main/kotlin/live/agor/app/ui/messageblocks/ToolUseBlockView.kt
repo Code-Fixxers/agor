@@ -5,8 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,18 +26,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import kotlinx.serialization.json.encodeToJsonElement
-import live.agor.app.models.ContentBlock
-import live.agor.app.network.AgorJson
+import live.agor.app.ui.chat.ChatRow
 
+private val ToolBlockShape = RoundedCornerShape(8.dp)
+
+/**
+ * Renders a precomputed [ChatRow.ToolUseRow]. Crucial: the input JSON string is
+ * computed once, upstream, in [live.agor.app.ui.chat.flattenChatRows] — *not*
+ * re-encoded on every recomposition like the previous implementation did.
+ */
 @Composable
-fun ToolUseBlockView(block: ContentBlock.ToolUse) {
-    var expanded by remember(block.id) { mutableStateOf(block.name == "Write") }
+fun ToolUseBlockView(row: ChatRow.ToolUseRow) {
+    var expanded by remember(row.key) { mutableStateOf(row.name == "Write") }
     val container = MaterialTheme.colorScheme.surfaceVariant
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(container, RoundedCornerShape(8.dp))
+            .background(container, ToolBlockShape)
             .padding(8.dp),
     ) {
         Row(
@@ -46,20 +51,23 @@ fun ToolUseBlockView(block: ContentBlock.ToolUse) {
         ) {
             Icon(Icons.Default.Build, contentDescription = null)
             Spacer(Modifier.width(6.dp))
-            Text(block.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text(row.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             Text(
-                block.inputSummary,
+                row.inputSummary,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 modifier = Modifier.weight(2f),
             )
-            Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
+            Icon(
+                if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+            )
         }
         if (expanded) {
             Spacer(Modifier.height(6.dp))
             Text(
-                AgorJson.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), block.input),
+                row.inputJson,
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
             )
         }
