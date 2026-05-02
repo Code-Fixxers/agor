@@ -153,13 +153,25 @@ class AgorClient(private val tokens: SecureTokenStore) {
 
     suspend fun listBoards(): List<Board> = listAll("/boards", Board.serializer())
 
-    suspend fun listWorktrees(boardId: String? = null): List<Worktree> {
-        val q = if (boardId != null) mapOf("board_id" to boardId) else emptyMap()
+    suspend fun listWorktrees(
+        boardId: String? = null,
+        includeArchived: Boolean = false,
+    ): List<Worktree> {
+        val q = buildMap {
+            if (boardId != null) put("board_id", boardId)
+            if (!includeArchived) put("archived", "false")
+        }
         return listAll("/worktrees", Worktree.serializer(), q)
     }
 
-    suspend fun listSessions(worktreeId: String? = null): List<Session> {
-        val q = if (worktreeId != null) mapOf("worktree_id" to worktreeId) else emptyMap()
+    suspend fun listSessions(
+        worktreeId: String? = null,
+        includeArchived: Boolean = false,
+    ): List<Session> {
+        val q = buildMap {
+            if (worktreeId != null) put("worktree_id", worktreeId)
+            if (!includeArchived) put("archived", "false")
+        }
         return listAll("/sessions", Session.serializer(), q)
     }
 
