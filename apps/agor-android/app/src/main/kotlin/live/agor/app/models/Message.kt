@@ -1,5 +1,6 @@
 package live.agor.app.models
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -47,6 +48,7 @@ data class MessageMetadata(
     @SerialName("is_meta") val isMeta: Boolean? = null,
 )
 
+@Immutable
 @Serializable
 data class ToolUseRef(
     val id: String,
@@ -54,13 +56,15 @@ data class ToolUseRef(
     val input: JsonObject = JsonObject(emptyMap()),
 )
 
+@Immutable
 sealed class MessageContent {
-    data class Text(val text: String) : MessageContent()
-    data class Blocks(val blocks: List<ContentBlock>) : MessageContent()
-    data class Permission(val request: PermissionRequestContent) : MessageContent()
-    data class InputRequest(val request: InputRequestContent) : MessageContent()
+    @Immutable data class Text(val text: String) : MessageContent()
+    @Immutable data class Blocks(val blocks: List<ContentBlock>) : MessageContent()
+    @Immutable data class Permission(val request: PermissionRequestContent) : MessageContent()
+    @Immutable data class InputRequest(val request: InputRequestContent) : MessageContent()
 }
 
+@Immutable
 @Serializable(with = MessageSerializer::class)
 data class Message(
     val messageId: String,

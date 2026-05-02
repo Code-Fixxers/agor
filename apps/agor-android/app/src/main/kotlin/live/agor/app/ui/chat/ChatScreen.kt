@@ -128,6 +128,21 @@ fun ChatScreen(
                     Text(state.errorMessage!!, color = MaterialTheme.colorScheme.error)
                 }
             } else {
+                // Memoize the three derivations so they don't re-run on every
+                // scroll-triggered recomposition. With long task histories and
+                // active streaming, recomputing tasksById/grouped/orphans for
+                // each frame was a measurable stutter source.
+                val tasksById = remember(state.tasks) {
+                    state.tasks.associateBy { it.taskId }
+                }
+                val grouped = remember(state.messages) {
+                    groupMessagesByTask(state.messages)
+                }
+                val orphans = remember(state.live, state.messages) {
+                    val seen = state.messages.mapTo(HashSet(state.messages.size)) { it.messageId }
+                    state.live.entries.filter { it.key !in seen }.toList()
+                }
+
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -139,8 +154,6 @@ fun ChatScreen(
                             TextButton(onClick = vm::loadEarlier) { Text("Load earlier messages") }
                         }
                     }
-                    val tasksById = state.tasks.associateBy { it.taskId }
-                    val grouped = groupMessagesByTask(state.messages)
                     grouped.forEach { (taskId, messages) ->
                         val task = taskId?.let { tasksById[it] }
                         if (task != null) {
@@ -155,10 +168,7 @@ fun ChatScreen(
                             )
                         }
                     }
-                    val orphans = state.live.filter { (id, _) ->
-                        state.messages.none { it.messageId == id }
-                    }
-                    items(orphans.entries.toList(), key = { "live-${it.key}" }) { (_, snap) ->
+                    items(orphans, key = { "live-${it.key}" }) { (_, snap) ->
                         StreamingPlaceholder(snap)
                     }
                     item { Spacer(Modifier.height(60.dp)) }
