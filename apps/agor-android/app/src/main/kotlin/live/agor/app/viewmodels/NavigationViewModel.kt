@@ -103,18 +103,43 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
             .filter { !it.isScheduled && it.status.needsAttention }
             .sortedByDescending { it.lastUpdated }
 
-    private suspend fun applySessionPatch(patched: Session) {
-        val all = _state.value.sessions
-        val replaced = all.map { if (it.sessionId == patched.sessionId) patched else it }
-            .let { current ->
-                if (current.any { it.sessionId == patched.sessionId }) current
-                else current + patched
+    /**
+     * Targeted update — touch only the affected entries in `sessionsByWorktree`,
+     * not a full `groupBy` over all sessions. Critical for sidebar perf when an
+     * active board patches sessions multiple times per minute.
+     */
+    private fun applySessionPatch(patched: Session) {
+        val current = _state.value
+        val sessions = current.sessions
+        val idx = sessions.indexOfFirst { it.sessionId == patched.sessionId }
+        val oldWtId = if (idx >= 0) sessions[idx].worktreeId else null
+        val newWtId = patched.worktreeId
+
+        val newSessions: List<Session> = if (idx >= 0) {
+            sessions.toMutableList().apply { set(idx, patched) }
+        } else {
+            sessions + patched
+        }
+
+        val newByWt = current.sessionsByWorktree.toMutableMap()
+        if (oldWtId != null && oldWtId != newWtId) {
+            // Session moved to a different worktree — remove from old slot, add to new.
+            newByWt[oldWtId] = newByWt[oldWtId].orEmpty().filter { it.sessionId != patched.sessionId }
+            newByWt[newWtId] = newByWt[newWtId].orEmpty() + patched
+        } else {
+            // Same worktree — replace within the slot, or append if not present.
+            val list = newByWt[newWtId].orEmpty()
+            val localIdx = list.indexOfFirst { it.sessionId == patched.sessionId }
+            newByWt[newWtId] = if (localIdx >= 0) {
+                list.toMutableList().apply { set(localIdx, patched) }
+            } else {
+                list + patched
             }
-        _state.value = _state.value.copy(
-            sessions = replaced,
-            sessionsByWorktree = replaced.groupBy { it.worktreeId },
-        )
-        if (_state.value.favorites.contains(patched.sessionId) &&
+        }
+
+        _state.value = current.copy(sessions = newSessions, sessionsByWorktree = newByWt)
+
+        if (current.favorites.contains(patched.sessionId) &&
             patched.status == SessionStatus.IDLE
         ) {
             container.notifications.notifySessionIdle(
