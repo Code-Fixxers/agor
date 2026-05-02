@@ -36,7 +36,12 @@ import live.agor.app.viewmodels.AppViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(app: AppViewModel, onOpenDrawer: () -> Unit, onClose: () -> Unit) {
+fun SettingsScreen(
+    app: AppViewModel,
+    onOpenDrawer: () -> Unit,
+    onClose: () -> Unit,
+    onOpenHermesSetup: (() -> Unit)? = null,
+) {
     val container = LocalAppContainer.current
     val user by app.user.collectAsState()
     val conn by app.connectionState.collectAsState()
@@ -107,6 +112,24 @@ fun SettingsScreen(app: AppViewModel, onOpenDrawer: () -> Unit, onClose: () -> U
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            onOpenHermesSetup?.let { open ->
+                Spacer(Modifier.height(24.dp))
+                Divider()
+                Spacer(Modifier.height(16.dp))
+                Text("Hermes orchestrator", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    container.tokenStore.hermesUrl?.takeIf { it.isNotBlank() }
+                        ?: "Not configured",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = open, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (container.hermesClient.isConfigured) "Edit Hermes connection" else "Connect Hermes")
+                }
+            }
 
             Spacer(Modifier.height(24.dp))
             Divider()
