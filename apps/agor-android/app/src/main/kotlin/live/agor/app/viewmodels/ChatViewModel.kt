@@ -1,9 +1,12 @@
 package live.agor.app.viewmodels
 
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -153,14 +156,25 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
                 }
             }
             try {
-                val session = container.client.getSession(sessionId)
-                val tasks = container.client.listTasks(sessionId)
-                val latestMessages = container.client.listMessages(sessionId, limit = 200)
+                val started = SystemClock.elapsedRealtime()
+                val (session, tasks, latestMessages) = coroutineScope {
+                    val sessionDeferred = async { container.client.getSession(sessionId) }
+                    val tasksDeferred = async { container.client.listTasks(sessionId) }
+                    val messagesDeferred = async { container.client.listMessages(sessionId, limit = 200) }
+                    Triple(sessionDeferred.await(), tasksDeferred.await(), messagesDeferred.await())
+                }
                 _messages.value = mergeMessages(cached?.messages.orEmpty(), latestMessages)
                 _tasks.value = tasks
                 _uiState.update {
                     it.copy(session = session, isLoading = false, errorMessage = null)
                 }
+                val elapsed = SystemClock.elapsedRealtime() - started
+                AppLogger.log(
+                    "Chat $sessionId refresh loaded ${tasks.size} tasks and " +
+                        "${latestMessages.size} latest messages in ${elapsed}ms",
+                    LogLevel.DEBUG,
+                    "Perf",
+                )
                 container.chatCache.save(session, tasks, _messages.value)
             } catch (t: Throwable) {
                 AppLogger.log("Chat load failed: ${t.message}", LogLevel.ERROR, "Chat")

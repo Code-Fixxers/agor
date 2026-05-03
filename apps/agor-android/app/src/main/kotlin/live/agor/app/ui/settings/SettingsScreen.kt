@@ -27,6 +27,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import live.agor.app.BuildConfig
@@ -55,12 +56,12 @@ fun SettingsScreen(
             TopAppBar(
                 title = { Text("Settings") },
                 navigationIcon = {
-                    IconButton(onClick = onClose) {
+                    IconButton(onClick = onClose, modifier = Modifier.testTag("settings-back")) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
-                    IconButton(onClick = onOpenDrawer) {
+                    IconButton(onClick = onOpenDrawer, modifier = Modifier.testTag("settings-open-drawer")) {
                         Icon(Icons.Default.Menu, contentDescription = "Drawer")
                     }
                 },
@@ -129,7 +130,7 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
-                TextButton(onClick = open, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = open, modifier = Modifier.fillMaxWidth().testTag("settings-hermes")) {
                     Text(if (container.hermesClient.isConfigured) "Edit Hermes connection" else "Connect Hermes")
                 }
             }
@@ -150,7 +151,7 @@ fun SettingsScreen(
             Divider()
             Spacer(Modifier.height(16.dp))
 
-            TextButton(onClick = app::logout, modifier = Modifier.fillMaxWidth()) {
+            TextButton(onClick = app::logout, modifier = Modifier.fillMaxWidth().testTag("settings-sign-out")) {
                 Text("Sign out")
             }
         }
@@ -174,7 +175,7 @@ private fun UpdateRow() {
     Column(modifier = Modifier.fillMaxWidth()) {
         when (val s = state) {
             UpdateViewModel.State.Idle -> {
-                TextButton(onClick = vm::checkExplicit, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = vm::checkExplicit, modifier = Modifier.fillMaxWidth().testTag("settings-check-updates")) {
                     Text("Check for updates")
                 }
             }
@@ -188,7 +189,7 @@ private fun UpdateRow() {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))
-                TextButton(onClick = vm::checkExplicit, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = vm::checkExplicit, modifier = Modifier.fillMaxWidth().testTag("settings-check-updates")) {
                     Text("Check again")
                 }
             }
@@ -196,7 +197,7 @@ private fun UpdateRow() {
                 Text("New version available: ${s.info.versionName}",
                     style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(4.dp))
-                TextButton(onClick = vm::download, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = vm::download, modifier = Modifier.fillMaxWidth().testTag("settings-download-update")) {
                     Text("Download (${formatSize(s.info.sizeBytes)})")
                 }
             }
@@ -213,7 +214,7 @@ private fun UpdateRow() {
                     onClick = {
                         if (!vm.install()) vm.requestInstallPermission()
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("settings-install-update"),
                 ) {
                     Text(if (vm.canRequestInstall()) "Install" else "Allow installs, then tap again")
                 }
@@ -223,7 +224,7 @@ private fun UpdateRow() {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error)
                 Spacer(Modifier.height(4.dp))
-                TextButton(onClick = vm::dismiss, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = vm::dismiss, modifier = Modifier.fillMaxWidth().testTag("settings-dismiss-update")) {
                     Text("Dismiss")
                 }
             }

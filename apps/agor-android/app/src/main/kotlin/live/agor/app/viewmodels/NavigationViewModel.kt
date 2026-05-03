@@ -1,9 +1,12 @@
 package live.agor.app.viewmodels
 
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -177,10 +180,14 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
 
     suspend fun refresh() {
         _loadState.value = LoadState(isLoading = true, errorMessage = null)
+        val started = SystemClock.elapsedRealtime()
         try {
-            val boards = container.client.listBoards()
-            val worktrees = container.client.listWorktrees()
-            val sessions = container.client.listSessions()
+            val (boards, worktrees, sessions) = coroutineScope {
+                val boardsDeferred = async { container.client.listBoards() }
+                val worktreesDeferred = async { container.client.listWorktrees() }
+                val sessionsDeferred = async { container.client.listSessions(compact = true) }
+                Triple(boardsDeferred.await(), worktreesDeferred.await(), sessionsDeferred.await())
+            }
             _state.value = _state.value.copy(
                 boards = boards,
                 worktreesByBoard = worktrees.groupBy { it.boardId ?: "" },
@@ -188,6 +195,13 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
                 sessions = sessions,
             )
             _loadState.value = LoadState(isLoading = false, errorMessage = null)
+            val elapsed = SystemClock.elapsedRealtime() - started
+            AppLogger.log(
+                "Sidebar refresh loaded ${boards.size} boards, ${worktrees.size} worktrees, " +
+                    "${sessions.size} compact sessions in ${elapsed}ms",
+                LogLevel.DEBUG,
+                "Perf",
+            )
             container.sidebarCache.save(
                 SidebarCache.Snapshot(
                     System.currentTimeMillis(),

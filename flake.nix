@@ -68,6 +68,13 @@
           androidComposition.androidsdk
         ];
 
+        androidDebugInputs = androidBuildInputs ++ (with pkgs; [
+          gawk
+          jq
+          procps
+          sqlite
+        ]);
+
         androidEnvHook = ''
           export JAVA_HOME="${pkgs.jdk17.home}"
           export ANDROID_SDK_ROOT="${androidSdkRoot}"
@@ -75,7 +82,7 @@
           export ANDROID_NDK_HOME="${androidNdkRoot}"
           export ANDROID_NDK_ROOT="${androidNdkRoot}"
           export GRADLE_OPTS="-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdkRoot}/build-tools/35.0.0/aapt2 ''${GRADLE_OPTS:-}"
-          export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:''${PATH:-}"
+          export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/35.0.0:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:''${PATH:-}"
         '';
 
         buildAgorAndroidApkScript = pkgs.writeShellApplication {
@@ -124,6 +131,25 @@
             echo "✅ APK built: $DEST"
             echo "   Size: $(du -h "$DEST" | cut -f1)"
             echo "   Install: adb install -r $DEST"
+          '';
+        };
+
+        agorAndroidSmokeScript = pkgs.writeShellApplication {
+          name = "agor-android-smoke";
+          runtimeInputs = androidDebugInputs;
+          text = ''
+            set -euo pipefail
+
+            ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+            SCRIPT="$ROOT/scripts/agor-android-smoke.sh"
+
+            if [ ! -x "$SCRIPT" ]; then
+              echo "Missing executable smoke script: $SCRIPT" >&2
+              exit 2
+            fi
+
+            ${androidEnvHook}
+            exec "$SCRIPT" "$@"
           '';
         };
 
@@ -227,6 +253,7 @@ NPMRC
           run-agor-live-wrapper = runScript;
           publish-agor-live-wrapper = publishScript;
           build-agor-android-apk = buildAgorAndroidApkScript;
+          agor-android-smoke = agorAndroidSmokeScript;
           default = runScript;
         };
 
@@ -247,21 +274,27 @@ NPMRC
             type = "app";
             program = "${buildAgorAndroidApkScript}/bin/build-agor-android-apk";
           };
+          agor-android-smoke = {
+            type = "app";
+            program = "${agorAndroidSmokeScript}/bin/agor-android-smoke";
+          };
           default = self.apps.${system}.run-agor-live;
         };
 
         devShells = {
           default = pkgs.mkShell {
-            packages = with pkgs; [
-              nodejs_22
-              pnpm
-              jq
-              android-tools
-            ];
+            packages = sharedRuntimeInputs ++ androidDebugInputs;
+            shellHook = ''
+              ${androidEnvHook}
+              echo ""
+              echo "Agor dev shell: adb, aapt, Gradle, Node, pnpm, jq, sqlite available."
+              echo "Android smoke: nix run .#agor-android-smoke"
+              echo ""
+            '';
           };
 
           android = pkgs.mkShell {
-            packages = androidBuildInputs;
+            packages = androidDebugInputs;
             shellHook = ''
               ${androidEnvHook}
               echo ""
@@ -277,6 +310,9 @@ NPMRC
               echo ""
               echo "   Or one-shot from anywhere in the repo:"
               echo "     nix run .#build-agor-android-apk"
+              echo ""
+              echo "   Device smoke/perf harness:"
+              echo "     nix run .#agor-android-smoke"
               echo ""
             '';
           };

@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import live.agor.app.models.AgenticTool
@@ -50,7 +51,7 @@ fun SidebarScreen(
     val rows by nav.rows.collectAsState()
     val scope = rememberCoroutineScope()
 
-    LazyColumn(modifier = Modifier.fillMaxWidth()) {
+    LazyColumn(modifier = Modifier.fillMaxWidth().testTag("sidebar-list")) {
         item(key = "header") {
             Row(
                 modifier = Modifier
@@ -59,10 +60,13 @@ fun SidebarScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Agor", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                IconButton(onClick = { scope.launch { nav.refresh() } }) {
+                IconButton(
+                    onClick = { scope.launch { nav.refresh() } },
+                    modifier = Modifier.testTag("sidebar-refresh"),
+                ) {
                     Icon(Icons.Outlined.Refresh, contentDescription = "Refresh")
                 }
-                IconButton(onClick = onOpenSettings) {
+                IconButton(onClick = onOpenSettings, modifier = Modifier.testTag("sidebar-settings")) {
                     Icon(Icons.Default.Settings, contentDescription = "Settings")
                 }
             }
@@ -126,6 +130,7 @@ private fun HermesShortcutRow(configured: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .testTag("sidebar-hermes")
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -152,6 +157,7 @@ private fun BoardRow(name: String, emoji: String?, isOpen: Boolean, onClick: () 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .testTag("sidebar-board-row")
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -167,6 +173,7 @@ private fun WorktreeRow(name: String, branch: String?, isOpen: Boolean, onClick:
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .testTag("sidebar-worktree-row")
             .clickable(onClick = onClick)
             .padding(start = 32.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -200,6 +207,7 @@ private fun SessionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .testTag("sidebar-session-row")
             .clickable(onClick = onClick)
             .padding(start = (16 + depth * 16).dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

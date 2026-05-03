@@ -167,10 +167,12 @@ class AgorClient(private val tokens: SecureTokenStore) {
     suspend fun listSessions(
         worktreeId: String? = null,
         includeArchived: Boolean = false,
+        compact: Boolean = true,
     ): List<Session> {
         val q = buildMap {
             if (worktreeId != null) put("worktree_id", worktreeId)
             if (!includeArchived) put("archived", "false")
+            if (compact) putAll(COMPACT_SESSION_SELECT)
         }
         return listAll("/sessions", Session.serializer(), q)
     }
@@ -384,3 +386,24 @@ private inline fun buildJsonObject(block: MutableMap<String, JsonElement>.() -> 
     map.block()
     return JsonObject(map)
 }
+
+private val COMPACT_SESSION_FIELDS = listOf(
+    "session_id",
+    "agentic_tool",
+    "status",
+    "created_at",
+    "last_updated",
+    "created_by",
+    "worktree_id",
+    "worktree_board_id",
+    "url",
+    "message_count",
+    "title",
+    "description",
+    "ready_for_prompt",
+    "scheduled_from_worktree",
+    "archived",
+)
+
+private val COMPACT_SESSION_SELECT: Map<String, String> =
+    COMPACT_SESSION_FIELDS.mapIndexed { i, field -> "\$select[$i]" to field }.toMap()

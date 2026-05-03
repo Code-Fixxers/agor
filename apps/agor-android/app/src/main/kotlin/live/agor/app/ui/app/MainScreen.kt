@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
@@ -159,7 +160,7 @@ private fun EmptyHome(
             TopAppBar(
                 title = { Text("Agor") },
                 navigationIcon = {
-                    IconButton(onClick = onOpenDrawer) {
+                    IconButton(onClick = onOpenDrawer, modifier = Modifier.testTag("main-open-drawer")) {
                         Icon(Icons.Default.Menu, contentDescription = "Open drawer")
                     }
                 },
@@ -177,7 +178,7 @@ private fun EmptyHome(
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.padding(bottom = 16.dp),
             )
-            Button(onClick = onOpenHermes) {
+            Button(onClick = onOpenHermes, modifier = Modifier.testTag("home-hermes-button")) {
                 Text(if (hermesConfigured) "Open Hermes" else "Connect Hermes")
             }
         }
