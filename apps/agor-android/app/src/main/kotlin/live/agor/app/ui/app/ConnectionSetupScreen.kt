@@ -2,7 +2,6 @@ package live.agor.app.ui.app
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -26,28 +25,99 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
 import kotlinx.coroutines.launch
 import live.agor.app.LocalAppContainer
 
 @Composable
 fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
     val container = LocalAppContainer.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val activity = remember(context) { context as? FragmentActivity }
 
     var url by remember { mutableStateOf(container.tokenStore.serverUrl.orEmpty()) }
     var email by remember { mutableStateOf(container.tokenStore.lastEmail.orEmpty()) }
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var autoLoginAttempted by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         // Pre-populate from saved credentials, mirroring iOS .task pre-fill.
         url = container.tokenStore.serverUrl.orEmpty()
         email = container.tokenStore.lastEmail.orEmpty()
+    }
+
+    val canUseBiometrics = container.biometricStore.canUnlockFor(url.trim(), email.trim())
+
+    fun submitLogin(
+        rawUrl: String,
+        rawEmail: String,
+        rawPassword: String,
+        showError: Boolean,
+        allowBusy: Boolean = false,
+    ) {
+        if (busy && !allowBusy) return
+        if (rawUrl.isBlank() || rawEmail.isBlank() || rawPassword.isBlank()) return
+        busy = true
+        if (showError) error = null
+        scope.launch {
+            runCatching {
+                container.authService.login(rawUrl, rawEmail, rawPassword)
+            }.onSuccess {
+                busy = false
+                onLoginSuccess()
+            }.onFailure { throwable ->
+                busy = false
+                if (showError) error = throwable.message ?: "Login failed"
+            }
+        }
+    }
+
+    fun submitBiometricLogin(showError: Boolean) {
+        if (!container.biometricStore.canUnlockFor(url.trim(), email.trim())) return
+        val act = activity
+        if (act == null) {
+            if (showError) error = "Biometric login requires a valid screen."
+            return
+        }
+        if (busy) return
+        busy = true
+        if (showError) error = null
+        container.biometricStore.authenticateWithBiometrics(
+            activity = act,
+            onSuccess = { recoveredPassword ->
+                submitLogin(
+                    url.trim(),
+                    email.trim(),
+                    recoveredPassword,
+                    showError,
+                    allowBusy = true,
+                )
+            },
+            onFailure = { reason ->
+                if (!showError) {
+                    busy = false
+                    return@authenticateWithBiometrics
+                }
+                busy = false
+                if (!reason.isNullOrBlank()) error = reason
+            },
+        )
+    }
+
+    LaunchedEffect(url, email) {
+        if (autoLoginAttempted || busy) return@LaunchedEffect
+        if (container.biometricStore.canUnlockFor(url, email)) {
+            autoLoginAttempted = true
+            submitBiometricLogin(showError = false)
+        }
     }
 
     val topInsets = WindowInsets.statusBars.asPaddingValues()
@@ -98,25 +168,25 @@ fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
         Spacer(Modifier.height(24.dp))
         Button(
             onClick = {
-                if (busy) return@Button
-                busy = true
-                error = null
-                scope.launch {
-                    runCatching {
-                        container.authService.login(url, email, password)
-                    }.onSuccess {
-                        busy = false
-                        onLoginSuccess()
-                    }.onFailure {
-                        busy = false
-                        error = it.message ?: "Login failed"
-                    }
-                }
+                submitLogin(url.trim(), email.trim(), password, true)
             },
             enabled = !busy && url.isNotBlank() && email.isNotBlank() && password.isNotBlank(),
             modifier = Modifier.fillMaxWidth().testTag("login-submit"),
         ) {
             Text(if (busy) "Connecting…" else "Sign in")
+        }
+        if (canUseBiometrics) {
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = {
+                    if (busy) return@Button
+                    submitBiometricLogin(showError = true)
+                },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth().testTag("login-biometric"),
+            ) {
+                Text(if (busy) "Unlocking…" else "Sign in with biometrics")
+            }
         }
         if (error != null) {
             Spacer(Modifier.height(12.dp))

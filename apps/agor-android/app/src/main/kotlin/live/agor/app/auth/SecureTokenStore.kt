@@ -56,10 +56,45 @@ class SecureTokenStore(context: Context) {
         get() = prefs.getString(KEY_HERMES_MODEL, null)
         set(value) = prefs.edit().putString(KEY_HERMES_MODEL, value).apply()
 
+    var biometricEnabled: Boolean
+        get() = prefs.getBoolean(KEY_BIOMETRIC_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_BIOMETRIC_ENABLED, value).apply()
+
+    var biometricServerUrl: String?
+        get() = prefs.getString(KEY_BIOMETRIC_SERVER_URL, null)
+        set(value) = prefs.edit().putString(KEY_BIOMETRIC_SERVER_URL, value).apply()
+
+    var biometricEmail: String?
+        get() = prefs.getString(KEY_BIOMETRIC_EMAIL, null)
+        set(value) = prefs.edit().putString(KEY_BIOMETRIC_EMAIL, value).apply()
+
+    var biometricPasswordHash: String?
+        get() = prefs.getString(KEY_BIOMETRIC_PASSWORD_HASH, null)
+        set(value) = prefs.edit().putString(KEY_BIOMETRIC_PASSWORD_HASH, value).apply()
+
+    var biometricPasswordCipherText: String?
+        get() = prefs.getString(KEY_BIOMETRIC_PASSWORD_CIPHERTEXT, null)
+        set(value) = prefs.edit().putString(KEY_BIOMETRIC_PASSWORD_CIPHERTEXT, value).apply()
+
+    var biometricPasswordIv: String?
+        get() = prefs.getString(KEY_BIOMETRIC_PASSWORD_IV, null)
+        set(value) = prefs.edit().putString(KEY_BIOMETRIC_PASSWORD_IV, value).apply()
+
     fun clearTokensKeepUrl() {
         prefs.edit()
             .remove(KEY_ACCESS_TOKEN)
             .remove(KEY_REFRESH_TOKEN)
+            .apply()
+    }
+
+    fun clearBiometricCredentials() {
+        prefs.edit()
+            .remove(KEY_BIOMETRIC_ENABLED)
+            .remove(KEY_BIOMETRIC_SERVER_URL)
+            .remove(KEY_BIOMETRIC_EMAIL)
+            .remove(KEY_BIOMETRIC_PASSWORD_HASH)
+            .remove(KEY_BIOMETRIC_PASSWORD_CIPHERTEXT)
+            .remove(KEY_BIOMETRIC_PASSWORD_IV)
             .apply()
     }
 
@@ -75,5 +110,11 @@ class SecureTokenStore(context: Context) {
         const val KEY_HERMES_URL = "hermes_url"
         const val KEY_HERMES_TOKEN = "hermes_token"
         const val KEY_HERMES_MODEL = "hermes_model"
+        const val KEY_BIOMETRIC_ENABLED = "biometric_enabled"
+        const val KEY_BIOMETRIC_SERVER_URL = "biometric_server_url"
+        const val KEY_BIOMETRIC_EMAIL = "biometric_email"
+        const val KEY_BIOMETRIC_PASSWORD_HASH = "biometric_password_hash"
+        const val KEY_BIOMETRIC_PASSWORD_CIPHERTEXT = "biometric_password_ciphertext"
+        const val KEY_BIOMETRIC_PASSWORD_IV = "biometric_password_iv"
     }
 }
