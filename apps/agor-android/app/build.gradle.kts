@@ -68,6 +68,16 @@ android {
             "UPDATE_RELEASE_URL",
             "\"https://api.github.com/repos/Code-Fixxers/agor/releases/tags/android-latest\"",
         )
+        buildConfigField(
+            "String",
+            "UPDATE_MANIFEST_URL",
+            "\"https://github.com/Code-Fixxers/agor/releases/download/android-latest/agor-android-latest.json\"",
+        )
+        buildConfigField(
+            "String",
+            "UPDATE_APK_URL",
+            "\"https://github.com/Code-Fixxers/agor/releases/download/android-latest/agor-android-debug.apk\"",
+        )
 
         externalNativeBuild {
             cmake {

@@ -38,7 +38,7 @@ class UpdateViewModel(private val container: AppContainer) : ViewModel() {
         if (_state.value !is State.Idle && _state.value !is State.UpToDate) return
         viewModelScope.launch {
             val info = container.updateChecker.check() ?: run {
-                _state.value = State.UpToDate
+                _state.value = State.Idle
                 return@launch
             }
             _state.value = State.Available(info)
@@ -50,7 +50,12 @@ class UpdateViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             _state.value = State.Checking
             val info = container.updateChecker.check()
-            _state.value = if (info == null) State.UpToDate else State.Available(info)
+            _state.value = when {
+                info != null -> State.Available(info)
+                container.updateChecker.lastError != null ->
+                    State.Failed(null, container.updateChecker.lastError!!)
+                else -> State.UpToDate
+            }
         }
     }
 

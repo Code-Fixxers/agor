@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -17,6 +18,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -42,6 +44,7 @@ import live.agor.app.ui.settings.SettingsScreen
 import live.agor.app.ui.simpleViewModelFactory
 import live.agor.app.viewmodels.AppViewModel
 import live.agor.app.viewmodels.NavigationViewModel
+import live.agor.app.viewmodels.UpdateViewModel
 
 sealed class MainRoute {
     data object EmptyHome : MainRoute()
@@ -55,6 +58,11 @@ sealed class MainRoute {
 fun MainScreen(app: AppViewModel) {
     val container = LocalAppContainer.current
     val nav: NavigationViewModel = viewModel(factory = simpleViewModelFactory { NavigationViewModel(container) })
+    val updateVm: UpdateViewModel = viewModel(
+        key = "global-update",
+        factory = simpleViewModelFactory { UpdateViewModel(container) },
+    )
+    val updateState by updateVm.state.collectAsState()
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -65,6 +73,7 @@ fun MainScreen(app: AppViewModel) {
     var route by remember { mutableStateOf(initialRoute) }
 
     LaunchedEffect(Unit) { nav.start() }
+    LaunchedEffect(Unit) { updateVm.checkSilently() }
     DisposableEffect(Unit) { onDispose { nav.stop() } }
 
     // Route to a chat when an external entry point (notification tap, deep-link)
@@ -134,6 +143,8 @@ fun MainScreen(app: AppViewModel) {
             )
         }
     }
+
+    UpdatePrompt(state = updateState, vm = updateVm)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -170,5 +181,73 @@ private fun EmptyHome(
                 Text(if (hermesConfigured) "Open Hermes" else "Connect Hermes")
             }
         }
+    }
+
+}
+
+@Composable
+private fun UpdatePrompt(state: UpdateViewModel.State, vm: UpdateViewModel) {
+    when (state) {
+        is UpdateViewModel.State.Available -> AlertDialog(
+            onDismissRequest = vm::dismiss,
+            title = { Text("Update available") },
+            text = { Text("Version ${state.info.versionName} is ready to download.") },
+            confirmButton = {
+                TextButton(onClick = vm::download) {
+                    Text("Download")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = vm::dismiss) {
+                    Text("Later")
+                }
+            },
+        )
+        is UpdateViewModel.State.Downloading -> AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Downloading update") },
+            text = {
+                val pct = if (state.total > 0) {
+                    (state.downloaded.toFloat() / state.total).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+                Text("${(pct * 100).toInt()}%")
+            },
+            confirmButton = {},
+        )
+        is UpdateViewModel.State.Ready -> AlertDialog(
+            onDismissRequest = vm::dismiss,
+            title = { Text("Update ready") },
+            text = { Text("Install version ${state.info.versionName}.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (!vm.install()) vm.requestInstallPermission()
+                    },
+                ) {
+                    Text(if (vm.canRequestInstall()) "Install" else "Allow installs")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = vm::dismiss) {
+                    Text("Later")
+                }
+            },
+        )
+        is UpdateViewModel.State.Failed -> AlertDialog(
+            onDismissRequest = vm::dismiss,
+            title = { Text("Update failed") },
+            text = { Text(state.message) },
+            confirmButton = {
+                TextButton(onClick = vm::dismiss) {
+                    Text("Dismiss")
+                }
+            },
+        )
+        UpdateViewModel.State.Idle,
+        UpdateViewModel.State.Checking,
+        UpdateViewModel.State.UpToDate
+        -> Unit
     }
 }

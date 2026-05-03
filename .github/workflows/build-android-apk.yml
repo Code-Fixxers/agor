@@ -191,11 +191,23 @@ jobs:
           # file on disk first.
           STABLE_APK="$(dirname "$APK_PATH")/agor-android-debug.apk"
           cp "$APK_PATH" "$STABLE_APK"
+          APK_SIZE=$(stat -c%s "$STABLE_APK")
+          MANIFEST="$(dirname "$APK_PATH")/agor-android-latest.json"
+          cat > "$MANIFEST" <<EOF
+          {
+            "versionCode": ${VERSION_CODE},
+            "versionName": "${VERSION_NAME}",
+            "commit": "${SHORT_SHA}",
+            "apkUrl": "https://github.com/Code-Fixxers/agor/releases/download/android-latest/agor-android-debug.apk",
+            "sizeBytes": ${APK_SIZE}
+          }
+          EOF
           gh release create "$TAG" \
             --title "Android debug — $SHORT_SHA" \
             --notes "$NOTES" \
             --prerelease \
-            "$STABLE_APK"
+            "$STABLE_APK" \
+            "$MANIFEST"
 
       - name: Summary
         env:
