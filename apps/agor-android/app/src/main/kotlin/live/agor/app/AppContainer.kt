@@ -29,9 +29,10 @@ class AppContainer(context: Context) {
     val logger: AppLogger = AppLogger
     val tokenStore: SecureTokenStore = SecureTokenStore(appContext)
     val serverProfiles: ServerProfileManager = ServerProfileManager(appContext)
+    val biometricStore: BiometricCredentialStore = BiometricCredentialStore(appContext, tokenStore)
     val client: AgorClient = AgorClient(tokenStore)
     val hermesClient: HermesClient = HermesClient(tokenStore)
-    val authService: AuthService = AuthService(appContext, client, tokenStore, serverProfiles)
+    val authService: AuthService = AuthService(client, tokenStore, serverProfiles, biometricStore)
     val socket: SocketService = SocketService(client, logger)
     val streaming: StreamingService = StreamingService(socket, logger)
     val sidebarCache: SidebarCache = SidebarCache(appContext)

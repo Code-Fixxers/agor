@@ -1,6 +1,5 @@
 package live.agor.app.auth
 
-import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,10 +15,10 @@ enum class AuthState { Unknown, NeedsLogin, Authenticated }
  * soft logout (keep URL/email), and hard logout.
  */
 class AuthService(
-    private val context: Context,
     val client: AgorClient,
     val tokens: SecureTokenStore,
     val profiles: ServerProfileManager,
+    val biometricStore: BiometricCredentialStore,
 ) {
     private val _state = MutableStateFlow(AuthState.Unknown)
     val state: StateFlow<AuthState> = _state.asStateFlow()
@@ -56,6 +55,15 @@ class AuthService(
         val result = client.login(email, password)
         _user.value = result.user
         _state.value = AuthState.Authenticated
+        runCatching {
+            biometricStore.saveCredentials(resolved, email.trim(), password)
+        }.onFailure {
+            AppLogger.log(
+                "Failed to persist credentials for biometric login: ${it.message}",
+                LogLevel.WARNING,
+                "Auth",
+            )
+        }
         // Save profile
         val list = profiles.profiles.let { /* one-shot read */ emptyList<live.agor.app.models.ServerProfile>() }
         profiles.upsert(
@@ -78,6 +86,7 @@ class AuthService(
 
     fun logout() {
         tokens.clearAll()
+        biometricStore.clearStoredCredentials()
         _user.value = null
         _state.value = AuthState.NeedsLogin
     }
