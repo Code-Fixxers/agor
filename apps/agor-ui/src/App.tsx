@@ -45,6 +45,28 @@ import {
 import { StreamdownDemoPage } from './pages/StreamdownDemoPage';
 import { useThemedMessage } from './utils/message';
 
+const DRAFT_KEY_PREFIX = 'agor-draft-';
+
+function saveSessionDraft(sessionId: string, value: string) {
+  try {
+    if (value.trim()) {
+      localStorage.setItem(`${DRAFT_KEY_PREFIX}${sessionId}`, value);
+    } else {
+      localStorage.removeItem(`${DRAFT_KEY_PREFIX}${sessionId}`);
+    }
+  } catch {
+    // localStorage may be unavailable or full.
+  }
+}
+
+function clearSessionDraft(sessionId: string) {
+  try {
+    localStorage.removeItem(`${DRAFT_KEY_PREFIX}${sessionId}`);
+  } catch {
+    // Ignore localStorage failures.
+  }
+}
+
 function AppContent() {
   const { token } = theme.useToken();
   const { showSuccess, showError, showWarning, showLoading, destroy } = useThemedMessage();
@@ -121,6 +143,9 @@ function AppContent() {
   // Session actions
   const { createSession, forkSession, btwForkSession, spawnSession, updateSession, deleteSession } =
     useSessionActions(client);
+
+  const handleUpdateDraft = saveSessionDraft;
+  const handleClearDraft = clearSessionDraft;
 
   // Board actions
   const { createBoard, updateBoard, deleteBoard, archiveBoard, unarchiveBoard } =
