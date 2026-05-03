@@ -17,82 +17,89 @@ import live.agor.app.network.StreamingService
 /**
  * Single rendering unit for the chat LazyColumn.
  *
- * Why a sealed class of rows instead of a tree of nested Composables:
+ * Critical: every variant is a `data class` (or `data object`). With `class`,
+ * Kotlin generates identity-based `equals`, and Compose smart-skip uses
+ * `equals` to decide whether a parameter changed. Since [flattenChatRows]
+ * allocates fresh row instances on every emission, identity equality means
+ * no row is ever "equal" to its predecessor and *every visible row*
+ * recomposes per streaming chunk — about 10× per second. `data class` gives
+ * us structural equals, so unchanged rows compare equal and Compose actually
+ * skips them; only the bubble whose `text` changed recomposes.
  *
- * - Block-shaped messages (assistant turns with multiple tool calls) used to
- *   render *all* their inline blocks inside one LazyColumn item. That defeats
- *   lazy unloading — the whole bubble had to compose if any pixel was visible.
- *   Splitting into individual rows lets LazyColumn drop off-screen blocks.
- *
- * - Each row carries pre-computed display strings (JSON-serialized tool input,
- *   joined tool-result text, merged streaming text). The previous code re-ran
- *   `AgorJson.encodeToString(...)` and list joins on every recomposition while
- *   the user scrolled.
- *
- * - All variants are @Immutable with String / primitive / @Immutable fields, so
- *   Compose can smart-skip rows whose inputs haven't changed during streaming.
+ * The parent is a `sealed interface` (not `sealed class`) because a `data
+ * class` child can't pass a `key` up through a parent's primary constructor —
+ * the property has to live on the child. Each variant declares
+ * `override val key`.
  */
 @Immutable
-sealed class ChatRow(val key: String) {
-    @Immutable
-    class LoadEarlier : ChatRow("load-earlier")
+sealed interface ChatRow {
+    val key: String
 
     @Immutable
-    class TaskHeaderRow(val task: AgorTask) : ChatRow("task-${task.taskId}")
+    data object LoadEarlier : ChatRow {
+        override val key: String = "load-earlier"
+    }
 
     @Immutable
-    class TextBubbleRow(
-        rowKey: String,
+    data class TaskHeaderRow(val task: AgorTask) : ChatRow {
+        override val key: String get() = "task-${task.taskId}"
+    }
+
+    @Immutable
+    data class TextBubbleRow(
+        override val key: String,
         val role: MessageRole,
         val text: String,
         val streaming: Boolean,
-    ) : ChatRow(rowKey)
+    ) : ChatRow
 
     @Immutable
-    class ToolUseRow(
-        rowKey: String,
+    data class ToolUseRow(
+        override val key: String,
         val name: String,
         val inputSummary: String,
         val inputJson: String,
-    ) : ChatRow(rowKey)
+    ) : ChatRow
 
     @Immutable
-    class ToolResultRow(
-        rowKey: String,
+    data class ToolResultRow(
+        override val key: String,
         val isError: Boolean,
         val preview: String,
         val full: String,
-    ) : ChatRow(rowKey)
+    ) : ChatRow
 
     @Immutable
-    class ThinkingRow(rowKey: String, val text: String) : ChatRow(rowKey)
+    data class ThinkingRow(override val key: String, val text: String) : ChatRow
 
     @Immutable
-    class ImageRow(rowKey: String, val source: ImageSource) : ChatRow(rowKey)
+    data class ImageRow(override val key: String, val source: ImageSource) : ChatRow
 
     @Immutable
-    class PermissionRow(
-        rowKey: String,
+    data class PermissionRow(
+        override val key: String,
         val messageId: String,
         val request: PermissionRequestContent,
-    ) : ChatRow(rowKey)
+    ) : ChatRow
 
     @Immutable
-    class InputRequestRow(
-        rowKey: String,
+    data class InputRequestRow(
+        override val key: String,
         val messageId: String,
         val request: InputRequestContent,
-    ) : ChatRow(rowKey)
+    ) : ChatRow
 
     @Immutable
-    class LiveOrphanRow(
-        rowKey: String,
+    data class LiveOrphanRow(
+        override val key: String,
         val text: String,
         val thinking: String,
-    ) : ChatRow(rowKey)
+    ) : ChatRow
 
     @Immutable
-    class BottomSpacer : ChatRow("bottom-spacer")
+    data object BottomSpacer : ChatRow {
+        override val key: String = "bottom-spacer"
+    }
 }
 
 /**
@@ -108,7 +115,7 @@ fun flattenChatRows(
     showLoadEarlier: Boolean,
 ): List<ChatRow> {
     val out = ArrayList<ChatRow>(messages.size + 8)
-    if (showLoadEarlier) out += ChatRow.LoadEarlier()
+    if (showLoadEarlier) out += ChatRow.LoadEarlier
 
     val tasksById = tasks.associateByTo(HashMap(tasks.size)) { it.taskId }
     var lastTask: String? = SENTINEL_NO_TASK
@@ -214,7 +221,7 @@ fun flattenChatRows(
         }
     }
 
-    out += ChatRow.BottomSpacer()
+    out += ChatRow.BottomSpacer
     return out
 }
 
