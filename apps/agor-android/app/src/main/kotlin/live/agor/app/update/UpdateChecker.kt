@@ -63,7 +63,7 @@ class UpdateChecker(
     }
 
     private fun checkManifest(): UpdateInfo? {
-        try {
+        return try {
             val req = Request.Builder()
                 .url(manifestUrl)
                 .header("Cache-Control", "no-cache")
@@ -88,12 +88,12 @@ class UpdateChecker(
         } catch (t: Throwable) {
             lastError = "Update manifest failed: ${t.message}"
             AppLogger.log(lastError!!, LogLevel.WARNING, "Update")
-            return null
+            null
         }
     }
 
     private fun checkReleaseApi(): UpdateInfo? {
-        try {
+        return try {
             val req = Request.Builder()
                 .url(releaseUrl)
                 .header("Accept", "application/vnd.github+json")
