@@ -64,7 +64,7 @@ fun ChatScreen(
         factory = simpleViewModelFactory { ChatViewModel(container, sessionId) },
     )
     val rows by vm.rows.collectAsState()
-    val messages by vm.messages.collectAsState()
+    val messageCount by vm.messageCount.collectAsState()
     val ui by vm.uiState.collectAsState()
     val listState = rememberLazyListState()
     var showFiles by remember { mutableStateOf(false) }
@@ -73,8 +73,8 @@ fun ChatScreen(
 
     // Only auto-scroll when the user is already near the bottom — yanking them out
     // of mid-scroll-up reading is what makes chats feel janky on long sessions.
-    LaunchedEffect(messages.size) {
-        if (messages.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(rows.size) {
+        if (messageCount == 0) return@LaunchedEffect
         val info = listState.layoutInfo
         val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
         val total = info.totalItemsCount
@@ -134,11 +134,11 @@ fun ChatScreen(
         },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (ui.isLoading && messages.isEmpty()) {
+            if (ui.isLoading && messageCount == 0) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("Loading…")
                 }
-            } else if (ui.errorMessage != null && messages.isEmpty()) {
+            } else if (ui.errorMessage != null && messageCount == 0) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(ui.errorMessage!!, color = MaterialTheme.colorScheme.error)
                 }
@@ -201,4 +201,3 @@ fun ChatScreen(
         }
     }
 }
-

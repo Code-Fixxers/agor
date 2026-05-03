@@ -1,5 +1,6 @@
 package live.agor.app.models
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -21,13 +22,16 @@ import kotlinx.serialization.json.jsonPrimitive
  * Falls back to [ContentBlock.Unknown] for forward compatibility.
  */
 @Serializable(with = ContentBlockSerializer::class)
+@Immutable
 sealed class ContentBlock {
     abstract val id: String
 
+    @Immutable
     data class Text(val text: String) : ContentBlock() {
         override val id: String = "text-${text.hashCode()}"
     }
 
+    @Immutable
     data class ToolUse(
         val toolUseId: String,
         val name: String,
@@ -49,6 +53,7 @@ sealed class ContentBlock {
             }
     }
 
+    @Immutable
     data class ToolResult(
         val toolUseId: String,
         val content: ToolResultValue?,
@@ -57,21 +62,25 @@ sealed class ContentBlock {
         override val id: String = "result-$toolUseId"
     }
 
+    @Immutable
     data class Thinking(val thinking: String?) : ContentBlock() {
         override val id: String = "thinking-${thinking?.hashCode() ?: 0}"
     }
 
+    @Immutable
     data class Image(val source: ImageSource) : ContentBlock() {
         override val id: String =
             "image-${source.url ?: source.data?.take(16) ?: "?"}"
     }
 
+    @Immutable
     data class Unknown(val type: String) : ContentBlock() {
         override val id: String = "unknown-$type"
     }
 }
 
 @Serializable
+@Immutable
 data class ImageSource(
     val type: String,
     @SerialName("media_type") val mediaType: String? = null,
@@ -80,8 +89,11 @@ data class ImageSource(
 )
 
 @Serializable(with = ToolResultValueSerializer::class)
+@Immutable
 sealed class ToolResultValue {
+    @Immutable
     data class Str(val text: String) : ToolResultValue()
+    @Immutable
     data class Blocks(val blocks: List<ToolResultBlock>) : ToolResultValue()
 
     val textPreview: String
@@ -93,6 +105,7 @@ sealed class ToolResultValue {
 }
 
 @Serializable
+@Immutable
 data class ToolResultBlock(
     val type: String? = null,
     val text: String? = null,

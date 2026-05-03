@@ -189,9 +189,9 @@ class AgorClient(private val tokens: SecureTokenStore) {
             "session_id" to sessionId,
             "\$limit" to limit.toString(),
             "\$skip" to skip.toString(),
-            "\$sort[index]" to "1",
+            "\$sort[index]" to "-1",
         )
-        return listAll("/messages", Message.serializer(), q)
+        return listPage("/messages", Message.serializer(), q).sortedBy { it.index }
     }
 
     suspend fun listRepos(): List<Repo> = listAll("/repos", Repo.serializer())
@@ -249,9 +249,9 @@ class AgorClient(private val tokens: SecureTokenStore) {
         authenticatedRequest("POST", "/sessions/$sessionId/input-response", body)
     }
 
-    suspend fun patchSession(sessionId: String, fields: JsonObject): Session {
+    suspend fun patchSession(sessionId: String, fields: JsonObject): Session = withContext(Dispatchers.IO) {
         val resp = authenticatedRequest("PATCH", "/sessions/$sessionId", fields)
-        return AgorJson.decodeFromJsonElement(Session.serializer(), resp)
+        AgorJson.decodeFromJsonElement(Session.serializer(), resp)
     }
 
     // ---- Internals ----
@@ -259,21 +259,21 @@ class AgorClient(private val tokens: SecureTokenStore) {
     private suspend fun <T> getOne(
         pathOrUrl: String,
         serializer: kotlinx.serialization.KSerializer<T>,
-    ): T {
+    ): T = withContext(Dispatchers.IO) {
         val resp = authenticatedRequest("GET", pathOrUrl, body = null)
-        return AgorJson.decodeFromJsonElement(serializer, resp)
+        AgorJson.decodeFromJsonElement(serializer, resp)
     }
 
     private suspend fun <T> listAll(
         path: String,
         serializer: kotlinx.serialization.KSerializer<T>,
         query: Map<String, String> = emptyMap(),
-    ): List<T> {
+    ): List<T> = withContext(Dispatchers.IO) {
         val out = mutableListOf<T>()
         var skip = 0
         val limit = 100
         while (true) {
-        val q = query + mapOf(
+            val q = query + mapOf(
                 "\$limit" to limit.toString(),
                 "\$skip" to skip.toString(),
             )
@@ -289,7 +289,22 @@ class AgorClient(private val tokens: SecureTokenStore) {
             skip += limit
             if (skip > 5000) break // safety
         }
-        return out
+        out
+    }
+
+    private suspend fun <T> listPage(
+        path: String,
+        serializer: kotlinx.serialization.KSerializer<T>,
+        query: Map<String, String>,
+    ): List<T> = withContext(Dispatchers.IO) {
+        val element = authenticatedRequest("GET", buildUrl(path, query), body = null)
+        val data: List<JsonElement> = when {
+            element is JsonObject && element["data"] is kotlinx.serialization.json.JsonArray ->
+                (element["data"] as kotlinx.serialization.json.JsonArray).toList()
+            element is kotlinx.serialization.json.JsonArray -> element.toList()
+            else -> emptyList()
+        }
+        data.map { AgorJson.decodeFromJsonElement(serializer, it) }
     }
 
     private fun buildUrl(path: String, query: Map<String, String>): String {

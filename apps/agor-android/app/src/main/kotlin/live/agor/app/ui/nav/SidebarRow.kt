@@ -6,10 +6,9 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.vector.ImageVector
-import live.agor.app.models.Board
+import live.agor.app.models.AgenticTool
 import live.agor.app.models.Session
 import live.agor.app.models.SessionStatus
-import live.agor.app.models.Worktree
 import live.agor.app.viewmodels.NavigationViewModel
 
 /**
@@ -43,18 +42,36 @@ sealed interface SidebarRow {
     }
 
     @Immutable
-    data class SessionItem(val session: Session, val depth: Int, val keyPrefix: String) : SidebarRow {
-        override val key: String get() = "$keyPrefix-${session.sessionId}"
+    data class SessionItem(
+        val sessionId: String,
+        val title: String,
+        val agenticTool: AgenticTool,
+        val status: SessionStatus,
+        val favorite: Boolean,
+        val depth: Int,
+        val keyPrefix: String,
+    ) : SidebarRow {
+        override val key: String get() = "$keyPrefix-$sessionId"
     }
 
     @Immutable
-    data class BoardItem(val board: Board, val isOpen: Boolean) : SidebarRow {
-        override val key: String get() = "board-${board.boardId}"
+    data class BoardItem(
+        val boardId: String,
+        val name: String,
+        val emoji: String?,
+        val isOpen: Boolean,
+    ) : SidebarRow {
+        override val key: String get() = "board-$boardId"
     }
 
     @Immutable
-    data class WorktreeItem(val worktree: Worktree, val isOpen: Boolean) : SidebarRow {
-        override val key: String get() = "worktree-${worktree.worktreeId}"
+    data class WorktreeItem(
+        val worktreeId: String,
+        val name: String,
+        val branch: String?,
+        val isOpen: Boolean,
+    ) : SidebarRow {
+        override val key: String get() = "worktree-$worktreeId"
     }
 }
 
@@ -72,61 +89,122 @@ fun flattenSidebarRows(
     expandedWorktrees: Set<String>,
     hermesConfigured: Boolean,
 ): List<SidebarRow> {
-    val out = ArrayList<SidebarRow>(64)
+    return SidebarRowFlattener().flatten(state, expandedBoards, expandedWorktrees, hermesConfigured)
+}
 
-    out += SidebarRow.HermesShortcut(configured = hermesConfigured)
-    out += SidebarRow.DividerRow("after-hermes")
+/**
+ * Stateful sidebar row builder. NavigationViewModel owns one instance so rows
+ * whose rendered fields did not change keep the same object identity across
+ * socket patches, polling refreshes, and expand/collapse toggles.
+ */
+class SidebarRowFlattener {
+    private val rowsByKey = HashMap<String, SidebarRow>()
 
-    val attention = state.sessions
-        .asSequence()
-        .filter { !it.isScheduled && it.status.needsAttention }
-        .sortedByDescending { it.lastUpdated }
-        .toList()
-    if (attention.isNotEmpty()) {
-        out += SidebarRow.Header("Needs Attention", Icons.Default.Notifications, "h-attention")
-        for (s in attention) out += SidebarRow.SessionItem(s, depth = 1, keyPrefix = "att")
-        out += SidebarRow.DividerRow("after-attention")
-    }
+    fun flatten(
+        state: NavigationViewModel.State,
+        expandedBoards: Set<String>,
+        expandedWorktrees: Set<String>,
+        hermesConfigured: Boolean,
+    ): List<SidebarRow> {
+        val out = ArrayList<SidebarRow>(64)
+        val seenKeys = HashSet<String>(64)
 
-    val important = state.sessions
-        .asSequence()
-        .filter {
-            state.favorites.contains(it.sessionId) ||
-                it.status == SessionStatus.RUNNING ||
-                it.readyForPrompt == true
+        fun add(row: SidebarRow) {
+            val stable = rowsByKey[row.key]?.takeIf { it == row } ?: row
+            rowsByKey[stable.key] = stable
+            seenKeys += stable.key
+            out += stable
         }
-        .sortedByDescending { it.lastUpdated }
-        .take(20)
-        .toList()
-    if (important.isNotEmpty()) {
-        out += SidebarRow.Header("Important", Icons.Default.Star, "h-important")
-        for (s in important) out += SidebarRow.SessionItem(s, depth = 1, keyPrefix = "imp")
-        out += SidebarRow.DividerRow("after-important")
-    }
 
-    out += SidebarRow.Header("Boards", Icons.Default.AccountTree, "h-boards")
-    for (board in state.boards) {
-        val boardOpen = expandedBoards.contains(board.boardId)
-        out += SidebarRow.BoardItem(board, boardOpen)
-        if (!boardOpen) continue
+        add(SidebarRow.HermesShortcut(configured = hermesConfigured))
+        add(SidebarRow.DividerRow("after-hermes"))
 
-        val worktrees = state.worktreesByBoard[board.boardId].orEmpty()
-        for (wt in worktrees) {
-            val wtOpen = expandedWorktrees.contains(wt.worktreeId)
-            out += SidebarRow.WorktreeItem(wt, wtOpen)
-            if (!wtOpen) continue
+        val attention = state.sessions
+            .asSequence()
+            .filter { !it.isScheduled && it.status.needsAttention }
+            .sortedByDescending { it.lastUpdated }
+            .toList()
+        if (attention.isNotEmpty()) {
+            add(SidebarRow.Header("Needs Attention", Icons.Default.Notifications, "h-attention"))
+            for (s in attention) add(s.toSessionRow(state.favorites, depth = 1, keyPrefix = "att"))
+            add(SidebarRow.DividerRow("after-attention"))
+        }
 
-            val sessions = state.sessionsByWorktree[wt.worktreeId].orEmpty()
-                .filter { it.archived != true && !it.isScheduled }
-                .sortedWith(
-                    compareByDescending<Session> { it.status.isActive }
-                        .thenByDescending { it.lastUpdated },
+        val important = state.sessions
+            .asSequence()
+            .filter {
+                state.favorites.contains(it.sessionId) ||
+                    it.status == SessionStatus.RUNNING ||
+                    it.readyForPrompt == true
+            }
+            .sortedByDescending { it.lastUpdated }
+            .take(20)
+            .toList()
+        if (important.isNotEmpty()) {
+            add(SidebarRow.Header("Important", Icons.Default.Star, "h-important"))
+            for (s in important) add(s.toSessionRow(state.favorites, depth = 1, keyPrefix = "imp"))
+            add(SidebarRow.DividerRow("after-important"))
+        }
+
+        add(SidebarRow.Header("Boards", Icons.Default.AccountTree, "h-boards"))
+        for (board in state.boards) {
+            val boardOpen = expandedBoards.contains(board.boardId)
+            add(
+                SidebarRow.BoardItem(
+                    boardId = board.boardId,
+                    name = board.name,
+                    emoji = board.emoji,
+                    isOpen = boardOpen,
+                ),
+            )
+            if (!boardOpen) continue
+
+            val worktrees = state.worktreesByBoard[board.boardId].orEmpty()
+            for (wt in worktrees) {
+                val wtOpen = expandedWorktrees.contains(wt.worktreeId)
+                add(
+                    SidebarRow.WorktreeItem(
+                        worktreeId = wt.worktreeId,
+                        name = wt.name,
+                        branch = wt.branch,
+                        isOpen = wtOpen,
+                    ),
                 )
-            for (s in sessions) {
-                out += SidebarRow.SessionItem(s, depth = 3, keyPrefix = "sess-${wt.worktreeId}")
+                if (!wtOpen) continue
+
+                val sessions = state.sessionsByWorktree[wt.worktreeId].orEmpty()
+                    .filter { it.archived != true && !it.isScheduled }
+                    .sortedWith(
+                        compareByDescending<Session> { it.status.isActive }
+                            .thenByDescending { it.lastUpdated },
+                    )
+                for (s in sessions) {
+                    add(
+                        s.toSessionRow(
+                            favorites = state.favorites,
+                            depth = 3,
+                            keyPrefix = "sess-${wt.worktreeId}",
+                        ),
+                    )
+                }
             }
         }
-    }
 
-    return out
+        rowsByKey.keys.removeAll { it !in seenKeys }
+        return out
+    }
 }
+
+private fun Session.toSessionRow(
+    favorites: Set<String>,
+    depth: Int,
+    keyPrefix: String,
+): SidebarRow.SessionItem = SidebarRow.SessionItem(
+    sessionId = sessionId,
+    title = displayTitle,
+    agenticTool = agenticTool,
+    status = status,
+    favorite = favorites.contains(sessionId),
+    depth = depth,
+    keyPrefix = keyPrefix,
+)

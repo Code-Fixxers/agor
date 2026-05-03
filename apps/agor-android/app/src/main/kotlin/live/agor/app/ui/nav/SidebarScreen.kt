@@ -32,7 +32,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import live.agor.app.models.Session
+import live.agor.app.models.AgenticTool
+import live.agor.app.models.SessionStatus
 import live.agor.app.ui.common.AgentIcon
 import live.agor.app.ui.common.StatusBadge
 import live.agor.app.viewmodels.NavigationViewModel
@@ -47,7 +48,6 @@ fun SidebarScreen(
     // Rows are pre-flattened on Dispatchers.Default in the ViewModel — no
     // Main-thread groupBy/sort/filter on socket patches.
     val rows by nav.rows.collectAsState()
-    val state by nav.state.collectAsState()
     val scope = rememberCoroutineScope()
 
     LazyColumn(modifier = Modifier.fillMaxWidth()) {
@@ -78,23 +78,25 @@ fun SidebarScreen(
                 )
                 is SidebarRow.DividerRow -> Divider()
                 is SidebarRow.SessionItem -> SessionRow(
-                    session = row.session,
+                    title = row.title,
+                    agenticTool = row.agenticTool,
+                    status = row.status,
                     depth = row.depth,
-                    favorite = state.favorites.contains(row.session.sessionId),
-                    onClick = { onSelectSession(row.session.sessionId) },
-                    onToggleFavorite = { nav.toggleFavorite(row.session.sessionId) },
+                    favorite = row.favorite,
+                    onClick = { onSelectSession(row.sessionId) },
+                    onToggleFavorite = { nav.toggleFavorite(row.sessionId) },
                 )
                 is SidebarRow.BoardItem -> BoardRow(
-                    name = row.board.name,
-                    emoji = row.board.emoji,
+                    name = row.name,
+                    emoji = row.emoji,
                     isOpen = row.isOpen,
-                    onClick = { nav.toggleBoard(row.board.boardId) },
+                    onClick = { nav.toggleBoard(row.boardId) },
                 )
                 is SidebarRow.WorktreeItem -> WorktreeRow(
-                    name = row.worktree.name,
-                    branch = row.worktree.branch,
+                    name = row.name,
+                    branch = row.branch,
                     isOpen = row.isOpen,
-                    onClick = { nav.toggleWorktree(row.worktree.worktreeId) },
+                    onClick = { nav.toggleWorktree(row.worktreeId) },
                 )
             }
         }
@@ -187,7 +189,9 @@ private fun WorktreeRow(name: String, branch: String?, isOpen: Boolean, onClick:
 
 @Composable
 private fun SessionRow(
-    session: Session,
+    title: String,
+    agenticTool: AgenticTool,
+    status: SessionStatus,
     depth: Int,
     favorite: Boolean,
     onClick: () -> Unit,
@@ -200,15 +204,15 @@ private fun SessionRow(
             .padding(start = (16 + depth * 16).dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AgentIcon(session.agenticTool)
+        AgentIcon(agenticTool)
         Spacer(Modifier.width(8.dp))
         Text(
-            session.displayTitle,
+            title,
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.weight(1f),
             maxLines = 1,
         )
-        StatusBadge(session.status)
+        StatusBadge(status)
         IconButton(onClick = onToggleFavorite) {
             Icon(
                 if (favorite) Icons.Default.Star else Icons.Default.StarBorder,
@@ -217,4 +221,3 @@ private fun SessionRow(
         }
     }
 }
-

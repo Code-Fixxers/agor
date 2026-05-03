@@ -11,6 +11,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import live.agor.app.models.SessionStatus
 
+private val StatusBadgeShape = RoundedCornerShape(6.dp)
+
 @Composable
 fun StatusBadge(status: SessionStatus) {
     val (label, bg, fg) = when (status) {
@@ -28,7 +30,7 @@ fun StatusBadge(status: SessionStatus) {
         style = MaterialTheme.typography.bodySmall,
         color = fg,
         modifier = Modifier
-            .background(bg, RoundedCornerShape(6.dp))
+            .background(bg, StatusBadgeShape)
             .padding(horizontal = 6.dp, vertical = 2.dp),
     )
 }
