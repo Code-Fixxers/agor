@@ -26,6 +26,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -72,7 +73,7 @@ fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
             label = { Text("Server URL") },
             placeholder = { Text("agor.local or https://agor.example.com") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("login-server-url"),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
         )
         Spacer(Modifier.height(12.dp))
@@ -81,7 +82,7 @@ fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
             onValueChange = { email = it },
             label = { Text("Email") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("login-email"),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
         )
         Spacer(Modifier.height(12.dp))
@@ -91,7 +92,7 @@ fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
             label = { Text("Password") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("login-password"),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         )
         Spacer(Modifier.height(24.dp))
@@ -113,7 +114,7 @@ fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
                 }
             },
             enabled = !busy && url.isNotBlank() && email.isNotBlank() && password.isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("login-submit"),
         ) {
             Text(if (busy) "Connecting…" else "Sign in")
         }

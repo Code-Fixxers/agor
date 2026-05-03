@@ -35,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import live.agor.app.LocalAppContainer
@@ -100,7 +101,7 @@ fun ChatScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onOpenDrawer) {
+                    IconButton(onClick = onOpenDrawer, modifier = Modifier.testTag("chat-open-drawer")) {
                         Icon(Icons.Default.Menu, contentDescription = "Open drawer")
                     }
                 },
@@ -109,15 +110,15 @@ fun ChatScreen(
                         StatusBadge(s.status)
                         Spacer(Modifier.width(4.dp))
                         if (s.status.isActive) {
-                            IconButton(onClick = vm::stop) {
+                            IconButton(onClick = vm::stop, modifier = Modifier.testTag("chat-stop")) {
                                 Icon(Icons.Default.Stop, contentDescription = "Stop")
                             }
                         }
                     }
-                    IconButton(onClick = { showFiles = true }) {
+                    IconButton(onClick = { showFiles = true }, modifier = Modifier.testTag("chat-files")) {
                         Icon(Icons.Default.Folder, contentDescription = "Files")
                     }
-                    IconButton(onClick = onClose) {
+                    IconButton(onClick = onClose, modifier = Modifier.testTag("chat-close")) {
                         Icon(Icons.Default.Close, contentDescription = "Close")
                     }
                 },
@@ -149,7 +150,7 @@ fun ChatScreen(
                 // recomposition during scroll reads them as plain Strings.
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().testTag("chat-list"),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(8.dp),
                 ) {

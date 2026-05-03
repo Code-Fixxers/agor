@@ -13,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -32,13 +33,14 @@ fun PromptInputBar(
                 value = draft,
                 onValueChange = onDraftChange,
                 placeholder = { Text(if (enabled) "Send a prompt…" else "Session is busy") },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).testTag("prompt-input"),
                 maxLines = 6,
                 enabled = enabled,
             )
             IconButton(
                 onClick = onSend,
                 enabled = enabled && draft.isNotBlank(),
+                modifier = Modifier.testTag("prompt-send"),
             ) {
                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
             }
