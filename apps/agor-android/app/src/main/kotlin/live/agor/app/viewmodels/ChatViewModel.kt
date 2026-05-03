@@ -3,6 +3,8 @@ package live.agor.app.viewmodels
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -24,7 +26,7 @@ import live.agor.app.models.PermissionStatus
 import live.agor.app.models.Session
 import live.agor.app.network.StreamingService
 import live.agor.app.ui.chat.ChatRow
-import live.agor.app.ui.chat.flattenChatRows
+import live.agor.app.ui.chat.ChatRowFlattener
 import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
 
@@ -57,6 +59,9 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
 
     private val _messages = MutableStateFlow<List<Message>>(emptyList())
     val messages: StateFlow<List<Message>> = _messages.asStateFlow()
+    val messageCount: StateFlow<Int> = _messages
+        .map { it.size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     private val _tasks = MutableStateFlow<List<AgorTask>>(emptyList())
     val tasks: StateFlow<List<AgorTask>> = _tasks.asStateFlow()
@@ -66,6 +71,9 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
 
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
+
+    private val rowFlattener = ChatRowFlattener()
+    private var cacheSaveJob: Job? = null
 
     /** Lazy derivation — scans messages from the end, returns first pending. */
     val pendingPermissionId: StateFlow<String?> = _messages
@@ -93,7 +101,7 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         _messages,
         _tasks,
         live,
-    ) { m, t, l -> flattenChatRows(m, t, l, m.size >= 100) }
+    ) { m, t, l -> rowFlattener.flatten(m, t, l, m.size >= 100) }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -108,7 +116,10 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         }
         container.socket.onTaskCreated { t ->
             if (t.sessionId != sessionId) return@onTaskCreated
-            viewModelScope.launch { _tasks.update { current -> current + t } }
+            viewModelScope.launch {
+                _tasks.update { current -> current + t }
+                scheduleCacheSave()
+            }
         }
         container.socket.onTaskPatched { t ->
             if (t.sessionId != sessionId) return@onTaskPatched
@@ -118,6 +129,14 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
                     if (idx < 0) current + t
                     else current.toMutableList().apply { set(idx, t) }
                 }
+                scheduleCacheSave()
+            }
+        }
+        container.socket.onSessionPatched { s ->
+            if (s.sessionId != sessionId) return@onSessionPatched
+            viewModelScope.launch {
+                _uiState.update { it.copy(session = s) }
+                scheduleCacheSave()
             }
         }
     }
@@ -125,18 +144,32 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
     fun load() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            val cached = container.chatCache.load(sessionId)
+            if (cached != null) {
+                _messages.value = cached.messages.sortedBy { it.index }
+                _tasks.value = cached.tasks
+                _uiState.update {
+                    it.copy(session = cached.session, isLoading = false, errorMessage = null)
+                }
+            }
             try {
                 val session = container.client.getSession(sessionId)
                 val tasks = container.client.listTasks(sessionId)
-                val messages = container.client.listMessages(sessionId, limit = 200)
-                _messages.value = messages.sortedBy { it.index }
+                val latestMessages = container.client.listMessages(sessionId, limit = 200)
+                _messages.value = mergeMessages(cached?.messages.orEmpty(), latestMessages)
                 _tasks.value = tasks
                 _uiState.update {
-                    it.copy(session = session, isLoading = false)
+                    it.copy(session = session, isLoading = false, errorMessage = null)
                 }
+                container.chatCache.save(session, tasks, _messages.value)
             } catch (t: Throwable) {
                 AppLogger.log("Chat load failed: ${t.message}", LogLevel.ERROR, "Chat")
-                _uiState.update { it.copy(isLoading = false, errorMessage = t.message) }
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = if (cached == null) t.message else null,
+                    )
+                }
             }
         }
     }
@@ -149,7 +182,8 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
             // Older messages have lower indexes; merge then re-sort. This path is
             // a user-driven action (button tap) — not in the streaming hot path —
             // so a single sortedBy is fine.
-            _messages.value = (older + current).sortedBy { it.index }
+            _messages.value = mergeMessages(older, current)
+            scheduleCacheSave()
         }
     }
 
@@ -221,6 +255,28 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         }
         // Drop the streaming buffer for this id once the canonical message lands.
         container.streaming.finalize(message.messageId)
+        scheduleCacheSave()
+    }
+
+    private fun scheduleCacheSave() {
+        val session = _uiState.value.session ?: return
+        cacheSaveJob?.cancel()
+        cacheSaveJob = viewModelScope.launch {
+            delay(500)
+            container.chatCache.save(session, _tasks.value, _messages.value)
+        }
+    }
+
+    private fun mergeMessages(
+        existing: List<Message>,
+        incoming: List<Message>,
+    ): List<Message> {
+        if (existing.isEmpty()) return incoming.sortedBy { it.index }
+        if (incoming.isEmpty()) return existing.sortedBy { it.index }
+        val byId = LinkedHashMap<String, Message>(existing.size + incoming.size)
+        for (m in existing) byId[m.messageId] = m
+        for (m in incoming) byId[m.messageId] = m
+        return byId.values.sortedBy { it.index }
     }
 
     /** Walks the (already sorted) message list from the end. */

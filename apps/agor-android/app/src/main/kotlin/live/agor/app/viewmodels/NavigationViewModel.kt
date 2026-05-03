@@ -20,7 +20,7 @@ import live.agor.app.models.Session
 import live.agor.app.models.SessionStatus
 import live.agor.app.models.Worktree
 import live.agor.app.ui.nav.SidebarRow
-import live.agor.app.ui.nav.flattenSidebarRows
+import live.agor.app.ui.nav.SidebarRowFlattener
 import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
 
@@ -61,6 +61,8 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
     private val _expandedWorktrees = MutableStateFlow<Set<String>>(emptySet())
     val expandedWorktrees: StateFlow<Set<String>> = _expandedWorktrees.asStateFlow()
 
+    private val rowFlattener = SidebarRowFlattener()
+
     /**
      * Pre-flattened sidebar rows. Derived off-Main on [Dispatchers.Default] so
      * the importance/attention scans, board → worktree → session walk, and
@@ -73,12 +75,13 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
         _expandedBoards,
         _expandedWorktrees,
     ) { s, eb, ew ->
-        flattenSidebarRows(s, eb, ew, container.hermesClient.isConfigured)
+        rowFlattener.flatten(s, eb, ew, container.hermesClient.isConfigured)
     }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private var pollJob: Job? = null
+    private var cacheSaveJob: Job? = null
 
     init {
         container.socket.onSessionPatched { patched ->
@@ -159,6 +162,7 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
         }
 
         _state.value = current.copy(sessions = newSessions, sessionsByWorktree = newByWt)
+        scheduleCacheSave()
 
         if (current.favorites.contains(patched.sessionId) &&
             patched.status == SessionStatus.IDLE
@@ -205,6 +209,22 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
                 delay(45_000)
                 refresh()
             }
+        }
+    }
+
+    private fun scheduleCacheSave() {
+        cacheSaveJob?.cancel()
+        cacheSaveJob = viewModelScope.launch {
+            delay(500)
+            val s = _state.value
+            container.sidebarCache.save(
+                SidebarCache.Snapshot(
+                    System.currentTimeMillis(),
+                    s.boards,
+                    s.worktreesByBoard.values.flatten(),
+                    s.sessions,
+                ),
+            )
         }
     }
 }

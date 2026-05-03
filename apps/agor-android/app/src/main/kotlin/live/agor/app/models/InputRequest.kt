@@ -1,5 +1,6 @@
 package live.agor.app.models
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -19,6 +20,7 @@ enum class InputRequestStatus {
 }
 
 @Serializable
+@Immutable
 data class InputRequestQuestion(
     val question: String,
     val kind: InputRequestKind = InputRequestKind.FREE_TEXT,
@@ -26,6 +28,7 @@ data class InputRequestQuestion(
 )
 
 @Serializable
+@Immutable
 data class InputRequestContent(
     @SerialName("input_request_id") val inputRequestId: String,
     val questions: List<InputRequestQuestion> = emptyList(),

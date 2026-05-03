@@ -37,7 +37,7 @@ private val ToolBlockShape = RoundedCornerShape(8.dp)
  */
 @Composable
 fun ToolUseBlockView(row: ChatRow.ToolUseRow) {
-    var expanded by remember(row.key) { mutableStateOf(row.name == "Write") }
+    var expanded by remember(row.key) { mutableStateOf(false) }
     val container = MaterialTheme.colorScheme.surfaceVariant
     Column(
         modifier = Modifier

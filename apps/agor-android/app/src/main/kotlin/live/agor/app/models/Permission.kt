@@ -1,5 +1,6 @@
 package live.agor.app.models
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -14,6 +15,7 @@ enum class PermissionStatus {
 }
 
 @Serializable
+@Immutable
 data class PermissionRequestContent(
     @SerialName("permission_id") val permissionId: String,
     @SerialName("tool_name") val toolName: String,

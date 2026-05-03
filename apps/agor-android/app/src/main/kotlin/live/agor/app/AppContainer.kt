@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import live.agor.app.auth.AuthService
 import live.agor.app.auth.SecureTokenStore
 import live.agor.app.auth.ServerProfileManager
+import live.agor.app.data.ChatCache
 import live.agor.app.data.SidebarCache
 import live.agor.app.network.AgorClient
 import live.agor.app.network.HermesClient
@@ -34,6 +35,7 @@ class AppContainer(context: Context) {
     val socket: SocketService = SocketService(client, logger)
     val streaming: StreamingService = StreamingService(socket, logger)
     val sidebarCache: SidebarCache = SidebarCache(appContext)
+    val chatCache: ChatCache = ChatCache(appContext, tokenStore)
     val notifications: AgorNotificationManager = AgorNotificationManager(appContext)
 
     // Dedicated HTTP client for the in-app updater. Long read timeout because
