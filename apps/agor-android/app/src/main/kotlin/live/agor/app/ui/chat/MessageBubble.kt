@@ -48,7 +48,16 @@ fun TextBubble(row: ChatRow.TextBubbleRow) {
                 .background(bubbleColor, BubbleShape)
                 .padding(BubbleInnerPadding),
         ) {
-            MarkdownText(markdown = row.text)
+            // While streaming, render as plain Text. The markdown library re-parses
+            // its full AST on every recompose; with chunks arriving up to ~10 Hz the
+            // parse alone burns the frame budget on Main and tanks streaming smoothness.
+            // The in-progress text is half-formed markdown anyway (open code fences,
+            // dangling **bold). Once the message commits, switch to the full renderer.
+            if (row.streaming) {
+                Text(text = row.text)
+            } else {
+                MarkdownText(markdown = row.text)
+            }
         }
     }
 }
@@ -75,7 +84,11 @@ fun LiveOrphanBubble(row: ChatRow.LiveOrphanRow) {
                     )
                 }
                 if (row.text.isNotEmpty()) {
-                    MarkdownText(markdown = row.text)
+                    // Orphan rows are by definition mid-stream — they only exist
+                    // until the canonical message lands. Plain Text only;
+                    // markdown rendering happens once the message commits and
+                    // becomes a TextBubbleRow.
+                    Text(text = row.text)
                 }
             }
         }

@@ -18,28 +18,44 @@ import live.agor.app.viewmodels.NavigationViewModel
  * [SidebarScreen]. A flat row list is critical for scroll perf — nested
  * `forEach` inside one `items` slot collapses the entire subtree into a single
  * composition unit and defeats LazyColumn's lazy layout.
+ *
+ * Every variant is a `data class` so Compose smart-skip can compare rows by
+ * value and skip recompositions when nothing changed. With plain `class`,
+ * `equals` falls back to identity and the entire visible sidebar would
+ * recompose on every socket patch — see ChatRow's docstring for the same
+ * issue we hit there.
  */
 @Immutable
-sealed class SidebarRow(val key: String) {
-    @Immutable
-    class Header(val label: String, val icon: ImageVector, key: String) : SidebarRow(key)
+sealed interface SidebarRow {
+    val key: String
 
     @Immutable
-    class HermesShortcut(val configured: Boolean) : SidebarRow("hermes-shortcut")
+    data class Header(val label: String, val icon: ImageVector, override val key: String) : SidebarRow
 
     @Immutable
-    class DividerRow(suffix: String) : SidebarRow("div-$suffix")
+    data class HermesShortcut(val configured: Boolean) : SidebarRow {
+        override val key: String = "hermes-shortcut"
+    }
 
     @Immutable
-    class SessionItem(val session: Session, val depth: Int, keyPrefix: String) :
-        SidebarRow("$keyPrefix-${session.sessionId}")
+    data class DividerRow(val suffix: String) : SidebarRow {
+        override val key: String get() = "div-$suffix"
+    }
 
     @Immutable
-    class BoardItem(val board: Board, val isOpen: Boolean) : SidebarRow("board-${board.boardId}")
+    data class SessionItem(val session: Session, val depth: Int, val keyPrefix: String) : SidebarRow {
+        override val key: String get() = "$keyPrefix-${session.sessionId}"
+    }
 
     @Immutable
-    class WorktreeItem(val worktree: Worktree, val isOpen: Boolean) :
-        SidebarRow("worktree-${worktree.worktreeId}")
+    data class BoardItem(val board: Board, val isOpen: Boolean) : SidebarRow {
+        override val key: String get() = "board-${board.boardId}"
+    }
+
+    @Immutable
+    data class WorktreeItem(val worktree: Worktree, val isOpen: Boolean) : SidebarRow {
+        override val key: String get() = "worktree-${worktree.worktreeId}"
+    }
 }
 
 /**
