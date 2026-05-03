@@ -149,7 +149,7 @@ fun flattenChatRows(
                                 else block.text
                             if (resolved.isNotEmpty()) {
                                 out += ChatRow.TextBubbleRow(
-                                    rowKey = "text-$mid-$i",
+                                    key = "text-$mid-$i",
                                     role = msg.role,
                                     text = resolved,
                                     streaming = isLastTextBlock && streaming,
@@ -161,7 +161,7 @@ fun flattenChatRows(
                             // JSON serialization happens once here, not per-recompose.
                             val inputJson = AgorJson.encodeToString(JsonObject.serializer(), block.input)
                             out += ChatRow.ToolUseRow(
-                                rowKey = "tool-$mid-$i",
+                                key = "tool-$mid-$i",
                                 name = block.name,
                                 inputSummary = block.inputSummary,
                                 inputJson = inputJson,
@@ -176,7 +176,7 @@ fun flattenChatRows(
                                 null -> ""
                             }
                             out += ChatRow.ToolResultRow(
-                                rowKey = "result-$mid-$i",
+                                key = "result-$mid-$i",
                                 isError = block.isError == true,
                                 preview = block.content?.textPreview.orEmpty(),
                                 full = full,
