@@ -15,16 +15,17 @@ import okhttp3.Request
  * Polls a rolling GitHub Release for a newer debug APK.
  *
  * The Release tag (`android-latest`) is moved to HEAD on every successful CI
- * build, with the APK attached as the asset `agor-android-debug.apk`. We parse
- * the release name (set to the short SHA by CI) and the body field
- * `versionCode: <int>` to compare against the running app's [BuildConfig.VERSION_CODE_FIELD].
+ * build, with a small JSON manifest and the APK attached as stable assets.
+ * The manifest path avoids GitHub's unauthenticated API rate limit; the Releases
+ * API remains as a fallback for older releases that do not have the manifest yet.
  *
- * No auth required — public release endpoint. Rate limit is 60/hr unauthenticated,
- * which is plenty for a "check on launch + manual button" pattern.
+ * No auth required.
  */
 class UpdateChecker(
     private val http: OkHttpClient,
     private val currentVersionCode: Int = BuildConfig.VERSION_CODE_FIELD,
+    private val manifestUrl: String = BuildConfig.UPDATE_MANIFEST_URL,
+    private val apkUrl: String = BuildConfig.UPDATE_APK_URL,
     private val releaseUrl: String = BuildConfig.UPDATE_RELEASE_URL,
 ) {
     @Serializable
@@ -42,9 +43,56 @@ class UpdateChecker(
         @SerialName("assets") val assets: List<GhAsset> = emptyList(),
     )
 
+    @Serializable
+    private data class UpdateManifest(
+        @SerialName("versionCode") val versionCode: Int,
+        @SerialName("versionName") val versionName: String,
+        @SerialName("commit") val commit: String? = null,
+        @SerialName("apkUrl") val apkUrl: String? = null,
+        @SerialName("sizeBytes") val sizeBytes: Long = 0,
+    )
+
     private val json = Json { ignoreUnknownKeys = true }
+    var lastError: String? = null
+        private set
 
     suspend fun check(): UpdateInfo? = withContext(Dispatchers.IO) {
+        lastError = null
+        checkManifest()?.let { return@withContext it }
+        checkReleaseApi()
+    }
+
+    private fun checkManifest(): UpdateInfo? {
+        try {
+            val req = Request.Builder()
+                .url(manifestUrl)
+                .header("Cache-Control", "no-cache")
+                .build()
+            http.newCall(req).execute().use { resp ->
+                if (resp.code == 404) return null
+                if (!resp.isSuccessful) {
+                    lastError = "Update manifest HTTP ${resp.code}"
+                    AppLogger.log(lastError!!, LogLevel.WARNING, "Update")
+                    return null
+                }
+                val body = resp.body?.string() ?: return null
+                val manifest = json.decodeFromString(UpdateManifest.serializer(), body)
+                if (manifest.versionCode <= currentVersionCode) return null
+                return UpdateInfo(
+                    versionCode = manifest.versionCode,
+                    versionName = manifest.versionName,
+                    downloadUrl = manifest.apkUrl ?: apkUrl,
+                    sizeBytes = manifest.sizeBytes,
+                )
+            }
+        } catch (t: Throwable) {
+            lastError = "Update manifest failed: ${t.message}"
+            AppLogger.log(lastError!!, LogLevel.WARNING, "Update")
+            return null
+        }
+    }
+
+    private fun checkReleaseApi(): UpdateInfo? {
         try {
             val req = Request.Builder()
                 .url(releaseUrl)
@@ -52,17 +100,18 @@ class UpdateChecker(
                 .build()
             http.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
-                    AppLogger.log("Update check HTTP ${resp.code}", LogLevel.WARNING, "Update")
-                    return@withContext null
+                    lastError = "Update check HTTP ${resp.code}"
+                    AppLogger.log(lastError!!, LogLevel.WARNING, "Update")
+                    return null
                 }
-                val body = resp.body?.string() ?: return@withContext null
+                val body = resp.body?.string() ?: return null
                 val release = json.decodeFromString(GhRelease.serializer(), body)
                 val apk = release.assets.firstOrNull { it.name.endsWith(".apk") }
-                    ?: return@withContext null
+                    ?: return null
                 val remoteCode = parseVersionCode(release.body)
-                    ?: return@withContext null
-                if (remoteCode <= currentVersionCode) return@withContext null
-                UpdateInfo(
+                    ?: return null
+                if (remoteCode <= currentVersionCode) return null
+                return UpdateInfo(
                     versionCode = remoteCode,
                     versionName = release.name ?: release.tag ?: "unknown",
                     downloadUrl = apk.downloadUrl,
@@ -70,7 +119,8 @@ class UpdateChecker(
                 )
             }
         } catch (t: Throwable) {
-            AppLogger.log("Update check failed: ${t.message}", LogLevel.WARNING, "Update")
+            lastError = "Update check failed: ${t.message}"
+            AppLogger.log(lastError!!, LogLevel.WARNING, "Update")
             null
         }
     }
@@ -82,7 +132,10 @@ class UpdateChecker(
      */
     private fun parseVersionCode(body: String?): Int? {
         if (body.isNullOrBlank()) return null
-        val match = Regex("versionCode[^0-9]*([0-9]+)").find(body) ?: return null
+        val match = Regex(
+            "version[_\\s-]*code[^0-9]*([0-9]+)",
+            RegexOption.IGNORE_CASE,
+        ).find(body) ?: return null
         return match.groupValues[1].toIntOrNull()
     }
 }
