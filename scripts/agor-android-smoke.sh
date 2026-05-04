@@ -3,9 +3,10 @@
 set -euo pipefail
 
 PKG="${AGOR_ANDROID_PKG:-}"
-SERVER_URL="${AGOR_ANDROID_SERVER_URL:-agor.local}"
+SERVER_URL="${AGOR_ANDROID_SERVER_URL:-http://100.101.157.56:3030}"
 EMAIL="${AGOR_ANDROID_EMAIL:-}"
 PASSWORD="${AGOR_ANDROID_PASSWORD:-}"
+API_KEY="${AGOR_ANDROID_API_KEY:-}"
 APK="${AGOR_ANDROID_APK:-}"
 RESET_APP="${AGOR_ANDROID_RESET_APP:-0}"
 UNLOCK_PIN="${AGOR_ANDROID_UNLOCK_PIN:-}"
@@ -104,6 +105,45 @@ node_for_text() {
   tr '>' '\n' <"$xml" | grep "text=\"$text\"" | head -n1 || true
 }
 
+is_login_screen() {
+  local xml="$1"
+  if [[ -n "$(node_for_res "login-email" "$xml")" ]]; then
+    return 0
+  fi
+  if [[ -n "$(node_for_text "Sign in" "$xml")" ]] &&
+    [[ -n "$(node_for_text "Server URL" "$xml")" ]] &&
+    [[ -n "$(node_for_text "Email" "$xml")" ]] &&
+    [[ -n "$(node_for_text "Password" "$xml")" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+is_home_screen() {
+  local xml="$1"
+  if [[ -n "$(node_for_res "agor-root" "$xml")" ]]; then
+    return 0
+  fi
+  if [[ -n "$(node_for_text "Agor" "$xml")" ]] && [[ -n "$(node_for_text "Settings" "$xml")" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+wait_for_text_in_xml() {
+  local text="$1"
+  local out="$2"
+  local deadline=$((SECONDS + WAIT_TIMEOUT))
+  while (( SECONDS < deadline )); do
+    dump_ui "$out"
+    if [[ -n "$(node_for_text "$text" "$out")" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 node_midpoint() {
   local node="$1"
   local bounds
@@ -116,6 +156,22 @@ node_midpoint() {
   echo "$(((("$1" + "$3")) / 2)) $(((("$2" + "$4")) / 2))"
 }
 
+replace_text_node() {
+  local node="$1"
+  local value="$2"
+  local midpoint x y
+  midpoint="$(node_midpoint "$node")"
+  x="$(echo "$midpoint" | awk '{print $1}')"
+  y="$(echo "$midpoint" | awk '{print $2}')"
+  adb_shell input tap "$x" "$y"
+  sleep 0.2
+  local i
+  for i in $(seq 1 40); do
+    adb_shell input keyevent 67 >/dev/null 2>&1 || true
+  done
+  adb_shell input text "$(escape_input_text "$value")"
+}
+
 wait_for_res() {
   local res="$1"
   local out="$2"
@@ -123,6 +179,19 @@ wait_for_res() {
   while (( SECONDS < deadline )); do
     dump_ui "$out"
     if [[ -n "$(node_for_res "$res" "$out")" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_not_login() {
+  local out="$1"
+  local deadline=$((SECONDS + WAIT_TIMEOUT))
+  while (( SECONDS < deadline )); do
+    dump_ui "$out"
+    if ! is_login_screen "$out"; then
       return 0
     fi
     sleep 1
@@ -180,8 +249,10 @@ replace_text_res() {
   local xml="$3"
   tap_res "$res" "$xml"
   sleep 0.2
-  adb_shell input keycombination 113 29 >/dev/null 2>&1 || true
-  adb_shell input keyevent 67 >/dev/null 2>&1 || true
+  local i
+  for i in $(seq 1 40); do
+    adb_shell input keyevent 67 >/dev/null 2>&1 || true
+  done
   adb_shell input text "$(escape_input_text "$value")"
 }
 
@@ -204,26 +275,92 @@ install_if_requested() {
 login_if_needed() {
   local xml="$WORKDIR/login.xml"
   dump_ui "$xml"
-  if [[ -z "$(node_for_res "login-email" "$xml")" ]]; then
+  if ! is_login_screen "$xml"; then
     return 0
   fi
 
-  if [[ -z "$EMAIL" || -z "$PASSWORD" ]]; then
-    echo "Login screen is visible, but AGOR_ANDROID_EMAIL or AGOR_ANDROID_PASSWORD is not set." >&2
-    exit 2
+  if [[ -n "$API_KEY" ]]; then
+    echo "Logging in to $SERVER_URL with API key..."
+    if [[ -n "$(node_for_res "login-mode-api-key" "$xml")" ]]; then
+      tap_res "login-mode-api-key" "$xml"
+      dump_ui "$xml"
+      if [[ -n "$(node_for_res "login-server-url" "$xml")" ]] &&
+        [[ -n "$(node_for_res "login-api-key" "$xml")" ]] &&
+        [[ -n "$(node_for_res "login-submit" "$xml")" ]]; then
+        replace_text_res "login-server-url" "$SERVER_URL" "$xml"
+        dump_ui "$xml"
+        replace_text_res "login-api-key" "$API_KEY" "$xml"
+        dump_ui "$xml"
+        tap_res "login-submit" "$xml"
+      else
+        # Fallback for older builds without Compose testTag resources.
+        mapfile -t edit_nodes < <(tr '>' '\n' <"$xml" | grep 'class="android.widget.EditText"')
+        if (( ${#edit_nodes[@]} < 2 )); then
+          echo "Login screen API key mode detected, but editable fields were not found in fallback flow." >&2
+          return 1
+        fi
+        replace_text_node "${edit_nodes[0]}" "$SERVER_URL"
+        replace_text_node "${edit_nodes[1]}" "$API_KEY"
+        if [[ -n "$(node_for_res "login-submit" "$xml")" ]]; then
+          tap_res "login-submit" "$xml"
+        else
+          local api_key_button
+          api_key_button="$(tr '>' '\n' <"$xml" | grep 'class="android.widget.Button"' | head -n1)"
+          if [[ -n "$api_key_button" ]]; then
+            local tap_button_node
+            tap_button_node="$(node_midpoint "$api_key_button")"
+            adb_shell input tap "$(echo "$tap_button_node" | awk '{print $1}')" "$(echo "$tap_button_node" | awk '{print $2}')"
+          elif ! tap_text "Sign in with API key" "$xml"; then
+            adb_shell input keyevent 66 >/dev/null 2>&1 || true
+          fi
+        fi
+      fi
+    else
+      echo "AGOR_ANDROID_API_KEY is set, but API Key tab is unavailable in this UI." >&2
+      exit 2
+    fi
+  else
+    if [[ -z "$EMAIL" || -z "$PASSWORD" ]]; then
+      echo "Login screen is visible, but AGOR_ANDROID_EMAIL or AGOR_ANDROID_PASSWORD is not set." >&2
+      exit 2
+    fi
+
+    echo "Logging in to $SERVER_URL as AGOR_ANDROID_EMAIL..."
+    if [[ -n "$(node_for_res "login-server-url" "$xml")" ]] &&
+      [[ -n "$(node_for_res "login-email" "$xml")" ]] &&
+      [[ -n "$(node_for_res "login-password" "$xml")" ]] &&
+      [[ -n "$(node_for_res "login-submit" "$xml")" ]]; then
+      replace_text_res "login-server-url" "$SERVER_URL" "$xml"
+      dump_ui "$xml"
+      replace_text_res "login-email" "$EMAIL" "$xml"
+      dump_ui "$xml"
+      replace_text_res "login-password" "$PASSWORD" "$xml"
+      dump_ui "$xml"
+      tap_res "login-submit" "$xml"
+    else
+      # Fallback for older builds without Compose testTag resources.
+      mapfile -t edit_nodes < <(tr '>' '\n' <"$xml" | grep 'class="android.widget.EditText"')
+      if (( ${#edit_nodes[@]} < 3 )); then
+        echo "Login screen detected but editable fields were not found in fallback flow." >&2
+        return 1
+      fi
+      replace_text_node "${edit_nodes[0]}" "$SERVER_URL"
+      replace_text_node "${edit_nodes[1]}" "$EMAIL"
+      replace_text_node "${edit_nodes[2]}" "$PASSWORD"
+      local sign_in_button
+      sign_in_button="$(tr '>' '\n' <"$xml" | grep 'class="android.widget.Button"' | head -n1)"
+      if [[ -n "$sign_in_button" ]]; then
+        local tap_button_node
+        tap_button_node="$(node_midpoint "$sign_in_button")"
+        adb_shell input tap "$(echo "$tap_button_node" | awk '{print $1}')" "$(echo "$tap_button_node" | awk '{print $2}')"
+      elif ! tap_text "Sign in" "$xml"; then
+        adb_shell input keyevent 66 >/dev/null 2>&1 || true
+      fi
+    fi
   fi
 
-  echo "Logging in to $SERVER_URL as AGOR_ANDROID_EMAIL..."
-  replace_text_res "login-server-url" "$SERVER_URL" "$xml"
-  dump_ui "$xml"
-  replace_text_res "login-email" "$EMAIL" "$xml"
-  dump_ui "$xml"
-  replace_text_res "login-password" "$PASSWORD" "$xml"
-  dump_ui "$xml"
-  tap_res "login-submit" "$xml"
-
   local after="$WORKDIR/after-login.xml"
-  if ! wait_for_res "agor-root" "$after"; then
+  if ! wait_for_not_login "$after"; then
     capture_screenshot "login-timeout"
     cp "$after" "$SCREENSHOT_DIR/login-timeout.xml" || true
     echo "Timed out waiting after login." >&2
@@ -242,7 +379,9 @@ open_drawer() {
   else
     tap_text "Agor" "$xml"
   fi
-  wait_for_res "sidebar-list" "$WORKDIR/sidebar.xml"
+  if ! wait_for_res "sidebar-list" "$WORKDIR/sidebar.xml" && ! wait_for_text_in_xml "Sessions" "$WORKDIR/sidebar.xml"; then
+    return 1
+  fi
 }
 
 exercise_sidebar_scroll() {
@@ -280,9 +419,10 @@ open_first_session() {
     cp "$xml" "$SCREENSHOT_DIR/no-session-row.xml" || true
     echo "No session row found in the drawer." >&2
     return 1
+  else
+    tap_res "sidebar-session-row" "$xml"
   fi
 
-  tap_res "sidebar-session-row" "$xml"
   if ! wait_for_res "chat-list" "$WORKDIR/chat.xml"; then
     capture_screenshot "chat-open-timeout"
     cp "$WORKDIR/chat.xml" "$SCREENSHOT_DIR/chat-open-timeout.xml" || true
@@ -330,7 +470,12 @@ launch_app
 sleep 2
 login_if_needed
 
-wait_for_res "agor-root" "$WORKDIR/home.xml"
+if ! wait_for_res "agor-root" "$WORKDIR/home.xml"; then
+  if ! is_home_screen "$WORKDIR/home.xml" && ! wait_for_text_in_xml "Agor" "$WORKDIR/home.xml"; then
+    echo "Timed out waiting for home screen." >&2
+    exit 1
+  fi
+fi
 capture_screenshot "home"
 cp "$WORKDIR/home.xml" "$SCREENSHOT_DIR/home.xml"
 

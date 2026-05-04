@@ -128,6 +128,27 @@ class AgorClient(private val tokens: SecureTokenStore) {
         LoginResult(accessToken, refreshToken, user)
     }
 
+    suspend fun loginWithApiKey(apiKey: String): LoginResult = withContext(Dispatchers.IO) {
+        val body = JsonObject(
+            mapOf(
+                "strategy" to JsonPrimitive("api-key"),
+                "apiKey" to JsonPrimitive(apiKey),
+            ),
+        )
+        val resp = unauthenticatedRequest("POST", "/authentication", body)
+        val payload = resp as? JsonObject ?: throw IOException("Login response malformed")
+        val accessToken = payload["accessToken"]?.jsonPrimitive?.contentOrNull
+        val refreshToken = payload["refreshToken"]?.jsonPrimitive?.contentOrNull
+        val userEl = payload["user"]
+        val user = userEl?.let { AgorJson.decodeFromJsonElement(User.serializer(), it) }
+        if (accessToken.isNullOrEmpty() || user == null) {
+            throw IOException("Login response missing accessToken or user")
+        }
+        tokens.accessToken = accessToken
+        tokens.refreshToken = refreshToken
+        LoginResult(accessToken, refreshToken, user)
+    }
+
     suspend fun refresh(): Boolean = withContext(Dispatchers.IO) {
         val refresh = tokens.refreshToken ?: return@withContext false
         val body = JsonObject(

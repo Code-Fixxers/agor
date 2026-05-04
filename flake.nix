@@ -18,14 +18,25 @@
         };
 
         sharedRuntimeInputs = with pkgs; [
+          direnv
           bash
+          curl
           coreutils
+          gawk
           findutils
+          git
           gnugrep
           gnused
           jq
+          lsof
+          procps
+          python3
+          strace
+          scrcpy
+          sqlite
           nodejs_22
           pnpm
+          which
         ];
 
         # ------------------------------------------------------------------
@@ -51,28 +62,32 @@
         androidNdkRoot = "${androidSdkRoot}/ndk/27.1.12297006";
 
         androidBuildInputs = with pkgs; [
+          direnv
           jdk17
           android-tools
           gradle
-          git
-          curl
           cacert
-          unzip
-          which
-          bash
-          coreutils
           findutils
-          gnused
-          gnugrep
-          gnumake
+          unzip
+          lsof
+          procps
+          python3
+          scrcpy
+          sqlite
           androidComposition.androidsdk
+          imagemagick
+          strace
         ];
 
         androidDebugInputs = androidBuildInputs ++ (with pkgs; [
+          bash
+          coreutils
           gawk
+          gnumake
+          gnused
           jq
           procps
-          sqlite
+          which
         ]);
 
         androidEnvHook = ''
@@ -288,6 +303,8 @@ NPMRC
               ${androidEnvHook}
               echo ""
               echo "Agor dev shell: adb, aapt, Gradle, Node, pnpm, jq, sqlite available."
+              echo "Android diagnostics: adb shell dumpsys/gfxinfo, scrcpy, strace, lsof, sqlite, python3."
+              echo "Shell tooling: direnv available."
               echo "Android smoke: nix run .#agor-android-smoke"
               echo ""
             '';
@@ -298,6 +315,8 @@ NPMRC
             shellHook = ''
               ${androidEnvHook}
               echo ""
+              echo "   Diagnostics: adb shell dumpsys/gfxinfo, scrcpy, strace, lsof, sqlite, imagemagick, python3"
+              echo "   Shell tooling: direnv"
               echo "📱 Agor Android dev shell"
               echo "   ANDROID_SDK_ROOT = $ANDROID_SDK_ROOT"
               echo "   ANDROID_NDK_HOME = $ANDROID_NDK_HOME"

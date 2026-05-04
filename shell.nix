@@ -25,6 +25,7 @@ in
 pkgs.mkShell {
   packages = with pkgs; [
     bash
+    direnv
     cacert
     coreutils
     curl
@@ -34,13 +35,18 @@ pkgs.mkShell {
     gnugrep
     gnumake
     gnused
+    imagemagick
     gradle
     jdk17
     jq
+    lsof
     nodejs_22
     pnpm
+    python3
     procps
+    scrcpy
     sqlite
+    strace
     unzip
     which
     android-tools
@@ -58,6 +64,8 @@ pkgs.mkShell {
 
     echo ""
     echo "Agor dev shell: adb, aapt, Gradle, Node, pnpm, jq, sqlite available."
+    echo "Android diagnostics: scrcpy, strace, lsof, sqlite, imagemagick, python3."
+    echo "dev tooling: direnv available."
     echo "Android smoke: nix run .#agor-android-smoke"
     echo ""
   '';
