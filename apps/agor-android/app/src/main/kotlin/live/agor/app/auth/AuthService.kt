@@ -49,14 +49,20 @@ class AuthService(
     }
 
     suspend fun login(rawUrl: String, email: String, password: String) {
-        val resolved = client.probeBaseUrl(rawUrl)
+        val normalizedUrl = normalizeUrl(rawUrl)
+        val canonicalEmail = normalizeEmailForLogin(email)
+        if (normalizedUrl.isBlank() || canonicalEmail.isBlank()) {
+            throw AgorClient.HttpException(0, "Server URL and email are required", "")
+        }
+        val resolved = client.probeBaseUrl(normalizedUrl)
             ?: throw AgorClient.HttpException(0, "Could not reach server at $rawUrl", "")
         client.setBaseUrl(resolved)
-        val result = client.login(email, password)
+        val result = client.login(canonicalEmail, password)
+        tokens.lastEmail = canonicalEmail
         _user.value = result.user
         _state.value = AuthState.Authenticated
         runCatching {
-            biometricStore.saveCredentials(resolved, email.trim(), password)
+            biometricStore.saveCredentials(resolved, canonicalEmail, password)
         }.onFailure {
             AppLogger.log(
                 "Failed to persist credentials for biometric login: ${it.message}",
@@ -77,6 +83,18 @@ class AuthService(
         )
     }
 
+    suspend fun loginWithApiKey(rawUrl: String, apiKey: String) {
+        val resolved = client.probeBaseUrl(rawUrl)
+            ?: throw AgorClient.HttpException(0, "Could not reach server at $rawUrl", "")
+        client.setBaseUrl(resolved)
+        val result = client.loginWithApiKey(apiKey)
+        _user.value = result.user
+        _state.value = AuthState.Authenticated
+        runCatching {
+            biometricStore.clearStoredCredentials()
+        }
+    }
+
     /** Clears tokens but keeps URL + email so the login form pre-fills. */
     fun softLogout() {
         tokens.clearTokensKeepUrl()
@@ -90,4 +108,7 @@ class AuthService(
         _user.value = null
         _state.value = AuthState.NeedsLogin
     }
+
+    private fun normalizeUrl(input: String): String = input.trim().trimEnd('/')
+    private fun normalizeEmailForLogin(input: String): String = input.trim()
 }
