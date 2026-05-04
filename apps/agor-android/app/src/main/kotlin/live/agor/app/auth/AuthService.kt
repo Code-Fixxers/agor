@@ -3,6 +3,7 @@ package live.agor.app.auth
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import live.agor.app.models.User
 import live.agor.app.network.AgorClient
 import live.agor.app.util.AppLogger
@@ -71,16 +72,24 @@ class AuthService(
             )
         }
         // Save profile
-        val list = profiles.profiles.let { /* one-shot read */ emptyList<live.agor.app.models.ServerProfile>() }
-        profiles.upsert(
-            live.agor.app.models.ServerProfile(
-                id = resolved,
-                label = result.user.email ?: result.user.name,
-                url = resolved,
-                email = result.user.email,
-            ),
-            list,
-        )
+        runCatching {
+            val list = profiles.profiles.first()
+            profiles.upsert(
+                live.agor.app.models.ServerProfile(
+                    id = resolved,
+                    label = result.user.email ?: result.user.name,
+                    url = resolved,
+                    email = result.user.email,
+                ),
+                list,
+            )
+        }.onFailure {
+            AppLogger.log(
+                "Failed to persist server profile: ${it.message}",
+                LogLevel.WARNING,
+                "Auth",
+            )
+        }
     }
 
     suspend fun loginWithApiKey(rawUrl: String, apiKey: String) {
@@ -110,5 +119,5 @@ class AuthService(
     }
 
     private fun normalizeUrl(input: String): String = input.trim().trimEnd('/')
-    private fun normalizeEmailForLogin(input: String): String = input.trim()
+    private fun normalizeEmailForLogin(input: String): String = input.trim().lowercase()
 }
