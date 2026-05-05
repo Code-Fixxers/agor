@@ -8,7 +8,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import live.agor.app.notifications.AgorNotificationManager
+import live.agor.app.automation.AutomationProtocol
 import live.agor.app.ui.AgorRootScreen
 import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
@@ -39,6 +41,7 @@ class MainActivity : ComponentActivity() {
         // Cold-launch: capture the session id before Compose starts so the very first
         // composition already has the pending route.
         handleEntryIntent(intent)
+        handleControlApiIntent(intent)
         handleNativeLoginIntent(intent)
         handleNativeHermesIntent(intent)
         setContent {
@@ -55,8 +58,68 @@ class MainActivity : ComponentActivity() {
         // Warm-resume: a notification (or deep-link) opened the existing task instance.
         setIntent(intent)
         handleEntryIntent(intent)
+        handleControlApiIntent(intent)
         handleNativeLoginIntent(intent)
         handleNativeHermesIntent(intent)
+    }
+
+    private fun handleControlApiIntent(intent: Intent?) {
+        if (intent?.action != AutomationProtocol.ACTION_CONTROL) return
+
+        val rawCommand = intent.getStringExtra(AutomationProtocol.EXTRA_COMMAND_JSON)
+        if (rawCommand.isNullOrBlank()) {
+            AppLogger.log("Automation command rejected: missing payload", LogLevel.WARNING, "Automation")
+            return
+        }
+
+        lifecycleScope.launch {
+            var requestId: String? = null
+            val responseAction = intent.getStringExtra(AutomationProtocol.EXTRA_RESPONSE_ACTION)
+            try {
+                val json = JSONObject(rawCommand)
+                val command = json.optString(AutomationProtocol.KEY_COMMAND, "").trim()
+                requestId = json.optString(AutomationProtocol.KEY_REQUEST_ID, null)
+
+                val result = when (command) {
+                    AutomationProtocol.COMMAND_LOGIN -> {
+                        val serverUrl = json.optString(AutomationProtocol.KEY_SERVER_URL, "")
+                        val apiKey = json.optString(AutomationProtocol.KEY_API_KEY, null)
+                        val email = json.optString(AutomationProtocol.KEY_EMAIL, null)
+                        val password = json.optString(AutomationProtocol.KEY_PASSWORD, null)
+                        val connectSocket =
+                            try {
+                                json.getBoolean(AutomationProtocol.KEY_CONNECT_SOCKET)
+                            } catch (_: Exception) {
+                                true
+                            }
+                        executeLogin(serverUrl, email, password, apiKey, connectSocket)
+                        "Login successful"
+                    }
+                    AutomationProtocol.COMMAND_HERMES_TRIGGER -> {
+                        val webhook = json.optString(AutomationProtocol.KEY_HERMES_WEBHOOK, "")
+                        val prompt = json.optString(AutomationProtocol.KEY_HERMES_PROMPT, "")
+                        val rawUrl = json.optString(AutomationProtocol.KEY_HERMES_URL, null)
+                        val token = json.optString(AutomationProtocol.KEY_HERMES_TOKEN, null)
+                        container.hermesClient.triggerWebhook(webhook, prompt, rawUrl, token)
+                        "Hermes trigger executed"
+                    }
+                    AutomationProtocol.COMMAND_PING -> "PONG"
+                    else -> throw IllegalArgumentException("Unknown automation command: $command")
+                }
+
+                sendAutomationResponse(responseAction, requestId, true, result)
+                AppLogger.log("Automation command [$command] succeeded", LogLevel.INFO, "Automation")
+            } catch (t: Throwable) {
+                val message = "Automation command failed: ${t.message}"
+                sendAutomationResponse(
+                    responseAction,
+                    requestId,
+                    false,
+                    message,
+                )
+                AppLogger.log(message, LogLevel.WARNING, "Automation")
+            }
+        }
     }
 
     private fun handleNativeLoginIntent(intent: Intent?) {
@@ -64,52 +127,78 @@ class MainActivity : ComponentActivity() {
 
         val serverUrl = intent.getStringExtra(EXTRA_SERVER_URL)
         val shouldConnectSocket = intent.getBooleanExtra(EXTRA_CONNECT_SOCKET, true)
-        if (serverUrl.isNullOrBlank()) {
-            AppLogger.log(
-                "Native login rejected: missing server URL",
-                LogLevel.WARNING,
-                "Auth",
-            )
-            return
-        }
-
         val apiKey = intent.getStringExtra(EXTRA_API_KEY)
         val email = intent.getStringExtra(EXTRA_EMAIL)
         val password = intent.getStringExtra(EXTRA_PASSWORD)
 
         lifecycleScope.launch {
             try {
-                if (!apiKey.isNullOrBlank()) {
-                    if (email != null) {
-                        AppLogger.log(
-                            "Native login ignores email when API key mode is used: $email",
-                            LogLevel.INFO,
-                            "Auth",
-                        )
-                    }
-                    container.authService.loginWithApiKey(serverUrl, apiKey)
-                } else {
-                    if (email.isNullOrBlank() || password.isNullOrBlank()) {
-                        AppLogger.log(
-                            "Native login rejected: missing email/password",
-                            LogLevel.WARNING,
-                            "Auth",
-                        )
-                        return@launch
-                    }
-                    container.authService.login(serverUrl, email, password)
-                }
-
-                if (shouldConnectSocket) {
-                    container.socket.connect()
-                }
-
+                executeLogin(serverUrl, email, password, apiKey, shouldConnectSocket)
                 AppLogger.log("Native login successful", LogLevel.INFO, "Auth")
             } catch (t: Throwable) {
                 AppLogger.log(
                     "Native login failed: ${t.message}",
                     LogLevel.WARNING,
                     "Auth",
+                )
+            }
+        }
+    }
+
+    private suspend fun executeLogin(
+        serverUrl: String?,
+        email: String?,
+        password: String?,
+        apiKey: String?,
+        shouldConnectSocket: Boolean = true,
+    ) {
+        if (serverUrl.isNullOrBlank()) {
+            throw IllegalArgumentException("Native login rejected: missing server URL")
+        }
+
+        if (!apiKey.isNullOrBlank()) {
+            if (!email.isNullOrBlank()) {
+                AppLogger.log(
+                    "Native login ignores email when API key mode is used: $email",
+                    LogLevel.INFO,
+                    "Auth",
+                )
+            }
+            container.authService.loginWithApiKey(serverUrl, apiKey)
+        } else {
+            if (email.isNullOrBlank() || password.isNullOrBlank()) {
+                throw IllegalArgumentException("Native login rejected: missing email/password")
+            }
+            container.authService.login(serverUrl, email, password)
+        }
+
+        if (shouldConnectSocket) {
+            container.socket.connect()
+        }
+    }
+
+    private fun sendAutomationResponse(
+        responseAction: String?,
+        requestId: String?,
+        success: Boolean,
+        message: String,
+    ) {
+        if (responseAction.isNullOrBlank()) return
+
+        val response = Intent(responseAction).apply {
+            setPackage(packageName)
+            putExtra(AutomationProtocol.KEY_SUCCESS, success)
+            putExtra(AutomationProtocol.KEY_MESSAGE, message)
+            if (requestId != null) {
+                putExtra(AutomationProtocol.EXTRA_RESPONSE_REQUEST_ID, requestId)
+            }
+        }
+        runCatching { sendBroadcast(response) }
+            .onFailure { throwable ->
+                AppLogger.log(
+                    "Failed to send automation response: ${throwable.message}",
+                    LogLevel.WARNING,
+                    "Automation",
                 )
             }
         }
