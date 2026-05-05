@@ -170,10 +170,36 @@ class MainActivity : ComponentActivity() {
                 put(AutomationProtocol.KEY_API_KEY, it)
             }
             if (intent.hasExtra(AutomationProtocol.EXTRA_CONNECT_SOCKET_LEGACY)) {
-                put(AutomationProtocol.KEY_CONNECT_SOCKET, intent.getBooleanExtra(AutomationProtocol.EXTRA_CONNECT_SOCKET_LEGACY, true))
+                put(
+                    AutomationProtocol.KEY_CONNECT_SOCKET,
+                    parseBooleanExtra(
+                        intent,
+                        AutomationProtocol.EXTRA_CONNECT_SOCKET_LEGACY,
+                        true,
+                    ),
+                )
             }
         }
         return json
+    }
+
+    private fun parseBooleanExtra(
+        intent: Intent,
+        name: String,
+        fallback: Boolean,
+    ): Boolean {
+        return runCatching {
+            intent.extras?.get(name)?.let { raw ->
+                when (raw) {
+                    is Boolean -> raw
+                    is String -> raw.trim().lowercase() in setOf("1", "true", "yes", "on", "y")
+                    is Number -> raw.toInt() != 0
+                    else -> null
+                }
+            } ?: intent.getBooleanExtra(name, fallback)
+        }.getOrElse {
+            fallback
+        }
     }
 
     private fun parseCommandJson(raw: String?): JSONObject? {
