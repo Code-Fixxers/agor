@@ -51,8 +51,33 @@ class AgorNotificationManager(private val context: Context) {
         NotificationManagerCompat.from(context).cancel("session-$sessionId-idle", 0)
     }
 
+    fun notifyHermesCompleted(sessionId: String, title: String) {
+        if (!hasPostNotifPermission()) return
+        val intent = Intent(context, MainActivity::class.java).apply {
+            putExtra(EXTRA_HERMES_SESSION_ID, sessionId)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pi = PendingIntent.getActivity(
+            context,
+            "hermes-$sessionId".hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification: Notification = NotificationCompat.Builder(context, NotificationChannels.HERMES)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("Hermes replied")
+            .setContentText(title)
+            .setAutoCancel(true)
+            .setContentIntent(pi)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        NotificationManagerCompat.from(context)
+            .notify("hermes-$sessionId-complete", 0, notification)
+    }
+
     companion object {
         const val EXTRA_SESSION_ID = "live.agor.app.extra.SESSION_ID"
+        const val EXTRA_HERMES_SESSION_ID = "live.agor.app.extra.HERMES_SESSION_ID"
     }
 
     private fun hasPostNotifPermission(): Boolean {

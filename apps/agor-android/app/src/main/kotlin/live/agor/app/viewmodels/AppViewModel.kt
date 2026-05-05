@@ -31,9 +31,14 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
      * Backed by [AppContainer] so MainActivity can push values before the VM exists.
      */
     val pendingSessionId: StateFlow<String?> = container.pendingSessionId
+    val pendingHermesSessionId: StateFlow<String?> = container.pendingHermesSessionId
 
     fun consumePendingSessionId() {
         container.consumePendingSessionId()
+    }
+
+    fun consumePendingHermesSessionId() {
+        container.consumePendingHermesSessionId()
     }
 
     init {

@@ -9,6 +9,8 @@ import live.agor.app.auth.BiometricCredentialStore
 import live.agor.app.auth.SecureTokenStore
 import live.agor.app.auth.ServerProfileManager
 import live.agor.app.data.ChatCache
+import live.agor.app.data.HermesImageStore
+import live.agor.app.data.HermesSessionStore
 import live.agor.app.data.SidebarCache
 import live.agor.app.network.AgorClient
 import live.agor.app.network.HermesClient
@@ -38,6 +40,8 @@ class AppContainer(context: Context) {
     val streaming: StreamingService = StreamingService(socket, logger)
     val sidebarCache: SidebarCache = SidebarCache(appContext)
     val chatCache: ChatCache = ChatCache(appContext, tokenStore)
+    val hermesSessions: HermesSessionStore = HermesSessionStore(appContext, tokenStore)
+    val hermesImages: HermesImageStore = HermesImageStore(appContext)
     val notifications: AgorNotificationManager = AgorNotificationManager(appContext)
 
     // Dedicated HTTP client for the in-app updater. Long read timeout because
@@ -56,6 +60,9 @@ class AppContainer(context: Context) {
     /** Latest session id requested by an external entry point (notification / deep-link). */
     val pendingSessionId: StateFlow<String?> = _pendingSessionId.asStateFlow()
 
+    private val _pendingHermesSessionId = MutableStateFlow<String?>(null)
+    val pendingHermesSessionId: StateFlow<String?> = _pendingHermesSessionId.asStateFlow()
+
     fun requestOpenSession(sessionId: String?) {
         if (sessionId.isNullOrBlank()) return
         _pendingSessionId.value = sessionId
@@ -63,5 +70,14 @@ class AppContainer(context: Context) {
 
     fun consumePendingSessionId() {
         _pendingSessionId.value = null
+    }
+
+    fun requestOpenHermesSession(sessionId: String?) {
+        if (sessionId.isNullOrBlank()) return
+        _pendingHermesSessionId.value = sessionId
+    }
+
+    fun consumePendingHermesSessionId() {
+        _pendingHermesSessionId.value = null
     }
 }
