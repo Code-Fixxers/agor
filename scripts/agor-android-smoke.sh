@@ -2,11 +2,24 @@
 
 set -euo pipefail
 
+if [[ -f ".env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source ".env"
+  set +a
+fi
+
 PKG="${AGOR_ANDROID_PKG:-}"
 SERVER_URL="${AGOR_ANDROID_SERVER_URL:-http://192.168.88.116:3030}"
 EMAIL="${AGOR_ANDROID_EMAIL:-}"
 PASSWORD="${AGOR_ANDROID_PASSWORD:-}"
 API_KEY="${AGOR_ANDROID_API_KEY:-}"
+CONTROL_LOGIN="${AGOR_ANDROID_CONTROL_LOGIN:-1}"
+HERMES_URL="${AGOR_ANDROID_HERMES_URL:-${AGOR_HERMES_URL:-}}"
+HERMES_TOKEN="${AGOR_ANDROID_HERMES_TOKEN:-${AGOR_HERMES_API:-}}"
+HERMES_MODEL="${AGOR_ANDROID_HERMES_MODEL:-hermes-agent}"
+HERMES_PROMPT="${AGOR_ANDROID_HERMES_PROMPT:-Reply with one concise sentence confirming Hermes can answer from the Android Agor smoke test.}"
+HERMES_WAIT_TIMEOUT="${AGOR_ANDROID_HERMES_WAIT_TIMEOUT:-180}"
 APK="${AGOR_ANDROID_APK:-}"
 RESET_APP="${AGOR_ANDROID_RESET_APP:-0}"
 UNLOCK_PIN="${AGOR_ANDROID_UNLOCK_PIN:-}"
@@ -26,7 +39,7 @@ trap 'if [[ "$KEEP_WORKDIR" != "1" ]]; then rm -rf "$WORKDIR"; fi' EXIT
 
 mkdir -p "$SCREENSHOT_DIR"
 
-for cmd in adb awk date grep sed tr; do
+for cmd in adb awk base64 date grep python3 sed tr; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "Missing required command: $cmd" >&2
     exit 2
@@ -308,6 +321,53 @@ launch_app() {
   adb_shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null
 }
 
+json_b64() {
+  python3 - "$@" <<'PY'
+import base64
+import json
+import sys
+
+payload = {}
+for arg in sys.argv[1:]:
+    key, value = arg.split("=", 1)
+    if value == "__true__":
+        payload[key] = True
+    elif value == "__false__":
+        payload[key] = False
+    elif value != "__omit__":
+        payload[key] = value
+raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+print(base64.b64encode(raw).decode("ascii"))
+PY
+}
+
+control_start() {
+  local payload_b64="$1"
+  adb_shell am start \
+    -n "$PKG/live.agor.app.MainActivity" \
+    -a live.agor.app.action.AGOR_CONTROL \
+    --es live.agor.app.extra.CONTROL_COMMAND_JSON_BASE64 "$payload_b64" >/dev/null
+}
+
+wait_for_logcat() {
+  local pattern="$1"
+  local timeout="${2:-$WAIT_TIMEOUT}"
+  local out="$3"
+  local failure_pattern="${4:-}"
+  local deadline=$((SECONDS + timeout))
+  while (( SECONDS < deadline )); do
+    "${ADB[@]}" logcat -d -v time >"$out" || true
+    if grep -F "$pattern" "$out" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ -n "$failure_pattern" ]] && grep -F "$failure_pattern" "$out" >/dev/null 2>&1; then
+      return 2
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 install_if_requested() {
   if [[ -z "$APK" ]]; then
     return 0
@@ -320,6 +380,31 @@ install_if_requested() {
 }
 
 login_if_needed() {
+  if [[ "$CONTROL_LOGIN" == "1" ]]; then
+    if [[ -z "$API_KEY" && ( -z "$EMAIL" || -z "$PASSWORD" ) ]]; then
+      echo "Control login is enabled, but credentials/API key are missing." >&2
+      exit 2
+    fi
+    echo "Logging in through Agor control API..."
+    local login_b64
+    login_b64="$(json_b64 \
+      "command=login" \
+      "requestId=smoke-login-$(date +%s)" \
+      "serverUrl=$SERVER_URL" \
+      "email=${EMAIL:-__omit__}" \
+      "password=${PASSWORD:-__omit__}" \
+      "apiKey=${API_KEY:-__omit__}" \
+      "connectSocket=__true__")"
+    control_start "$login_b64"
+    if ! wait_for_logcat "Automation command [login] succeeded" "$WAIT_TIMEOUT" "$WORKDIR/control-login.log"; then
+      capture_screenshot "control-login-timeout"
+      capture_logcat "control-login-timeout"
+      echo "Timed out waiting for control API login success." >&2
+      exit 1
+    fi
+    return 0
+  fi
+
   local xml="$WORKDIR/login.xml"
   dump_ui "$xml"
   if ! is_login_screen "$xml"; then
@@ -413,6 +498,57 @@ login_if_needed() {
     echo "Timed out waiting after login." >&2
     exit 1
   fi
+}
+
+exercise_hermes_control_api() {
+  if [[ -z "$HERMES_URL" || -z "$HERMES_TOKEN" ]]; then
+    echo "Hermes smoke requires AGOR_HERMES_URL and AGOR_HERMES_API/AGOR_ANDROID_HERMES_TOKEN." >&2
+    exit 2
+  fi
+
+  echo "Configuring Hermes through Agor control API..."
+  local configure_b64
+  configure_b64="$(json_b64 \
+    "command=hermes.configure" \
+    "requestId=smoke-hermes-configure-$(date +%s)" \
+    "hermesUrl=$HERMES_URL" \
+    "hermesToken=$HERMES_TOKEN" \
+    "hermesModel=$HERMES_MODEL")"
+  control_start "$configure_b64"
+  if ! wait_for_logcat "Automation command [hermes.configure] succeeded" "$WAIT_TIMEOUT" "$WORKDIR/control-hermes-configure.log"; then
+    capture_screenshot "control-hermes-configure-timeout"
+    capture_logcat "control-hermes-configure-timeout"
+    echo "Timed out waiting for Hermes configuration success." >&2
+    exit 1
+  fi
+
+  echo "Prompting Hermes through Agor control API..."
+  local chat_b64
+  chat_b64="$(json_b64 \
+    "command=hermes.chat" \
+    "requestId=smoke-hermes-chat-$(date +%s)" \
+    "prompt=$HERMES_PROMPT" \
+    "hermesUrl=$HERMES_URL" \
+    "hermesToken=$HERMES_TOKEN" \
+    "hermesModel=$HERMES_MODEL")"
+  control_start "$chat_b64"
+  local hermes_wait_status=0
+  wait_for_logcat \
+    "Automation command [hermes.chat] succeeded: Hermes chat replied:" \
+    "$HERMES_WAIT_TIMEOUT" \
+    "$WORKDIR/control-hermes-chat.log" \
+    "Automation command failed:" || hermes_wait_status=$?
+  if [[ "$hermes_wait_status" != "0" ]]; then
+    capture_screenshot "control-hermes-chat-timeout"
+    capture_logcat "control-hermes-chat-timeout"
+    if [[ "$hermes_wait_status" == "2" ]]; then
+      echo "Hermes chat command failed; see $SCREENSHOT_DIR/control-hermes-chat-timeout.log." >&2
+    else
+      echo "Timed out waiting for Hermes chat response." >&2
+    fi
+    exit 1
+  fi
+  cp "$WORKDIR/control-hermes-chat.log" "$SCREENSHOT_DIR/control-hermes-chat.log" || true
 }
 
 open_drawer() {
@@ -559,6 +695,8 @@ if ! wait_for_home "$WORKDIR/home.xml"; then
 fi
 capture_screenshot "home"
 cp "$WORKDIR/home.xml" "$SCREENSHOT_DIR/home.xml"
+
+exercise_hermes_control_api
 
 open_drawer "$WORKDIR/home.xml"
 capture_screenshot "sidebar"

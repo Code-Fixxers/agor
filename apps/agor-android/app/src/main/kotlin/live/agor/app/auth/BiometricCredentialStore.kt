@@ -10,7 +10,6 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import java.security.KeyStore
 import java.security.MessageDigest
-import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -18,7 +17,6 @@ import javax.crypto.spec.GCMParameterSpec
 
 private const val KEY_ALIAS = "agor_password_vault"
 private const val KEY_TRANSFORMATION = "AES/GCM/NoPadding"
-private const val KEY_IV_BYTES = 12
 private const val KEY_TAG_BITS = 128
 private const val KEY_STORE = "AndroidKeyStore"
 
@@ -131,12 +129,14 @@ class BiometricCredentialStore(
     private fun normalize(url: String): String = url.trim().trimEnd('/')
 
     private fun createEncryptCipher(): Cipher {
-        val key = getOrCreateSecretKey()
         val cipher = Cipher.getInstance(KEY_TRANSFORMATION)
-        val iv = ByteArray(KEY_IV_BYTES)
-        SecureRandom().nextBytes(iv)
-        val spec = GCMParameterSpec(KEY_TAG_BITS, iv)
-        cipher.init(Cipher.ENCRYPT_MODE, key, spec)
+        runCatching {
+            cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
+            return cipher
+        }
+
+        deleteSecretKey()
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
         return cipher
     }
 
@@ -161,12 +161,19 @@ class BiometricCredentialStore(
             setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             setRandomizedEncryptionRequired(true)
-            setUserAuthenticationRequired(true)
-            setInvalidatedByBiometricEnrollment(true)
+            setUserAuthenticationRequired(false)
         }.build()
 
         keyGen.init(spec)
         return keyGen.generateKey()
+    }
+
+    private fun deleteSecretKey() {
+        runCatching {
+            val keyStore = KeyStore.getInstance(KEY_STORE)
+            keyStore.load(null)
+            keyStore.deleteEntry(KEY_ALIAS)
+        }
     }
 
     private fun hashPassword(password: String): String {
