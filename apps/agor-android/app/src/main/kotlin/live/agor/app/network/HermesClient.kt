@@ -11,6 +11,8 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import java.net.URLEncoder
@@ -170,6 +172,56 @@ class HermesClient(private val tokens: SecureTokenStore) {
         }
     }.flowOn(Dispatchers.IO)
 
+    suspend fun capabilities(): String = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        val (url, bearer) = requireConfig()
+        val req = Request.Builder()
+            .url("$url/v1/capabilities")
+            .header("Authorization", "Bearer $bearer")
+            .header("Accept", "application/json")
+            .get()
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw IOException("Hermes ${resp.code}: ${text.take(400)}")
+            }
+            text
+        }
+    }
+
+    fun responseStream(
+        conversationId: String,
+        prompt: String,
+        imageDataUrls: List<String> = emptyList(),
+    ): Flow<HermesResponseEvent> = flow {
+        val (url, bearer) = requireConfig()
+        val req = Request.Builder()
+            .url("$url/v1/responses")
+            .header("Authorization", "Bearer $bearer")
+            .header("Accept", "text/event-stream")
+            .post(buildResponseRequest(conversationId, prompt, imageDataUrls).toRequestBody(jsonMedia))
+            .build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val text = resp.body?.string().orEmpty().take(400)
+                throw IOException("Hermes ${resp.code}: $text")
+            }
+            val source = resp.body?.source() ?: throw IOException("empty response")
+            var eventName: String? = null
+            while (!source.exhausted()) {
+                val line = source.readUtf8Line() ?: break
+                when {
+                    line.startsWith("event:") -> eventName = line.removePrefix("event:").trim()
+                    line.startsWith("data:") -> {
+                        val payload = line.removePrefix("data:").trim()
+                        if (payload == "[DONE]") break
+                        parseResponseEvent(eventName, payload)?.let { emit(it) }
+                    }
+                }
+            }
+        }
+    }.flowOn(Dispatchers.IO)
+
     private fun requireConfig(): Pair<String, String> {
         return requireConfig(tokens.hermesUrl?.trimEnd('/'), tokens.hermesToken)
     }
@@ -196,9 +248,86 @@ class HermesClient(private val tokens: SecureTokenStore) {
         }.getOrElse { trimmed }
     }
 
+    private fun buildResponseRequest(
+        conversationId: String,
+        prompt: String,
+        imageDataUrls: List<String>,
+    ): String {
+        val content = JSONArray().apply {
+            put(JSONObject().put("type", "input_text").put("text", prompt))
+            for (dataUrl in imageDataUrls) {
+                put(JSONObject().put("type", "input_image").put("image_url", dataUrl))
+            }
+        }
+        val input = JSONArray().put(
+            JSONObject()
+                .put("role", "user")
+                .put("content", content),
+        )
+        return JSONObject()
+            .put("model", model)
+            .put("store", true)
+            .put("stream", true)
+            .put("conversation", conversationId)
+            .put("input", input)
+            .toString()
+    }
+
+    private fun parseResponseEvent(eventName: String?, payload: String): HermesResponseEvent? {
+        val obj = runCatching { JSONObject(payload) }.getOrNull() ?: return null
+        val type = obj.optString("type", eventName.orEmpty())
+        return when {
+            type == "response.output_text.delta" -> {
+                val delta = obj.optString("delta", obj.optString("text", ""))
+                if (delta.isBlank()) null else HermesResponseEvent.TextDelta(delta)
+            }
+            type == "response.completed" -> {
+                val response = obj.optJSONObject("response") ?: obj
+                HermesResponseEvent.Completed(
+                    responseId = response.optString("id", null),
+                    outputText = extractOutputText(response),
+                )
+            }
+            type == "response.failed" || type == "error" -> {
+                HermesResponseEvent.Failed(obj.optString("message", obj.toString().take(400)))
+            }
+            type.contains("output_item") || type.contains("tool") || type.contains("function") -> {
+                val item = obj.optJSONObject("item")
+                val label = item?.optString("name")?.takeIf { it.isNotBlank() }
+                    ?: item?.optString("type")?.takeIf { it.isNotBlank() }
+                    ?: type
+                HermesResponseEvent.Progress(label)
+            }
+            else -> null
+        }
+    }
+
+    private fun extractOutputText(response: JSONObject): String {
+        response.optString("output_text", "").takeIf { it.isNotBlank() }?.let { return it }
+        val out = StringBuilder()
+        val output = response.optJSONArray("output") ?: return ""
+        for (i in 0 until output.length()) {
+            val item = output.optJSONObject(i) ?: continue
+            val content = item.optJSONArray("content") ?: continue
+            for (j in 0 until content.length()) {
+                val part = content.optJSONObject(j) ?: continue
+                val text = part.optString("text", part.optString("content", ""))
+                if (text.isNotBlank()) out.append(text)
+            }
+        }
+        return out.toString()
+    }
+
     companion object {
         const val DEFAULT_MODEL = "hermes-agent"
     }
+}
+
+sealed interface HermesResponseEvent {
+    data class TextDelta(val text: String) : HermesResponseEvent
+    data class Progress(val label: String) : HermesResponseEvent
+    data class Completed(val responseId: String?, val outputText: String) : HermesResponseEvent
+    data class Failed(val message: String) : HermesResponseEvent
 }
 
 @Serializable

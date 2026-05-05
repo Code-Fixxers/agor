@@ -37,5 +37,14 @@ class AgorApplication : Application() {
             description = getString(R.string.session_channel_description)
         }
         nm.createNotificationChannel(sessions)
+
+        val hermes = NotificationChannel(
+            NotificationChannels.HERMES,
+            getString(R.string.hermes_channel_name),
+            NotificationManager.IMPORTANCE_DEFAULT,
+        ).apply {
+            description = getString(R.string.hermes_channel_description)
+        }
+        nm.createNotificationChannel(hermes)
     }
 }

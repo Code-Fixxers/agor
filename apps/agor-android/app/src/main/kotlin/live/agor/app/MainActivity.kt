@@ -375,5 +375,9 @@ class MainActivity : ComponentActivity() {
         if (!sessionId.isNullOrBlank()) {
             container.requestOpenSession(sessionId)
         }
+        val hermesSessionId = intent.getStringExtra(AgorNotificationManager.EXTRA_HERMES_SESSION_ID)
+        if (!hermesSessionId.isNullOrBlank()) {
+            container.requestOpenHermesSession(hermesSessionId)
+        }
     }
 }

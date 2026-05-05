@@ -7,4 +7,8 @@
     <string name="voice_notification_text">Listening for your prompts</string>
     <string name="session_channel_name">Session events</string>
     <string name="session_channel_description">Notifications when favorited sessions complete or need attention</string>
+    <string name="hermes_channel_name">Hermes</string>
+    <string name="hermes_channel_description">Hermes background run notifications</string>
+    <string name="hermes_notification_title">Hermes is working</string>
+    <string name="hermes_notification_text">Keeping active Hermes sessions connected</string>
 </resources>

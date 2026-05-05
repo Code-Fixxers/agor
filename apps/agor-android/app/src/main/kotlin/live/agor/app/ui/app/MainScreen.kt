@@ -49,7 +49,7 @@ import live.agor.app.viewmodels.UpdateViewModel
 
 sealed class MainRoute {
     data object EmptyHome : MainRoute()
-    data object Hermes : MainRoute()
+    data class Hermes(val sessionId: String? = null) : MainRoute()
     data object HermesSetup : MainRoute()
     data class Chat(val sessionId: String) : MainRoute()
     data object Settings : MainRoute()
@@ -69,7 +69,7 @@ fun MainScreen(app: AppViewModel) {
     val scope = rememberCoroutineScope()
     // Default to Hermes when configured — that's the orchestrator-first flow.
     // Otherwise fall back to the original empty-home + sidebar entry pattern.
-    val initialRoute: MainRoute = if (container.hermesClient.isConfigured) MainRoute.Hermes
+    val initialRoute: MainRoute = if (container.hermesClient.isConfigured) MainRoute.Hermes()
     else MainRoute.EmptyHome
     var route by remember { mutableStateOf(initialRoute) }
 
@@ -88,6 +88,14 @@ fun MainScreen(app: AppViewModel) {
         app.consumePendingSessionId()
     }
 
+    val pendingHermes by app.pendingHermesSessionId.collectAsState()
+    LaunchedEffect(pendingHermes) {
+        val id = pendingHermes ?: return@LaunchedEffect
+        route = MainRoute.Hermes(id)
+        drawerState.close()
+        app.consumePendingHermesSessionId()
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -104,7 +112,7 @@ fun MainScreen(app: AppViewModel) {
                     },
                     onOpenHermes = {
                         route = if (container.hermesClient.isConfigured) {
-                            MainRoute.Hermes
+                            MainRoute.Hermes()
                         } else {
                             MainRoute.HermesSetup
                         }
@@ -119,27 +127,28 @@ fun MainScreen(app: AppViewModel) {
                 onOpenDrawer = { scope.launch { drawerState.open() } },
                 hermesConfigured = container.hermesClient.isConfigured,
                 onOpenHermes = {
-                    route = if (container.hermesClient.isConfigured) MainRoute.Hermes
+                    route = if (container.hermesClient.isConfigured) MainRoute.Hermes()
                     else MainRoute.HermesSetup
                 },
             )
             is MainRoute.Hermes -> HermesScreen(
+                initialSessionId = r.sessionId,
                 onOpenDrawer = { scope.launch { drawerState.open() } },
                 onOpenSettings = { route = MainRoute.HermesSetup },
             )
             is MainRoute.HermesSetup -> HermesSetupScreen(
-                onClose = { route = if (container.hermesClient.isConfigured) MainRoute.Hermes else MainRoute.EmptyHome },
-                onSaved = { route = MainRoute.Hermes },
+                onClose = { route = if (container.hermesClient.isConfigured) MainRoute.Hermes() else MainRoute.EmptyHome },
+                onSaved = { route = MainRoute.Hermes() },
             )
             is MainRoute.Chat -> ChatScreen(
                 sessionId = r.sessionId,
                 onOpenDrawer = { scope.launch { drawerState.open() } },
-                onClose = { route = if (container.hermesClient.isConfigured) MainRoute.Hermes else MainRoute.EmptyHome },
+                onClose = { route = if (container.hermesClient.isConfigured) MainRoute.Hermes() else MainRoute.EmptyHome },
             )
             is MainRoute.Settings -> SettingsScreen(
                 app = app,
                 onOpenDrawer = { scope.launch { drawerState.open() } },
-                onClose = { route = if (container.hermesClient.isConfigured) MainRoute.Hermes else MainRoute.EmptyHome },
+                onClose = { route = if (container.hermesClient.isConfigured) MainRoute.Hermes() else MainRoute.EmptyHome },
                 onOpenHermesSetup = { route = MainRoute.HermesSetup },
             )
         }
