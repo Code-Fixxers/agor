@@ -64,7 +64,7 @@ class AuthService(
             ?: throw AgorClient.HttpException(0, "Could not reach server at $rawUrl", "")
         client.setBaseUrl(resolved)
         var lastError: Throwable? = null
-        var result = null
+        var result: AgorClient.LoginResult? = null
         var usedEmail: String = canonicalEmail
         for (candidate in emailCandidates) {
             try {

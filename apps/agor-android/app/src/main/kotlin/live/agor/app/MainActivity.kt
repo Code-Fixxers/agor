@@ -12,6 +12,7 @@ import org.json.JSONObject
 import android.util.Base64
 import live.agor.app.notifications.AgorNotificationManager
 import live.agor.app.automation.AutomationProtocol
+import live.agor.app.network.HermesMessage
 import live.agor.app.ui.AgorRootScreen
 import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
@@ -98,20 +99,42 @@ class MainActivity : ComponentActivity() {
                         executeLogin(serverUrl, email, password, apiKey, connectSocket)
                         "Login successful"
                     }
-                    AutomationProtocol.COMMAND_HERMES_TRIGGER -> {
-                        val webhook = json.optString(AutomationProtocol.KEY_HERMES_WEBHOOK, "")
-                        val prompt = json.optString(AutomationProtocol.KEY_HERMES_PROMPT, "")
+                    AutomationProtocol.COMMAND_HERMES_CONFIGURE -> {
+                        configureHermes(json)
+                        "Hermes configured"
+                    }
+                    AutomationProtocol.COMMAND_HERMES_CHAT -> {
+                        val prompt = json.optString(AutomationProtocol.KEY_PROMPT, "")
+                            .ifBlank { json.optString(AutomationProtocol.KEY_HERMES_PROMPT, "") }
                         val rawUrl = json.optString(AutomationProtocol.KEY_HERMES_URL, null)
                         val token = json.optString(AutomationProtocol.KEY_HERMES_TOKEN, null)
-                        container.hermesClient.triggerWebhook(webhook, prompt, rawUrl, token)
-                        "Hermes trigger executed"
+                        val model = json.optString(AutomationProtocol.KEY_HERMES_MODEL, null)
+                        configureHermes(json, requireToken = false)
+                        val reply = container.hermesClient.chat(
+                            listOf(HermesMessage(role = "user", content = prompt)),
+                            rawUrl = rawUrl,
+                            bearer = token,
+                            rawModel = model,
+                        )
+                        "Hermes chat replied: ${reply.take(1_000)}"
+                    }
+                    AutomationProtocol.COMMAND_HERMES_TRIGGER -> {
+                        val webhook = json.optString(AutomationProtocol.KEY_HERMES_WEBHOOK, "")
+                            .ifBlank { json.optString(AutomationProtocol.KEY_WEBHOOK, "") }
+                        val prompt = json.optString(AutomationProtocol.KEY_HERMES_PROMPT, "")
+                            .ifBlank { json.optString(AutomationProtocol.KEY_PROMPT, "") }
+                        val rawUrl = json.optString(AutomationProtocol.KEY_HERMES_URL, null)
+                        val token = json.optString(AutomationProtocol.KEY_HERMES_TOKEN, null)
+                        configureHermes(json, requireToken = false)
+                        val reply = container.hermesClient.triggerWebhook(webhook, prompt, rawUrl, token)
+                        "Hermes trigger replied: ${reply.take(1_000)}"
                     }
                     AutomationProtocol.COMMAND_PING -> "PONG"
                     else -> throw IllegalArgumentException("Unknown automation command: $command")
                 }
 
                 sendAutomationResponse(responseAction, requestId, true, result)
-                AppLogger.log("Automation command [$command] succeeded", LogLevel.INFO, "Automation")
+                AppLogger.log("Automation command [$command] succeeded: $result", LogLevel.INFO, "Automation")
             } catch (t: Throwable) {
                 val message = "Automation command failed: ${t.message}"
                 sendAutomationResponse(
@@ -122,6 +145,25 @@ class MainActivity : ComponentActivity() {
                 )
                 AppLogger.log(message, LogLevel.WARNING, "Automation")
             }
+        }
+    }
+
+    private fun configureHermes(json: JSONObject, requireToken: Boolean = true) {
+        val rawUrl = json.optString(AutomationProtocol.KEY_HERMES_URL, null)
+        val token = json.optString(AutomationProtocol.KEY_HERMES_TOKEN, null)
+        val model = json.optString(AutomationProtocol.KEY_HERMES_MODEL, null)
+
+        if (!rawUrl.isNullOrBlank()) {
+            container.tokenStore.hermesUrl = rawUrl.trim().trimEnd('/')
+        }
+        if (!token.isNullOrBlank()) {
+            container.tokenStore.hermesToken = token.trim()
+        }
+        if (!model.isNullOrBlank()) {
+            container.tokenStore.hermesModel = model.trim()
+        }
+        if (requireToken && (rawUrl.isNullOrBlank() || token.isNullOrBlank())) {
+            throw IllegalArgumentException("Hermes URL and token are required")
         }
     }
 
@@ -290,7 +332,6 @@ class MainActivity : ComponentActivity() {
                     "Automation",
                 )
             }
-        }
     }
 
     private fun handleNativeHermesIntent(intent: Intent?) {

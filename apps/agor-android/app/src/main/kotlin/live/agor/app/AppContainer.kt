@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import live.agor.app.auth.AuthService
+import live.agor.app.auth.BiometricCredentialStore
 import live.agor.app.auth.SecureTokenStore
 import live.agor.app.auth.ServerProfileManager
 import live.agor.app.data.ChatCache

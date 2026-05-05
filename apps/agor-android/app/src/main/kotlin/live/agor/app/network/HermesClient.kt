@@ -64,17 +64,22 @@ class HermesClient(private val tokens: SecureTokenStore) {
     }
 
     /** Send a non-streaming completion request and return the assistant message. */
-    suspend fun chat(messages: List<HermesMessage>): String = kotlinx.coroutines.withContext(Dispatchers.IO) {
-        val (url, bearer) = requireConfig()
+    suspend fun chat(
+        messages: List<HermesMessage>,
+        rawUrl: String? = null,
+        bearer: String? = null,
+        rawModel: String? = null,
+    ): String = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        val (url, token) = requireConfig(rawUrl, bearer)
         val body = ChatCompletionRequest(
-            model = model,
+            model = rawModel?.takeIf { it.isNotBlank() } ?: model,
             messages = messages,
             stream = false,
         )
         val raw = json.encodeToString(ChatCompletionRequest.serializer(), body)
         val req = Request.Builder()
             .url("$url/v1/chat/completions")
-            .header("Authorization", "Bearer $bearer")
+            .header("Authorization", "Bearer $token")
             .header("Accept", "application/json")
             .post(raw.toRequestBody(jsonMedia))
             .build()

@@ -29,8 +29,13 @@ object AutomationProtocol {
     const val KEY_HERMES_PROMPT = "hermesPrompt"
     const val KEY_HERMES_URL = "hermesUrl"
     const val KEY_HERMES_TOKEN = "hermesToken"
+    const val KEY_HERMES_MODEL = "hermesModel"
+    const val KEY_PROMPT = "prompt"
+    const val KEY_WEBHOOK = "webhook"
 
     const val COMMAND_LOGIN = "login"
+    const val COMMAND_HERMES_CONFIGURE = "hermes.configure"
+    const val COMMAND_HERMES_CHAT = "hermes.chat"
     const val COMMAND_HERMES_TRIGGER = "hermes.trigger"
     const val COMMAND_PING = "ping"
 }

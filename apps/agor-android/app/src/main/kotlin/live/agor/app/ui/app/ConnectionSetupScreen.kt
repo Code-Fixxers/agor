@@ -43,6 +43,10 @@ private enum class LoginMode {
 
 private const val DEFAULT_SERVER_URL = "http://192.168.88.116:3030"
 
+private fun normalizeUrl(input: String): String = input.trim().trimEnd('/')
+private fun normalizeEmailForLogin(input: String): String = input.trim()
+private fun canonicalizeEmailForCredentials(input: String): String = input.trim().lowercase()
+
 @Composable
 fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
     val container = LocalAppContainer.current
@@ -164,10 +168,6 @@ fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
             submitBiometricLogin(showError = false)
         }
     }
-
-    fun normalizeUrl(input: String): String = input.trim().trimEnd('/')
-    fun normalizeEmailForLogin(input: String): String = input.trim()
-    fun canonicalizeEmailForCredentials(input: String): String = input.trim().lowercase()
 
     val topInsets = WindowInsets.statusBars.asPaddingValues()
 
