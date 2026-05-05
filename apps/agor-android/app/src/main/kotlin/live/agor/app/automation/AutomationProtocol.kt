@@ -3,8 +3,16 @@ package live.agor.app.automation
 object AutomationProtocol {
     const val ACTION_CONTROL = "live.agor.app.action.AGOR_CONTROL"
     const val EXTRA_COMMAND_JSON = "live.agor.app.extra.CONTROL_COMMAND_JSON"
+    const val EXTRA_COMMAND_JSON_BASE64 = "live.agor.app.extra.CONTROL_COMMAND_JSON_BASE64"
     const val EXTRA_RESPONSE_ACTION = "live.agor.app.extra.CONTROL_RESPONSE_ACTION"
     const val EXTRA_RESPONSE_REQUEST_ID = "live.agor.app.extra.CONTROL_RESPONSE_REQUEST_ID"
+    const val EXTRA_COMMAND = "live.agor.app.extra.COMMAND"
+    const val EXTRA_REQUEST_ID = "live.agor.app.extra.REQUEST_ID"
+    const val EXTRA_SERVER_URL_LEGACY = "live.agor.app.extra.SERVER_URL"
+    const val EXTRA_EMAIL_LEGACY = "live.agor.app.extra.EMAIL"
+    const val EXTRA_PASSWORD_LEGACY = "live.agor.app.extra.PASSWORD"
+    const val EXTRA_API_KEY_LEGACY = "live.agor.app.extra.API_KEY"
+    const val EXTRA_CONNECT_SOCKET_LEGACY = "live.agor.app.extra.CONNECT_SOCKET"
 
     const val KEY_COMMAND = "command"
     const val KEY_REQUEST_ID = "requestId"
