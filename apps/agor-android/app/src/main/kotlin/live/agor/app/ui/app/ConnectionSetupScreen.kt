@@ -41,7 +41,7 @@ private enum class LoginMode {
     ApiKey,
 }
 
-private const val DEFAULT_SERVER_URL = "http://100.101.157.56:3030"
+private const val DEFAULT_SERVER_URL = "http://192.168.88.116:3030"
 
 @Composable
 fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {

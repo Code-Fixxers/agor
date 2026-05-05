@@ -2,7 +2,9 @@ package live.agor.app.ui.chat
 
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.Icon
@@ -24,7 +26,12 @@ fun PromptInputBar(
     enabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Surface(modifier = modifier.fillMaxWidth()) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .imePadding()
+            .navigationBarsPadding(),
+    ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,

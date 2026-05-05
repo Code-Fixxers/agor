@@ -5,7 +5,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import live.agor.app.auth.SecureTokenStore
 import okhttp3.MediaType.Companion.toMediaType
@@ -14,6 +13,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import java.net.URLEncoder
+import kotlin.text.Charsets
 
 /**
  * OpenAI-compatible client for the NousResearch Hermes Agent.
@@ -88,6 +89,44 @@ class HermesClient(private val tokens: SecureTokenStore) {
     }
 
     /**
+     * Trigger a Hermes webhook (`/webhooks/<name>`) with a one-off prompt.
+     *
+     * This maps to Hermes' non-chat execution path and is useful for short,
+     * imperative commands. Supports optional URL/token override for automation
+     * contexts where stored tokens need not be provisioned yet.
+     */
+    suspend fun triggerWebhook(
+        webhook: String,
+        prompt: String,
+        rawUrl: String? = null,
+        bearer: String? = null,
+    ): String = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        val (url, token) = requireConfig(rawUrl, bearer)
+        val name = webhook.trim().trim('/').ifBlank {
+            throw IOException("Webhook route is required")
+        }
+
+        val encodedRoute = URLEncoder.encode(name, Charsets.UTF_8.toString())
+            .replace("+", "%20")
+
+        val reqBody = json.encodeToString(HermesWebhookRequest.serializer(), HermesWebhookRequest(prompt))
+        val req = Request.Builder()
+            .url("$url/webhooks/$encodedRoute")
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/json")
+            .post(reqBody.toRequestBody(jsonMedia))
+            .build()
+
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw IOException("Hermes ${resp.code}: ${text.take(400)}")
+            }
+            parseWebhookResponse(text)
+        }
+    }
+
+    /**
      * Stream chat-completion deltas as a Flow of content chunks.
      *
      * Emits each `choices[0].delta.content` as the SSE data lines arrive. The
@@ -127,9 +166,29 @@ class HermesClient(private val tokens: SecureTokenStore) {
     }.flowOn(Dispatchers.IO)
 
     private fun requireConfig(): Pair<String, String> {
-        val u = tokens.hermesUrl?.trimEnd('/') ?: throw IOException("Hermes URL not configured")
-        val t = tokens.hermesToken ?: throw IOException("Hermes token not configured")
+        return requireConfig(tokens.hermesUrl?.trimEnd('/'), tokens.hermesToken)
+    }
+
+    private fun requireConfig(rawUrl: String?, rawToken: String?): Pair<String, String> {
+        val u = rawUrl?.trimEnd('/') ?: tokens.hermesUrl?.trimEnd('/')
+        val t = rawToken ?: tokens.hermesToken
+        if (u.isNullOrBlank()) throw IOException("Hermes URL not configured")
+        if (t.isNullOrBlank()) throw IOException("Hermes token not configured")
         return u to t
+    }
+
+    private fun parseWebhookResponse(body: String): String {
+        val trimmed = body.trim()
+        if (trimmed.isEmpty()) return ""
+
+        return runCatching {
+            val parsed = json.decodeFromString(WebhookResponse.serializer(), trimmed)
+            parsed.output
+                .ifBlank { parsed.result }
+                .ifBlank { parsed.response }
+                .ifBlank { parsed.message }
+                .ifBlank { parsed.data ?: parsed.raw }
+        }.getOrElse { trimmed }
     }
 
     companion object {
@@ -175,3 +234,16 @@ private data class ModelsResponse(val data: List<ModelEntry>? = null) {
     @Serializable
     data class ModelEntry(val id: String)
 }
+
+@Serializable
+private data class HermesWebhookRequest(val prompt: String)
+
+@Serializable
+private data class WebhookResponse(
+    val output: String = "",
+    val result: String = "",
+    val response: String = "",
+    val message: String = "",
+    val data: String? = null,
+    val raw: String = "",
+)

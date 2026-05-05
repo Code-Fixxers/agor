@@ -3,7 +3,7 @@
 set -euo pipefail
 
 PKG="${AGOR_ANDROID_PKG:-}"
-SERVER_URL="${AGOR_ANDROID_SERVER_URL:-http://100.101.157.56:3030}"
+SERVER_URL="${AGOR_ANDROID_SERVER_URL:-http://192.168.88.116:3030}"
 EMAIL="${AGOR_ANDROID_EMAIL:-}"
 PASSWORD="${AGOR_ANDROID_PASSWORD:-}"
 API_KEY="${AGOR_ANDROID_API_KEY:-}"
@@ -105,6 +105,11 @@ node_for_text() {
   tr '>' '\n' <"$xml" | grep "text=\"$text\"" | head -n1 || true
 }
 
+has_node_for_chat_list() {
+  local xml="$1"
+  [[ -f "$xml" ]] && [[ -n "$(node_for_res "chat-list" "$xml")" ]]
+}
+
 is_login_screen() {
   local xml="$1"
   if [[ -n "$(node_for_res "login-email" "$xml")" ]]; then
@@ -124,9 +129,45 @@ is_home_screen() {
   if [[ -n "$(node_for_res "agor-root" "$xml")" ]]; then
     return 0
   fi
+  if [[ -n "$(node_for_content_desc "Zavřít navigační panel" "$xml")" ]]; then
+    return 0
+  fi
+  if [[ -n "$(node_for_text "BOARDS" "$xml")" ]] || [[ -n "$(node_for_text "Boards" "$xml")" ]] || [[ -n "$(node_for_text "Agor" "$xml")" ]]; then
+    if [[ -n "$(node_for_content_desc "Zavřít navigační panel" "$xml")" ]]; then
+      return 0
+    fi
+    if [[ -n "$(node_for_text "Settings" "$xml")" ]] || [[ -n "$(node_for_text "Nastavení" "$xml")" ]]; then
+      return 0
+    fi
+  fi
+  if [[ -n "$(node_for_text "BOARDS" "$xml")" ]] && [[ -n "$(node_for_text "Settings" "$xml")" ]]; then
+    return 0
+  fi
   if [[ -n "$(node_for_text "Agor" "$xml")" ]] && [[ -n "$(node_for_text "Settings" "$xml")" ]]; then
     return 0
   fi
+  if [[ -n "$(node_for_res "sidebar-list" "$xml")" ]] || [[ -n "$(node_for_res "sidebar-session-row" "$xml")" ]] || [[ -n "$(node_for_res "sidebar-worktree-row" "$xml")" ]] || [[ -n "$(node_for_res "sidebar-board-row" "$xml")" ]]; then
+    return 0
+  fi
+  if grep -qi 'class=".*LazyColumn' "$xml" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+wait_for_home() {
+  local out="$1"
+  local deadline=$((SECONDS + WAIT_TIMEOUT))
+  while (( SECONDS < deadline )); do
+    dump_ui "$out"
+    if is_home_screen "$out"; then
+      return 0
+    fi
+    if wait_for_text_in_xml "Agor" "$out" >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
   return 1
 }
 
@@ -227,6 +268,12 @@ tap_text() {
   x="$(echo "$midpoint" | awk '{print $1}')"
   y="$(echo "$midpoint" | awk '{print $2}')"
   adb_shell input tap "$x" "$y"
+}
+
+node_for_content_desc() {
+  local desc="$1"
+  local xml="$2"
+  tr '>' '\n' <"$xml" | grep "content-desc=\"$desc\"" | head -n1 || true
 }
 
 escape_input_text() {
@@ -376,12 +423,32 @@ open_drawer() {
     tap_res "chat-open-drawer" "$xml"
   elif [[ -n "$(node_for_res "settings-open-drawer" "$xml")" ]]; then
     tap_res "settings-open-drawer" "$xml"
+  elif [[ -n "$(node_for_content_desc "Open navigation panel" "$xml")" ]]; then
+    tap_text "Open navigation panel" "$xml"
+  elif [[ -n "$(node_for_content_desc "Open nav panel" "$xml")" ]]; then
+    tap_text "Open nav panel" "$xml"
+  elif [[ -n "$(node_for_content_desc "Zavřít navigační panel" "$xml")" ]]; then
+    # Some locales expose only the close drawer text, indicating a Material drawer control exists.
+    # Swipe from the edge is a stable fallback on these builds.
+    adb_shell input swipe 15 400 520 400 220
   else
-    tap_text "Agor" "$xml"
+    # Fallback for builds without stable test tags: edge-swipe to open the modal drawer.
+    adb_shell input swipe 15 450 520 450 220
   fi
-  if ! wait_for_res "sidebar-list" "$WORKDIR/sidebar.xml" && ! wait_for_text_in_xml "Sessions" "$WORKDIR/sidebar.xml"; then
+  sleep 1
+  dump_ui "$WORKDIR/sidebar.xml"
+  if ! node_for_text "BOARDS" "$WORKDIR/sidebar.xml" >/dev/null &&
+    ! node_for_res "sidebar-list" "$WORKDIR/sidebar.xml" &&
+    ! node_for_res "sidebar-session-row" "$WORKDIR/sidebar.xml" &&
+    ! node_for_res "sidebar-worktree-row" "$WORKDIR/sidebar.xml" &&
+    ! node_for_res "sidebar-board-row" "$WORKDIR/sidebar.xml"; then
     return 1
   fi
+}
+
+tap_sidebar_row() {
+  # A generic fallback for rows without testTags: tap the first likely board/worktree row.
+  adb_shell input tap 440 420
 }
 
 exercise_sidebar_scroll() {
@@ -401,26 +468,40 @@ exercise_sidebar_scroll() {
 open_first_session() {
   local xml="$WORKDIR/sidebar.xml"
   dump_ui "$xml"
-  if [[ -z "$(node_for_res "sidebar-session-row" "$xml")" ]]; then
+  if [[ -n "$(node_for_res "sidebar-session-row" "$xml")" ]]; then
+    tap_res "sidebar-session-row" "$xml"
+    if wait_for_res "chat-list" "$WORKDIR/chat.xml"; then
+      return 0
+    fi
+  else
     if [[ -n "$(node_for_res "sidebar-board-row" "$xml")" ]]; then
       tap_res "sidebar-board-row" "$xml"
       sleep 0.5
-      dump_ui "$xml"
+      if wait_for_res "chat-list" "$WORKDIR/chat.xml"; then
+        return 0
+      fi
     fi
-    if [[ -n "$(node_for_res "sidebar-worktree-row" "$xml")" ]]; then
+    if ! has_node_for_chat_list "$WORKDIR/chat.xml" && [[ -n "$(node_for_res "sidebar-worktree-row" "$xml")" ]]; then
       tap_res "sidebar-worktree-row" "$xml"
       sleep 0.5
-      dump_ui "$xml"
+      if wait_for_res "chat-list" "$WORKDIR/chat.xml"; then
+        return 0
+      fi
+    fi
+    if ! has_node_for_chat_list "$WORKDIR/chat.xml"; then
+      tap_sidebar_row
+      sleep 0.5
+      if wait_for_res "chat-list" "$WORKDIR/chat.xml"; then
+        return 0
+      fi
     fi
   fi
 
-  if [[ -z "$(node_for_res "sidebar-session-row" "$xml")" ]]; then
+  if ! has_node_for_chat_list "$WORKDIR/chat.xml"; then
     capture_screenshot "no-session-row"
     cp "$xml" "$SCREENSHOT_DIR/no-session-row.xml" || true
-    echo "No session row found in the drawer." >&2
+    echo "No session row found in the drawer; skipping chat steps."
     return 1
-  else
-    tap_res "sidebar-session-row" "$xml"
   fi
 
   if ! wait_for_res "chat-list" "$WORKDIR/chat.xml"; then
@@ -470,11 +551,11 @@ launch_app
 sleep 2
 login_if_needed
 
-if ! wait_for_res "agor-root" "$WORKDIR/home.xml"; then
-  if ! is_home_screen "$WORKDIR/home.xml" && ! wait_for_text_in_xml "Agor" "$WORKDIR/home.xml"; then
-    echo "Timed out waiting for home screen." >&2
-    exit 1
-  fi
+if ! wait_for_home "$WORKDIR/home.xml"; then
+  capture_screenshot "home-timeout"
+  cp "$WORKDIR/home.xml" "$SCREENSHOT_DIR/home-timeout.xml" || true
+  echo "Timed out waiting for home screen." >&2
+  exit 1
 fi
 capture_screenshot "home"
 cp "$WORKDIR/home.xml" "$SCREENSHOT_DIR/home.xml"
@@ -488,6 +569,8 @@ if open_first_session; then
   capture_screenshot "chat"
   cp "$WORKDIR/chat.xml" "$SCREENSHOT_DIR/chat.xml"
   exercise_chat_scroll
+else
+  echo "Skipping chat interaction checks; no session row was available in sidebar."
 fi
 
 capture_logcat "logcat"

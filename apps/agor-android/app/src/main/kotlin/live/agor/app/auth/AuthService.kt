@@ -55,15 +55,34 @@ class AuthService(
         if (normalizedUrl.isBlank() || canonicalEmail.isBlank()) {
             throw AgorClient.HttpException(0, "Server URL and email are required", "")
         }
+        val emailCandidates = buildList {
+            add(canonicalEmail)
+            val lowered = canonicalEmail.lowercase()
+            if (lowered != canonicalEmail) add(lowered)
+        }
         val resolved = client.probeBaseUrl(normalizedUrl)
             ?: throw AgorClient.HttpException(0, "Could not reach server at $rawUrl", "")
         client.setBaseUrl(resolved)
-        val result = client.login(canonicalEmail, password)
-        tokens.lastEmail = canonicalEmail
+        var lastError: Throwable? = null
+        var result = null
+        var usedEmail: String = canonicalEmail
+        for (candidate in emailCandidates) {
+            try {
+                result = client.login(candidate, password)
+                usedEmail = candidate
+                break
+            } catch (t: Throwable) {
+                lastError = t
+            }
+        }
+        if (result == null) throw lastError
+            ?: AgorClient.HttpException(0, "Could not authenticate", "")
+
+        tokens.lastEmail = usedEmail
         _user.value = result.user
         _state.value = AuthState.Authenticated
         runCatching {
-            biometricStore.saveCredentials(resolved, canonicalEmail, password)
+            biometricStore.saveCredentials(resolved, usedEmail, password)
         }.onFailure {
             AppLogger.log(
                 "Failed to persist credentials for biometric login: ${it.message}",
@@ -119,5 +138,5 @@ class AuthService(
     }
 
     private fun normalizeUrl(input: String): String = input.trim().trimEnd('/')
-    private fun normalizeEmailForLogin(input: String): String = input.trim().lowercase()
+    private fun normalizeEmailForLogin(input: String): String = input.trim()
 }
