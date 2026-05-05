@@ -9,6 +9,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import android.util.Base64
 import live.agor.app.notifications.AgorNotificationManager
 import live.agor.app.automation.AutomationProtocol
 import live.agor.app.ui.AgorRootScreen
@@ -64,10 +65,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleControlApiIntent(intent: Intent?) {
-        if (intent?.action != AutomationProtocol.ACTION_CONTROL) return
+        if (intent == null) return
+        if (intent.action != AutomationProtocol.ACTION_CONTROL && !isControlPayloadPresent(intent)) return
 
         val rawCommand = intent.getStringExtra(AutomationProtocol.EXTRA_COMMAND_JSON)
-        if (rawCommand.isNullOrBlank()) {
+        val commandPayload = resolveControlPayload(intent, rawCommand)
+        if (commandPayload == null) {
             AppLogger.log("Automation command rejected: missing payload", LogLevel.WARNING, "Automation")
             return
         }
@@ -76,7 +79,7 @@ class MainActivity : ComponentActivity() {
             var requestId: String? = null
             val responseAction = intent.getStringExtra(AutomationProtocol.EXTRA_RESPONSE_ACTION)
             try {
-                val json = JSONObject(rawCommand)
+                val json = commandPayload
                 val command = json.optString(AutomationProtocol.KEY_COMMAND, "").trim()
                 requestId = json.optString(AutomationProtocol.KEY_REQUEST_ID, null)
 
@@ -119,6 +122,66 @@ class MainActivity : ComponentActivity() {
                 )
                 AppLogger.log(message, LogLevel.WARNING, "Automation")
             }
+        }
+    }
+
+    private fun isControlPayloadPresent(intent: Intent): Boolean {
+        return intent.getStringExtra(AutomationProtocol.EXTRA_COMMAND_JSON).isNullOrBlank().not() ||
+            intent.getStringExtra(AutomationProtocol.EXTRA_COMMAND_JSON_BASE64).isNullOrBlank().not() ||
+            intent.getStringExtra(AutomationProtocol.EXTRA_COMMAND).isNullOrBlank().not()
+    }
+
+    private fun resolveControlPayload(
+        intent: Intent,
+        rawCommand: String?,
+    ): JSONObject? {
+        if (!rawCommand.isNullOrBlank()) {
+            parseCommandJson(rawCommand)?.let {
+                return it
+            }
+        }
+
+        val b64 = intent.getStringExtra(AutomationProtocol.EXTRA_COMMAND_JSON_BASE64)
+        if (!b64.isNullOrBlank()) {
+            return parseCommandJson(
+                runCatching {
+                    String(Base64.decode(b64.trim(), Base64.DEFAULT))
+                }.getOrNull(),
+            )
+        }
+
+        val command = intent.getStringExtra(AutomationProtocol.EXTRA_COMMAND)?.trim()
+        if (command.isNullOrBlank()) return null
+        val json = JSONObject().apply {
+            put(AutomationProtocol.KEY_COMMAND, command)
+            intent.getStringExtra(AutomationProtocol.EXTRA_REQUEST_ID)?.let {
+                put(AutomationProtocol.KEY_REQUEST_ID, it)
+            }
+            intent.getStringExtra(AutomationProtocol.EXTRA_SERVER_URL_LEGACY)?.let {
+                put(AutomationProtocol.KEY_SERVER_URL, it)
+            }
+            intent.getStringExtra(AutomationProtocol.EXTRA_EMAIL_LEGACY)?.let {
+                put(AutomationProtocol.KEY_EMAIL, it)
+            }
+            intent.getStringExtra(AutomationProtocol.EXTRA_PASSWORD_LEGACY)?.let {
+                put(AutomationProtocol.KEY_PASSWORD, it)
+            }
+            intent.getStringExtra(AutomationProtocol.EXTRA_API_KEY_LEGACY)?.let {
+                put(AutomationProtocol.KEY_API_KEY, it)
+            }
+            if (intent.hasExtra(AutomationProtocol.EXTRA_CONNECT_SOCKET_LEGACY)) {
+                put(AutomationProtocol.KEY_CONNECT_SOCKET, intent.getBooleanExtra(AutomationProtocol.EXTRA_CONNECT_SOCKET_LEGACY, true))
+            }
+        }
+        return json
+    }
+
+    private fun parseCommandJson(raw: String?): JSONObject? {
+        if (raw.isNullOrBlank()) return null
+        return try {
+            JSONObject(raw.trim())
+        } catch (_: Throwable) {
+            null
         }
     }
 
