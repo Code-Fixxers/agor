@@ -114,9 +114,10 @@ class VoiceActivityDetector(
     }
 
     private fun ensureModelLoaded() {
-        if (ortSession != null || context == null) return
+        val appContext = context ?: return
+        if (ortSession != null) return
         runCatching {
-            val model = context.assets.open("vad/silero_vad.onnx").use { it.readBytes() }
+            val model = appContext.assets.open("vad/silero_vad.onnx").use { it.readBytes() }
             val env = OrtEnvironment.getEnvironment()
             ortEnv = env
             ortSession = env.createSession(model, OrtSession.SessionOptions())
@@ -151,9 +152,10 @@ class VoiceActivityDetector(
                 inputTensor.close()
                 stateTensor.close()
                 srTensor.close()
-                val probability = firstFloat(result.get(0).get().value)
+                val values = result.toList()
+                val probability = firstFloat(values.getOrNull(0)?.value)
                 if (result.size() > 1) {
-                    sileroState = flattenFloats(result.get(1).get().value, sileroState.size)
+                    sileroState = flattenFloats(values.getOrNull(1)?.value, sileroState.size)
                 }
                 probability
             }

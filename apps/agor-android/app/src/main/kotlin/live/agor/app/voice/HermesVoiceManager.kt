@@ -217,6 +217,13 @@ class HermesVoiceManager(
         val text = result.text.trim()
         if (text.isBlank()) {
             AppLogger.log("Hermes voice ignored blank transcription from ${result.source}", LogLevel.INFO, "Voice")
+            if (result.source == "local-unavailable") {
+                _state.value = _state.value.copy(
+                    phase = HermesVoicePhase.Error,
+                    errorMessage = "Voice transcription is unavailable. Configure Remote Whisper or rebuild with local Whisper.",
+                )
+                return
+            }
             startCaptureIfNeeded()
             return
         }

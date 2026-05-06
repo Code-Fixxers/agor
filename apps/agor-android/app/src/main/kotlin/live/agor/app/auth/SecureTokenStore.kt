@@ -90,6 +90,10 @@ class SecureTokenStore(context: Context) {
         get() = prefs.getString(KEY_BIOMETRIC_PASSWORD_IV, null)
         set(value) = prefs.edit().putString(KEY_BIOMETRIC_PASSWORD_IV, value).apply()
 
+    var biometricPasswordScheme: String?
+        get() = prefs.getString(KEY_BIOMETRIC_PASSWORD_SCHEME, null)
+        set(value) = prefs.edit().putString(KEY_BIOMETRIC_PASSWORD_SCHEME, value).apply()
+
     fun clearTokensKeepUrl() {
         prefs.edit()
             .remove(KEY_ACCESS_TOKEN)
@@ -105,6 +109,7 @@ class SecureTokenStore(context: Context) {
             .remove(KEY_BIOMETRIC_PASSWORD_HASH)
             .remove(KEY_BIOMETRIC_PASSWORD_CIPHERTEXT)
             .remove(KEY_BIOMETRIC_PASSWORD_IV)
+            .remove(KEY_BIOMETRIC_PASSWORD_SCHEME)
             .apply()
     }
 
@@ -128,5 +133,6 @@ class SecureTokenStore(context: Context) {
         const val KEY_BIOMETRIC_PASSWORD_HASH = "biometric_password_hash"
         const val KEY_BIOMETRIC_PASSWORD_CIPHERTEXT = "biometric_password_ciphertext"
         const val KEY_BIOMETRIC_PASSWORD_IV = "biometric_password_iv"
+        const val KEY_BIOMETRIC_PASSWORD_SCHEME = "biometric_password_scheme"
     }
 }

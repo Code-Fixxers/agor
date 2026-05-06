@@ -121,7 +121,7 @@ fun HermesSetupScreen(
             )
 
             Text(
-                "Voice transcription uses bundled local Whisper by default. Optionally set a remote whisper.cpp server for faster transcription; local Whisper is used if it is unavailable.",
+                "Voice transcription uses the bundled local Whisper model when this build includes it. Optionally set a remote whisper.cpp server for faster transcription; local Whisper is used if the remote server is unavailable.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

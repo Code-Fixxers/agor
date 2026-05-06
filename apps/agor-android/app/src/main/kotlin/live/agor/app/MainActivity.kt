@@ -68,6 +68,10 @@ class MainActivity : ComponentActivity() {
     private fun handleControlApiIntent(intent: Intent?) {
         if (intent == null) return
         if (intent.action != AutomationProtocol.ACTION_CONTROL && !isControlPayloadPresent(intent)) return
+        if (!BuildConfig.DEBUG) {
+            AppLogger.log("Automation command rejected: debug builds only", LogLevel.WARNING, "Automation")
+            return
+        }
 
         val rawCommand = intent.getStringExtra(AutomationProtocol.EXTRA_COMMAND_JSON)
         val commandPayload = resolveControlPayload(intent, rawCommand)
@@ -255,6 +259,10 @@ class MainActivity : ComponentActivity() {
 
     private fun handleNativeLoginIntent(intent: Intent?) {
         if (intent?.action != ACTION_NATIVE_LOGIN) return
+        if (!BuildConfig.DEBUG) {
+            AppLogger.log("Native login intent rejected: debug builds only", LogLevel.WARNING, "Auth")
+            return
+        }
 
         val serverUrl = intent.getStringExtra(EXTRA_SERVER_URL)
         val shouldConnectSocket = intent.getBooleanExtra(EXTRA_CONNECT_SOCKET, true)
@@ -336,6 +344,10 @@ class MainActivity : ComponentActivity() {
 
     private fun handleNativeHermesIntent(intent: Intent?) {
         if (intent?.action != ACTION_NATIVE_HERMES_TRIGGER) return
+        if (!BuildConfig.DEBUG) {
+            AppLogger.log("Native Hermes trigger rejected: debug builds only", LogLevel.WARNING, "Hermes")
+            return
+        }
 
         val webhook = intent.getStringExtra(EXTRA_HERMES_WEBHOOK)
         val prompt = intent.getStringExtra(EXTRA_HERMES_PROMPT)

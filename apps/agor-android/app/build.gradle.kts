@@ -43,6 +43,42 @@ val agorVersionCode: Int = (project.findProperty("versionCode") as? String)?.toI
     ?: gitCommitCount()
 val agorVersionName: String = (project.findProperty("versionName") as? String)
     ?: "dev-${gitShortSha()}"
+val skipWhisperBundle: Boolean = System.getenv("SKIP_WHISPER")?.let {
+    it.equals("1") || it.equals("true", ignoreCase = true)
+} ?: false
+val whisperModel: String = (project.findProperty("whisperModel") as? String)
+    ?.takeIf { it.isNotBlank() }
+    ?: "base.en"
+val whisperCppDir = layout.projectDirectory.dir("app/src/main/cpp/whisper.cpp")
+val whisperModelFile = layout.projectDirectory.file("app/src/main/assets/whisper/ggml-$whisperModel.bin")
+
+val syncWhisperCpp = tasks.register("syncWhisperCpp") {
+    group = "agor"
+    description = "Vendors whisper.cpp for on-device transcription unless SKIP_WHISPER=1."
+    outputs.dir(whisperCppDir)
+    onlyIf {
+        !skipWhisperBundle && !whisperCppDir.asFile.resolve("CMakeLists.txt").exists()
+    }
+    doLast {
+        exec {
+            commandLine("bash", "scripts/sync-whisper.sh")
+        }
+    }
+}
+
+val fetchWhisperModel = tasks.register("fetchWhisperModel") {
+    group = "agor"
+    description = "Downloads the ignored ggml Whisper model artifact unless SKIP_WHISPER=1."
+    outputs.file(whisperModelFile)
+    onlyIf {
+        !skipWhisperBundle && !whisperModelFile.asFile.exists()
+    }
+    doLast {
+        exec {
+            commandLine("bash", "scripts/fetch-whisper-model.sh", whisperModel)
+        }
+    }
+}
 
 android {
     namespace = "live.agor.app"
@@ -82,7 +118,10 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags += "-std=c++17"
-                arguments += listOf("-DANDROID_STL=c++_shared")
+                arguments += listOf(
+                    "-DANDROID_STL=c++_shared",
+                    "-DAGOR_SKIP_WHISPER=${if (skipWhisperBundle) "ON" else "OFF"}",
+                )
             }
         }
 
@@ -147,6 +186,17 @@ android {
         }
         jniLibs {
             useLegacyPackaging = false
+        }
+    }
+}
+
+if (!skipWhisperBundle) {
+    tasks.named("preBuild").configure {
+        dependsOn(syncWhisperCpp, fetchWhisperModel)
+    }
+    tasks.configureEach {
+        if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) {
+            dependsOn(syncWhisperCpp)
         }
     }
 }
