@@ -18,6 +18,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -25,9 +26,13 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import live.agor.app.BuildConfig
@@ -145,6 +150,8 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(8.dp))
+            GithubTokenRow()
+            Spacer(Modifier.height(8.dp))
             UpdateRow()
 
             Spacer(Modifier.height(24.dp))
@@ -154,6 +161,67 @@ fun SettingsScreen(
             TextButton(onClick = app::logout, modifier = Modifier.fillMaxWidth().testTag("settings-sign-out")) {
                 Text("Sign out")
             }
+        }
+    }
+}
+
+@Composable
+private fun GithubTokenRow() {
+    val container = LocalAppContainer.current
+    var token by remember { mutableStateOf(container.tokenStore.githubToken.orEmpty()) }
+    var saved by remember { mutableStateOf(false) }
+
+    Text(
+        "GitHub token for update checks",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "Optional. Used only for GitHub release metadata/APK requests to avoid anonymous rate limits.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(6.dp))
+    OutlinedTextField(
+        value = token,
+        onValueChange = {
+            token = it
+            saved = false
+        },
+        label = { Text("GitHub token") },
+        singleLine = true,
+        visualTransformation = PasswordVisualTransformation(),
+        modifier = Modifier.fillMaxWidth().testTag("settings-github-token"),
+    )
+    Spacer(Modifier.height(4.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TextButton(
+            onClick = {
+                container.tokenStore.githubToken = token.trim()
+                token = container.tokenStore.githubToken.orEmpty()
+                saved = true
+            },
+            modifier = Modifier.testTag("settings-save-github-token"),
+        ) {
+            Text("Save token")
+        }
+        TextButton(
+            onClick = {
+                container.tokenStore.githubToken = null
+                token = ""
+                saved = true
+            },
+            modifier = Modifier.testTag("settings-clear-github-token"),
+        ) {
+            Text("Clear")
+        }
+        if (saved) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Saved",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }

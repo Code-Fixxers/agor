@@ -6,6 +6,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import live.agor.app.BuildConfig
+import live.agor.app.auth.SecureTokenStore
 import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
 import okhttp3.OkHttpClient
@@ -19,10 +20,12 @@ import okhttp3.Request
  * The manifest path avoids GitHub's unauthenticated API rate limit; the Releases
  * API remains as a fallback for older releases that do not have the manifest yet.
  *
- * No auth required.
+ * A GitHub token is optional but recommended: when configured in Settings, it is
+ * attached to GitHub requests to avoid anonymous API/download rate limits.
  */
 class UpdateChecker(
     private val http: OkHttpClient,
+    private val tokens: SecureTokenStore,
     private val currentVersionCode: Int = BuildConfig.VERSION_CODE_FIELD,
     private val manifestUrl: String = BuildConfig.UPDATE_MANIFEST_URL,
     private val apkUrl: String = BuildConfig.UPDATE_APK_URL,
@@ -67,6 +70,7 @@ class UpdateChecker(
             val req = Request.Builder()
                 .url(manifestUrl)
                 .header("Cache-Control", "no-cache")
+                .withGithubAuth(manifestUrl)
                 .build()
             http.newCall(req).execute().use { resp ->
                 if (resp.code == 404) return null
@@ -97,6 +101,8 @@ class UpdateChecker(
             val req = Request.Builder()
                 .url(releaseUrl)
                 .header("Accept", "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .withGithubAuth(releaseUrl)
                 .build()
             http.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
@@ -137,6 +143,15 @@ class UpdateChecker(
             RegexOption.IGNORE_CASE,
         ).find(body) ?: return null
         return match.groupValues[1].toIntOrNull()
+    }
+
+    private fun Request.Builder.withGithubAuth(url: String): Request.Builder {
+        if (!url.contains("github.com", ignoreCase = true)) return this
+        val token = tokens.githubToken?.trim().orEmpty()
+        if (token.isNotBlank()) {
+            header("Authorization", "Bearer $token")
+        }
+        return this
     }
 }
 

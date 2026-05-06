@@ -56,6 +56,11 @@ class SecureTokenStore(context: Context) {
         get() = prefs.getString(KEY_HERMES_MODEL, null)
         set(value) = prefs.edit().putString(KEY_HERMES_MODEL, value).apply()
 
+    /** Optional GitHub token used by the in-app updater to avoid anonymous API rate limits. */
+    var githubToken: String?
+        get() = prefs.getString(KEY_GITHUB_TOKEN, null)
+        set(value) = prefs.edit().putString(KEY_GITHUB_TOKEN, value?.takeIf { it.isNotBlank() }).apply()
+
     /** Optional self-hosted whisper.cpp server URL for faster voice transcription. */
     var remoteWhisperUrl: String?
         get() = prefs.getString(KEY_REMOTE_WHISPER_URL, null)
@@ -130,6 +135,7 @@ class SecureTokenStore(context: Context) {
         const val KEY_HERMES_URL = "hermes_url"
         const val KEY_HERMES_TOKEN = "hermes_token"
         const val KEY_HERMES_MODEL = "hermes_model"
+        const val KEY_GITHUB_TOKEN = "github_token"
         const val KEY_REMOTE_WHISPER_URL = "remote_whisper_url"
         const val KEY_REMOTE_WHISPER_TOKEN = "remote_whisper_token"
         const val KEY_BIOMETRIC_ENABLED = "biometric_enabled"

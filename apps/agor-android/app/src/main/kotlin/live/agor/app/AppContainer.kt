@@ -55,8 +55,8 @@ class AppContainer(context: Context) {
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
-    val updateChecker: UpdateChecker = UpdateChecker(updateHttp)
-    val updateInstaller: UpdateInstaller = UpdateInstaller(appContext, updateHttp)
+    val updateChecker: UpdateChecker = UpdateChecker(updateHttp, tokenStore)
+    val updateInstaller: UpdateInstaller = UpdateInstaller(appContext, updateHttp, tokenStore)
 
     private val _pendingSessionId = MutableStateFlow<String?>(null)
     /** Latest session id requested by an external entry point (notification / deep-link). */
