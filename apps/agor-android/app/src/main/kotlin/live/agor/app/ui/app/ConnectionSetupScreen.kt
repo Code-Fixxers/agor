@@ -96,7 +96,27 @@ fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
                 container.authService.login(normalizedUrl, normalizedEmail, rawPassword)
             }.onSuccess {
                 busy = false
-                onLoginSuccess()
+                val savedUrl = container.tokenStore.serverUrl ?: normalizedUrl
+                val savedEmail = container.tokenStore.lastEmail ?: normalizedEmail
+                if (
+                    activity != null &&
+                    container.biometricStore.canEnrollBiometrics() &&
+                    !container.biometricStore.canUnlockFor(savedUrl, canonicalizeEmailForCredentials(savedEmail))
+                ) {
+                    busy = true
+                    container.biometricStore.authenticateToSaveCredentials(
+                        activity = activity,
+                        serverUrl = savedUrl,
+                        email = savedEmail,
+                        password = rawPassword,
+                    ) { _, reason ->
+                        busy = false
+                        if (showError && !reason.isNullOrBlank()) error = reason
+                        onLoginSuccess()
+                    }
+                } else {
+                    onLoginSuccess()
+                }
             }.onFailure { throwable ->
                 busy = false
                 if (showError) error = throwable.message ?: "Login failed"
