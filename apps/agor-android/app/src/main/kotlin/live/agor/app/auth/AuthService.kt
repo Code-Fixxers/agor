@@ -81,15 +81,6 @@ class AuthService(
         tokens.lastEmail = usedEmail
         _user.value = result.user
         _state.value = AuthState.Authenticated
-        runCatching {
-            biometricStore.saveCredentials(resolved, usedEmail, password)
-        }.onFailure {
-            AppLogger.log(
-                "Failed to persist credentials for biometric login: ${it.message}",
-                LogLevel.WARNING,
-                "Auth",
-            )
-        }
         // Save profile
         runCatching {
             val list = profiles.profiles.first()
