@@ -44,21 +44,6 @@
             </intent-filter>
 
             <intent-filter>
-                <action android:name="live.agor.app.action.NATIVE_LOGIN" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-
-            <intent-filter>
-                <action android:name="live.agor.app.action.NATIVE_HERMES_TRIGGER" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-
-            <intent-filter>
-                <action android:name="live.agor.app.action.AGOR_CONTROL" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-
-            <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
@@ -75,14 +60,6 @@
             android:name=".hermes.HermesForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
-
-        <receiver
-            android:name=".automation.HermesControlReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="live.agor.app.action.AGOR_CONTROL" />
-            </intent-filter>
-        </receiver>
 
         <!-- Hands the downloaded APK file to the system installer via a content:// URI.
              The application id has the ".debug" suffix on debug builds, so the authority

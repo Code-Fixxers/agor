@@ -1,6 +1,7 @@
 package live.agor.app.auth
 
 import android.content.Context
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -8,17 +9,21 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import java.security.KeyPair
+import java.security.KeyPairGenerator
+import java.security.KeyFactory
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.security.PrivateKey
+import java.security.PublicKey
+import java.security.spec.X509EncodedKeySpec
 import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 
-private const val KEY_ALIAS = "agor_password_vault"
-private const val KEY_TRANSFORMATION = "AES/GCM/NoPadding"
-private const val KEY_TAG_BITS = 128
+private const val KEY_ALIAS = "agor_password_vault_rsa"
+private const val KEY_TRANSFORMATION = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding"
 private const val KEY_STORE = "AndroidKeyStore"
+private const val KEY_SIZE_BITS = 2048
+private const val PASSWORD_SCHEME_RSA_OAEP = "rsa-oaep-sha256-biometric-v1"
 
 class BiometricCredentialStore(
     private val context: Context,
@@ -28,8 +33,8 @@ class BiometricCredentialStore(
     val canUnlock: Boolean
         get() = tokenStore.biometricEnabled &&
             tokenStore.biometricPasswordCipherText != null &&
-            tokenStore.biometricPasswordIv != null &&
-            tokenStore.biometricPasswordHash != null
+            tokenStore.biometricPasswordHash != null &&
+            tokenStore.biometricPasswordScheme == PASSWORD_SCHEME_RSA_OAEP
 
     fun canUnlockFor(serverUrl: String, email: String): Boolean {
         if (!canUnlock) return false
@@ -53,7 +58,8 @@ class BiometricCredentialStore(
         tokenStore.biometricEmail = normalizedEmail
         tokenStore.biometricPasswordHash = hashPassword(password)
         tokenStore.biometricPasswordCipherText = encode(encrypted)
-        tokenStore.biometricPasswordIv = encode(cipher.iv)
+        tokenStore.biometricPasswordIv = null
+        tokenStore.biometricPasswordScheme = PASSWORD_SCHEME_RSA_OAEP
     }
 
     fun clearStoredCredentials() {
@@ -63,6 +69,7 @@ class BiometricCredentialStore(
         tokenStore.biometricPasswordHash = null
         tokenStore.biometricPasswordCipherText = null
         tokenStore.biometricPasswordIv = null
+        tokenStore.biometricPasswordScheme = null
     }
 
     fun authenticateWithBiometrics(
@@ -77,10 +84,11 @@ class BiometricCredentialStore(
 
         val ciphertext = tokenStore.biometricPasswordCipherText
             ?: return onFailure("No saved password available.")
-        val iv = runCatching { decode(tokenStore.biometricPasswordIv) }.getOrNull()
-            ?: return onFailure("Stored credentials are corrupted.")
+        if (tokenStore.biometricPasswordScheme != PASSWORD_SCHEME_RSA_OAEP) {
+            return onFailure("Saved biometric credentials need to be refreshed.")
+        }
 
-        val decryptCipher = runCatching { createDecryptCipher(iv) }.getOrNull()
+        val decryptCipher = runCatching { createDecryptCipher() }.getOrNull()
             ?: return onFailure("Unable to initialize biometric storage.")
 
         val cipherTextBytes = runCatching { decode(ciphertext) }.getOrNull()
@@ -118,12 +126,14 @@ class BiometricCredentialStore(
             .setTitle("Sign in")
             .setSubtitle("Use biometrics to unlock your saved credentials")
             .setNegativeButtonText("Use password")
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
             .build()
         prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(decryptCipher))
     }
 
     private fun isBiometricAvailable(): Boolean {
-        return BiometricManager.from(context).canAuthenticate() == BiometricManager.BIOMETRIC_SUCCESS
+        return BiometricManager.from(context)
+            .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
     }
 
     private fun normalize(url: String): String = url.trim().trimEnd('/')
@@ -131,44 +141,57 @@ class BiometricCredentialStore(
     private fun createEncryptCipher(): Cipher {
         val cipher = Cipher.getInstance(KEY_TRANSFORMATION)
         runCatching {
-            cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
+            cipher.init(Cipher.ENCRYPT_MODE, unrestrictedPublicKey(getOrCreateKeyPair().public))
             return cipher
         }
 
-        deleteSecretKey()
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
+        deleteKeyPair()
+        cipher.init(Cipher.ENCRYPT_MODE, unrestrictedPublicKey(getOrCreateKeyPair().public))
         return cipher
     }
 
-    private fun createDecryptCipher(iv: ByteArray): Cipher {
-        val key = getOrCreateSecretKey()
+    private fun createDecryptCipher(): Cipher {
+        val key = getOrCreateKeyPair().private
         val cipher = Cipher.getInstance(KEY_TRANSFORMATION)
-        val spec = GCMParameterSpec(KEY_TAG_BITS, iv)
-        cipher.init(Cipher.DECRYPT_MODE, key, spec)
+        cipher.init(Cipher.DECRYPT_MODE, key)
         return cipher
     }
 
-    private fun getOrCreateSecretKey(): SecretKey {
+    private fun getOrCreateKeyPair(): KeyPair {
         val keyStore = KeyStore.getInstance(KEY_STORE)
         keyStore.load(null)
-        keyStore.getKey(KEY_ALIAS, null)?.let { return it as SecretKey }
+        val privateKey = keyStore.getKey(KEY_ALIAS, null) as? PrivateKey
+        val publicKey = keyStore.getCertificate(KEY_ALIAS)?.publicKey
+        if (privateKey != null && publicKey != null) return KeyPair(publicKey, privateKey)
 
-        val keyGen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEY_STORE)
+        val keyGen = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, KEY_STORE)
         val spec = KeyGenParameterSpec.Builder(
             KEY_ALIAS,
             KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
         ).apply {
-            setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-            setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-            setRandomizedEncryptionRequired(true)
-            setUserAuthenticationRequired(false)
+            setKeySize(KEY_SIZE_BITS)
+            setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512)
+            setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
+            setUserAuthenticationRequired(true)
+            setInvalidatedByBiometricEnrollment(true)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
+            } else {
+                @Suppress("DEPRECATION")
+                setUserAuthenticationValidityDurationSeconds(-1)
+            }
         }.build()
 
-        keyGen.init(spec)
-        return keyGen.generateKey()
+        keyGen.initialize(spec)
+        return keyGen.generateKeyPair()
     }
 
-    private fun deleteSecretKey() {
+    private fun unrestrictedPublicKey(publicKey: PublicKey): PublicKey {
+        val spec = X509EncodedKeySpec(publicKey.encoded)
+        return KeyFactory.getInstance(publicKey.algorithm).generatePublic(spec)
+    }
+
+    private fun deleteKeyPair() {
         runCatching {
             val keyStore = KeyStore.getInstance(KEY_STORE)
             keyStore.load(null)

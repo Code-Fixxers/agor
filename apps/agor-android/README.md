@@ -27,7 +27,7 @@ in Kotlin + Jetpack Compose.
 | Images | Coil |
 | Secure storage | `androidx.security:security-crypto` |
 | TTS | Android `TextToSpeech` |
-| ASR | bundled whisper.cpp `base.en` via NDK/JNI; optional remote whisper.cpp fallback |
+| ASR | build-fetched whisper.cpp `base.en` via NDK/JNI; optional remote whisper.cpp fallback |
 | Voice service | Foreground service (`microphone | mediaPlayback`) |
 
 Min SDK 28 (Android 9), target SDK 35 (Android 15).
@@ -39,10 +39,12 @@ Min SDK 28 (Android 9), target SDK 35 (Android 15).
 * **Android Studio Ladybug or newer**, or a CLI toolchain with:
   * JDK 17
   * Android SDK platform 35 + build-tools 35.0.0
-  * NDK 27.x (for whisper.cpp, only needed if you want on-device transcription)
+  * NDK 27.x (for whisper.cpp; set `SKIP_WHISPER=1` to build without local transcription)
   * `cmake 3.22.1+`
 
-The first build will download AGP 8.7.x, Gradle 8.11.1, and Compose BOM 2024.12.
+The first build will download AGP 8.7.x, Gradle 8.11.1, Compose BOM 2024.12,
+whisper.cpp, and the ignored `ggml-base.en.bin` model artifact unless
+`SKIP_WHISPER=1` is set.
 
 ## Build & run
 
@@ -88,27 +90,28 @@ download the zip, then `adb install -r` the APK inside.
 
 ## On-device transcription
 
-Voice mode uses a local `ggml-base.en.bin` from `app/src/main/assets/whisper/`
-when that ignored artifact is present, then copies it to app-private storage on
-first use. For native whisper.cpp inference, the C++ sources must still be
-present when building:
+Voice mode uses a local `ggml-base.en.bin` from `app/src/main/assets/whisper/`,
+then copies it to app-private storage on first use. The Gradle build fetches
+both whisper.cpp and that ignored model artifact by default; set
+`SKIP_WHISPER=1` only when you intentionally want remote-only transcription.
 
 ```bash
-# 1. Vendor whisper.cpp into the source tree
+# Optional: manually refresh whisper.cpp in the source tree
 cd apps/agor-android
 scripts/sync-whisper.sh
 
-# 2. Download the ignored ggml model artifact if local STT is needed
+# Optional: manually refresh the ignored ggml model artifact
 scripts/fetch-whisper-model.sh base.en
 
-# 3. Rebuild — the NDK toolchain will pick up the source tree
+# Rebuild — the NDK toolchain will pick up the source tree
 ./gradlew :app:assembleDebug
 ```
 
-If `whisper.cpp/` or the local model isn't present, the JNI library still
-compiles as a no-op stub and local transcription returns empty text. Hermes
-settings also accept an optional remote whisper.cpp `/inference` endpoint; if
-that endpoint fails, the app falls back to local Whisper when available.
+If `SKIP_WHISPER=1` is set or the local assets are otherwise unavailable, the
+JNI library still compiles as a no-op stub and the voice UI reports local
+transcription as unavailable. Hermes settings also accept an optional remote
+whisper.cpp `/inference` endpoint; if that endpoint fails, the app falls back to
+local Whisper when available.
 
 ## Project structure
 
