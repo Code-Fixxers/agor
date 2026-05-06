@@ -60,6 +60,14 @@ class TextToSpeechService(context: Context) {
         tts.speak(text, TextToSpeech.QUEUE_ADD, null, id)
     }
 
+    fun speakStatus(text: String) {
+        if (!ready.get() || _paused.value) return
+        val id = UUID.randomUUID().toString()
+        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+    }
+
+    fun speakStreamChunk(text: String) = speakIntermediate(text)
+
     fun speakFinal(text: String) {
         if (!ready.get() || _paused.value) return
         val id = UUID.randomUUID().toString()
@@ -68,6 +76,11 @@ class TextToSpeechService(context: Context) {
 
     fun pause() {
         _paused.value = true
+        tts.stop()
+        _speaking.value = false
+    }
+
+    fun stop() {
         tts.stop()
         _speaking.value = false
     }

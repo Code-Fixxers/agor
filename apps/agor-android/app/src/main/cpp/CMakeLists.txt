@@ -5,7 +5,7 @@ project("agor_voice")
 # We don't pin a specific commit here — see scripts/sync-whisper.sh.
 #
 # If the directory is missing, build a no-op stub so the JNI lib still links and the
-# Kotlin side can fall back to Android's SpeechRecognizer.
+# Kotlin side can use remote Whisper or treat local transcription as unavailable.
 
 set(WHISPER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/whisper.cpp")
 

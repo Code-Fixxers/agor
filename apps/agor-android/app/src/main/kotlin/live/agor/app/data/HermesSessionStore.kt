@@ -2,8 +2,12 @@ package live.agor.app.data
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -25,6 +29,12 @@ class HermesSessionStore(
     private var loadedKey: String? = null
     private val _sessions = MutableStateFlow<List<HermesSession>>(emptyList())
     val sessions: StateFlow<List<HermesSession>> = _sessions.asStateFlow()
+    private val _events = MutableSharedFlow<HermesSessionEvent>(
+        replay = 0,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val events: SharedFlow<HermesSessionEvent> = _events.asSharedFlow()
 
     suspend fun load(): List<HermesSession> = mutex.withLock {
         loadLocked()
@@ -94,6 +104,7 @@ class HermesSessionStore(
     suspend fun appendAssistantDelta(sessionId: String, turnId: String, delta: String) {
         if (delta.isEmpty()) return
         updateTurn(sessionId, turnId) { turn -> turn.copy(content = turn.content + delta, streaming = true) }
+        _events.tryEmit(HermesSessionEvent.TextDelta(sessionId, turnId, delta))
     }
 
     suspend fun appendProgress(sessionId: String, turnId: String, label: String) {
@@ -101,6 +112,7 @@ class HermesSessionStore(
             if (turn.progress.lastOrNull()?.label == label) turn
             else turn.copy(progress = turn.progress + HermesProgressItem(label = label, atMillis = System.currentTimeMillis()))
         }
+        _events.tryEmit(HermesSessionEvent.Progress(sessionId, turnId, label))
     }
 
     suspend fun completeAssistant(
@@ -109,10 +121,14 @@ class HermesSessionStore(
         responseId: String?,
         finalText: String?,
     ) {
+        var completedText = ""
         val now = System.currentTimeMillis()
         update { sessions ->
             sessions.map { session ->
                 if (session.id != sessionId) return@map session
+                completedText = finalText?.takeIf { it.isNotBlank() }
+                    ?: session.turns.firstOrNull { it.id == turnId }?.content
+                    ?: ""
                 session.copy(
                     updatedAtMillis = now,
                     active = false,
@@ -127,6 +143,7 @@ class HermesSessionStore(
                 )
             }.sortedByDescending { it.updatedAtMillis }
         }
+        _events.tryEmit(HermesSessionEvent.Completed(sessionId, turnId, completedText))
     }
 
     suspend fun failAssistant(sessionId: String, turnId: String, message: String) {
@@ -144,6 +161,7 @@ class HermesSessionStore(
                 )
             }.sortedByDescending { it.updatedAtMillis }
         }
+        _events.tryEmit(HermesSessionEvent.Failed(sessionId, turnId, message))
     }
 
     suspend fun cancelSession(sessionId: String) {
@@ -258,6 +276,35 @@ data class HermesProgressItem(
     val label: String,
     @SerialName("at") val atMillis: Long,
 )
+
+sealed interface HermesSessionEvent {
+    val sessionId: String
+    val turnId: String
+
+    data class TextDelta(
+        override val sessionId: String,
+        override val turnId: String,
+        val text: String,
+    ) : HermesSessionEvent
+
+    data class Progress(
+        override val sessionId: String,
+        override val turnId: String,
+        val label: String,
+    ) : HermesSessionEvent
+
+    data class Completed(
+        override val sessionId: String,
+        override val turnId: String,
+        val text: String,
+    ) : HermesSessionEvent
+
+    data class Failed(
+        override val sessionId: String,
+        override val turnId: String,
+        val message: String,
+    ) : HermesSessionEvent
+}
 
 private fun String.sha256(): String {
     val bytes = MessageDigest.getInstance("SHA-256").digest(toByteArray(Charsets.UTF_8))

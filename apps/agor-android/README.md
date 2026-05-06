@@ -27,7 +27,7 @@ in Kotlin + Jetpack Compose.
 | Images | Coil |
 | Secure storage | `androidx.security:security-crypto` |
 | TTS | Android `TextToSpeech` |
-| ASR | whisper.cpp via NDK/JNI; `SpeechRecognizer` fallback |
+| ASR | bundled whisper.cpp `base.en` via NDK/JNI; optional remote whisper.cpp fallback |
 | Voice service | Foreground service (`microphone | mediaPlayback`) |
 
 Min SDK 28 (Android 9), target SDK 35 (Android 15).
@@ -76,7 +76,7 @@ cd apps/agor-android
 ```
 
 Set `SKIP_WHISPER=1` before `nix run` to skip vendoring `whisper.cpp` (faster
-build, on-device transcription falls back to `SpeechRecognizer`).
+build, local voice transcription is unavailable unless remote Whisper is configured).
 
 ### CI (GitHub Actions)
 
@@ -86,29 +86,29 @@ debug APK and uploads it as a downloadable artifact named
 `agor-android-debug-<short-sha>`. Open the Actions run, scroll to **Artifacts**,
 download the zip, then `adb install -r` the APK inside.
 
-## On-device transcription (optional)
+## On-device transcription
 
-By default, voice mode uses Android's built-in `SpeechRecognizer`. For private,
-on-device transcription via whisper.cpp:
+Voice mode uses a local `ggml-base.en.bin` from `app/src/main/assets/whisper/`
+when that ignored artifact is present, then copies it to app-private storage on
+first use. For native whisper.cpp inference, the C++ sources must still be
+present when building:
 
 ```bash
 # 1. Vendor whisper.cpp into the source tree
 cd apps/agor-android
 scripts/sync-whisper.sh
 
-# 2. Download a ggml model (≈140MB for base.en)
+# 2. Download the ignored ggml model artifact if local STT is needed
 scripts/fetch-whisper-model.sh base.en
 
-# 3. Push the model to the device's app storage
-adb push app/src/main/assets/whisper/ggml-base.en.bin /sdcard/Android/data/live.agor.app.debug/files/whisper/
-
-# 4. Rebuild — the NDK toolchain will pick up the source tree
+# 3. Rebuild — the NDK toolchain will pick up the source tree
 ./gradlew :app:assembleDebug
 ```
 
-If `whisper.cpp/` isn't present at build time, the JNI library still compiles as a
-no-op stub and the app falls back to the platform recognizer at runtime — no
-behaviour change for users without on-device support.
+If `whisper.cpp/` or the local model isn't present, the JNI library still
+compiles as a no-op stub and local transcription returns empty text. Hermes
+settings also accept an optional remote whisper.cpp `/inference` endpoint; if
+that endpoint fails, the app falls back to local Whisper when available.
 
 ## Project structure
 

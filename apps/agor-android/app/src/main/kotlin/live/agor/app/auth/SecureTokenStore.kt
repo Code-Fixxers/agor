@@ -56,6 +56,16 @@ class SecureTokenStore(context: Context) {
         get() = prefs.getString(KEY_HERMES_MODEL, null)
         set(value) = prefs.edit().putString(KEY_HERMES_MODEL, value).apply()
 
+    /** Optional self-hosted whisper.cpp server URL for faster voice transcription. */
+    var remoteWhisperUrl: String?
+        get() = prefs.getString(KEY_REMOTE_WHISPER_URL, null)
+        set(value) = prefs.edit().putString(KEY_REMOTE_WHISPER_URL, value).apply()
+
+    /** Optional bearer token for the self-hosted whisper.cpp server. */
+    var remoteWhisperToken: String?
+        get() = prefs.getString(KEY_REMOTE_WHISPER_TOKEN, null)
+        set(value) = prefs.edit().putString(KEY_REMOTE_WHISPER_TOKEN, value).apply()
+
     var biometricEnabled: Boolean
         get() = prefs.getBoolean(KEY_BIOMETRIC_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_BIOMETRIC_ENABLED, value).apply()
@@ -110,6 +120,8 @@ class SecureTokenStore(context: Context) {
         const val KEY_HERMES_URL = "hermes_url"
         const val KEY_HERMES_TOKEN = "hermes_token"
         const val KEY_HERMES_MODEL = "hermes_model"
+        const val KEY_REMOTE_WHISPER_URL = "remote_whisper_url"
+        const val KEY_REMOTE_WHISPER_TOKEN = "remote_whisper_token"
         const val KEY_BIOMETRIC_ENABLED = "biometric_enabled"
         const val KEY_BIOMETRIC_SERVER_URL = "biometric_server_url"
         const val KEY_BIOMETRIC_EMAIL = "biometric_email"

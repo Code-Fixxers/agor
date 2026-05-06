@@ -4,7 +4,7 @@ package live.agor.app.voice.jni
  * Thin JNI binding for whisper.cpp. The native library is named `agor_voice` and
  * is built by app/src/main/cpp/CMakeLists.txt. If whisper.cpp is not vendored, the
  * native library still loads but `nativeAvailable()` returns false — the caller
- * should fall back to Android SpeechRecognizer in that case.
+ * should use remote Whisper or treat local transcription as unavailable.
  */
 class WhisperJni {
 

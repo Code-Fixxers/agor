@@ -58,6 +58,8 @@ fun HermesSetupScreen(
     var url by remember { mutableStateOf(container.tokenStore.hermesUrl ?: "") }
     var token by remember { mutableStateOf(container.tokenStore.hermesToken ?: "") }
     var model by remember { mutableStateOf(container.tokenStore.hermesModel ?: HermesClient.DEFAULT_MODEL) }
+    var whisperUrl by remember { mutableStateOf(container.tokenStore.remoteWhisperUrl ?: "") }
+    var whisperToken by remember { mutableStateOf(container.tokenStore.remoteWhisperToken ?: "") }
     var probing by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var statusOk by remember { mutableStateOf(false) }
@@ -118,6 +120,32 @@ fun HermesSetupScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
 
+            Text(
+                "Voice transcription uses bundled local Whisper by default. Optionally set a remote whisper.cpp server for faster transcription; local Whisper is used if it is unavailable.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            OutlinedTextField(
+                value = whisperUrl,
+                onValueChange = { whisperUrl = it },
+                label = { Text("Remote Whisper URL") },
+                placeholder = { Text("http://host:8080") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            OutlinedTextField(
+                value = whisperToken,
+                onValueChange = { whisperToken = it },
+                label = { Text("Remote Whisper token") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             status?.let {
                 Text(
                     it,
@@ -160,6 +188,8 @@ fun HermesSetupScreen(
                         container.tokenStore.hermesUrl = url.trim().trimEnd('/')
                         container.tokenStore.hermesToken = token.trim()
                         container.tokenStore.hermesModel = model.trim().ifBlank { HermesClient.DEFAULT_MODEL }
+                        container.tokenStore.remoteWhisperUrl = whisperUrl.trim().trimEnd('/').ifBlank { null }
+                        container.tokenStore.remoteWhisperToken = whisperToken.trim().ifBlank { null }
                         onSaved()
                     },
                     enabled = url.isNotBlank() && token.isNotBlank(),

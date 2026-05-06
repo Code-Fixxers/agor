@@ -15,31 +15,39 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import android.Manifest
-import android.net.Uri
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Forward
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -61,10 +69,10 @@ import live.agor.app.LocalAppContainer
 import live.agor.app.data.HermesImageInput
 import live.agor.app.data.HermesSession
 import live.agor.app.data.HermesTurn
-import live.agor.app.ui.chat.PromptInputBar
 import live.agor.app.ui.simpleViewModelFactory
 import live.agor.app.viewmodels.HermesViewModel
-import live.agor.app.voice.HermesVoiceController
+import live.agor.app.voice.HermesVoicePhase
+import live.agor.app.voice.HermesVoiceState
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -85,21 +93,14 @@ fun HermesScreen(
 
     LaunchedEffect(initialSessionId) { vm.openSession(initialSessionId) }
 
-    // Voice controller — instantiated lazily; released when the screen leaves composition.
-    val voice = remember { HermesVoiceController(context.applicationContext) }
-    val voicePhase by voice.phase.collectAsState()
-    val voiceActive = voicePhase != HermesVoiceController.Phase.Idle
+    val voice = container.hermesVoice
+    val voiceState by voice.state.collectAsState()
 
-    DisposableEffect(voice) {
-        voice.onTranscribed = { text -> vm.send(text) }
-        onDispose { voice.release() }
+    LaunchedEffect(state.selectedSessionId) {
+        voice.setActiveSession(state.selectedSessionId)
     }
-
-    // TTS the assistant's final reply when voice mode is active.
-    LaunchedEffect(voice, vm) {
-        vm.replies.collect { reply ->
-            if (voicePhase != HermesVoiceController.Phase.Idle) voice.speakReply(reply)
-        }
+    LaunchedEffect(state.isSending) {
+        voice.setHermesRunning(state.isSending)
     }
 
     // RECORD_AUDIO permission gate — request on first toggle, not at app launch.
@@ -147,26 +148,6 @@ fun HermesScreen(
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = {
-                            if (voiceActive) {
-                                voice.stop()
-                            } else {
-                                val granted = ContextCompat.checkSelfPermission(
-                                    context, Manifest.permission.RECORD_AUDIO,
-                                ) == PackageManager.PERMISSION_GRANTED
-                                if (granted) voice.start()
-                                else micPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            }
-                        },
-                    ) {
-                        if (voiceActive) {
-                            Icon(Icons.Default.MicOff, contentDescription = "Stop voice mode",
-                                tint = MaterialTheme.colorScheme.primary)
-                        } else {
-                            Icon(Icons.Default.Mic, contentDescription = "Start voice mode")
-                        }
-                    }
                     IconButton(onClick = { galleryLauncher.launch("image/*") }) {
                         Icon(Icons.Default.Image, contentDescription = "Attach image")
                     }
@@ -203,9 +184,6 @@ fun HermesScreen(
         Column(
             modifier = Modifier.fillMaxSize().padding(padding),
         ) {
-            if (voiceActive) {
-                VoiceStatusBar(voicePhase)
-            }
             SessionStrip(
                 sessions = state.sessions,
                 selectedSessionId = state.selectedSessionId,
@@ -255,7 +233,7 @@ fun HermesScreen(
                     }
                 }
             }
-            PromptInputBar(
+            HermesInputBar(
                 draft = draft,
                 onDraftChange = { draft = it },
                 onSend = {
@@ -266,31 +244,154 @@ fun HermesScreen(
                     vm.send(text, images)
                 },
                 enabled = !state.isSending,
+                voiceState = voiceState,
+                onToggleVoice = {
+                    if (voiceState.enabled) {
+                        voice.stop()
+                    } else {
+                        val granted = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.RECORD_AUDIO,
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (granted) voice.start()
+                        else micPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                onPendingTranscriptChange = voice::updatePendingTranscript,
+                onCancelPendingTranscript = voice::cancelPendingTranscript,
+                onSendPendingTranscript = voice::sendPendingNow,
+                onSkipTts = voice::skipTts,
             )
         }
     }
 }
 
 @Composable
-private fun VoiceStatusBar(phase: HermesVoiceController.Phase) {
-    val label = when (phase) {
-        HermesVoiceController.Phase.Idle -> ""
-        HermesVoiceController.Phase.Calibrating -> "Calibrating microphone…"
-        HermesVoiceController.Phase.Listening -> "Listening — speak your prompt"
-        HermesVoiceController.Phase.Recording -> "Recording…"
-        HermesVoiceController.Phase.Transcribing -> "Transcribing…"
-        HermesVoiceController.Phase.Speaking -> "Hermes is speaking"
+private fun HermesInputBar(
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    onSend: () -> Unit,
+    enabled: Boolean,
+    voiceState: HermesVoiceState,
+    onToggleVoice: () -> Unit,
+    onPendingTranscriptChange: (String) -> Unit,
+    onCancelPendingTranscript: () -> Unit,
+    onSendPendingTranscript: () -> Unit,
+    onSkipTts: () -> Unit,
+) {
+    val pending = voiceState.pendingTranscript
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (voiceState.enabled || voiceState.phase == HermesVoicePhase.Error) {
+            VoiceStatusBar(
+                state = voiceState,
+                onTranscriptChange = onPendingTranscriptChange,
+                onCancel = onCancelPendingTranscript,
+                onSend = onSendPendingTranscript,
+                onSkipTts = onSkipTts,
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = onDraftChange,
+                modifier = Modifier.weight(1f),
+                enabled = enabled && pending == null,
+                minLines = 1,
+                maxLines = 4,
+                placeholder = { Text("Message Hermes") },
+            )
+            FilledTonalIconButton(onClick = onToggleVoice) {
+                if (voiceState.enabled) {
+                    Icon(Icons.Default.MicOff, contentDescription = "Disable auto-listening")
+                } else {
+                    Icon(Icons.Default.Mic, contentDescription = "Enable auto-listening")
+                }
+            }
+            Switch(
+                checked = voiceState.enabled,
+                onCheckedChange = { onToggleVoice() },
+                enabled = pending == null,
+            )
+            IconButton(onClick = onSend, enabled = enabled && draft.isNotBlank() && pending == null) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+            }
+        }
+    }
+}
+
+@Composable
+private fun VoiceStatusBar(
+    state: HermesVoiceState,
+    onTranscriptChange: (String) -> Unit,
+    onCancel: () -> Unit,
+    onSend: () -> Unit,
+    onSkipTts: () -> Unit,
+) {
+    val label = when (state.phase) {
+        HermesVoicePhase.Idle -> "Auto-listening off"
+        HermesVoicePhase.LoadingModels -> "Loading voice models..."
+        HermesVoicePhase.Listening -> "Auto-listening"
+        HermesVoicePhase.Recording -> "Recording..."
+        HermesVoicePhase.Transcribing -> "Transcribing..."
+        HermesVoicePhase.Reviewing -> "Reviewing transcript"
+        HermesVoicePhase.Sending -> "Sending to Hermes..."
+        HermesVoicePhase.Speaking -> "Hermes is speaking"
+        HermesVoicePhase.Error -> state.errorMessage ?: "Voice mode failed"
     }
     Surface(
         color = MaterialTheme.colorScheme.tertiaryContainer,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onTertiaryContainer,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-        )
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(
+                    if (state.phase == HermesVoicePhase.Speaking) Icons.Default.Forward else Icons.Default.Mic,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier.weight(1f),
+                )
+                if (state.phase == HermesVoicePhase.Speaking) {
+                    TextButton(onClick = onSkipTts) { Text("Skip") }
+                }
+            }
+            if (state.phase == HermesVoicePhase.Listening || state.phase == HermesVoicePhase.Recording) {
+                LinearProgressIndicator(
+                    progress = { (state.audioLevel / state.threshold.coerceAtLeast(0.01f)).coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                )
+            }
+            state.pendingTranscript?.let { transcript ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedTextField(
+                        value = transcript,
+                        onValueChange = onTranscriptChange,
+                        modifier = Modifier.weight(1f),
+                        minLines = 1,
+                        maxLines = 3,
+                    )
+                    IconButton(onClick = onCancel) {
+                        Icon(Icons.Default.Close, contentDescription = "Cancel transcript")
+                    }
+                    Button(onClick = onSend, modifier = Modifier.widthIn(min = 72.dp)) {
+                        Text("Send")
+                    }
+                }
+            }
+        }
     }
 }
 
