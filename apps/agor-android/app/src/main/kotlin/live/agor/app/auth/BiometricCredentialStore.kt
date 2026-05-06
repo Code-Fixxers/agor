@@ -24,6 +24,8 @@ private const val KEY_TRANSFORMATION = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding"
 private const val KEY_STORE = "AndroidKeyStore"
 private const val KEY_SIZE_BITS = 2048
 private const val PASSWORD_SCHEME_RSA_OAEP = "rsa-oaep-sha256-biometric-v1"
+private const val CREDENTIAL_TYPE_PASSWORD = "password"
+private const val CREDENTIAL_TYPE_API_KEY = "api-key"
 
 class BiometricCredentialStore(
     private val context: Context,
@@ -38,6 +40,7 @@ class BiometricCredentialStore(
 
     fun canUnlockFor(serverUrl: String, email: String): Boolean {
         if (!canUnlock) return false
+        if ((tokenStore.biometricCredentialType ?: CREDENTIAL_TYPE_PASSWORD) != CREDENTIAL_TYPE_PASSWORD) return false
         val normalizedUrl = normalize(serverUrl)
         val normalizedEmail = email.trim().lowercase()
         if (normalizedUrl.isEmpty() || normalizedEmail.isEmpty()) return false
@@ -45,23 +48,44 @@ class BiometricCredentialStore(
             tokenStore.biometricEmail == normalizedEmail
     }
 
+    fun canUnlockApiKeyFor(serverUrl: String): Boolean {
+        if (!canUnlock) return false
+        if (tokenStore.biometricCredentialType != CREDENTIAL_TYPE_API_KEY) return false
+        val normalizedUrl = normalize(serverUrl)
+        if (normalizedUrl.isEmpty()) return false
+        return tokenStore.biometricServerUrl == normalizedUrl
+    }
+
+    fun prefersApiKeyLogin(): Boolean {
+        return canUnlock && tokenStore.biometricCredentialType == CREDENTIAL_TYPE_API_KEY
+    }
+
     fun canEnrollBiometrics(): Boolean = isBiometricAvailable()
 
     fun saveCredentials(serverUrl: String, email: String, password: String) {
+        saveSecret(serverUrl, email.trim().lowercase(), password, CREDENTIAL_TYPE_PASSWORD)
+    }
+
+    fun saveApiKeyCredentials(serverUrl: String, apiKey: String) {
+        saveSecret(serverUrl, null, apiKey, CREDENTIAL_TYPE_API_KEY)
+    }
+
+    private fun saveSecret(serverUrl: String, email: String?, secret: String, credentialType: String) {
         val normalizedUrl = normalize(serverUrl)
-        val normalizedEmail = email.trim().lowercase()
-        if (normalizedUrl.isEmpty() || normalizedEmail.isEmpty() || password.isBlank()) return
+        if (normalizedUrl.isEmpty() || secret.isBlank()) return
+        if (credentialType == CREDENTIAL_TYPE_PASSWORD && email.isNullOrBlank()) return
 
         val cipher = createEncryptCipher()
-        val encrypted = cipher.doFinal(password.toByteArray(Charsets.UTF_8))
+        val encrypted = cipher.doFinal(secret.toByteArray(Charsets.UTF_8))
 
         tokenStore.biometricEnabled = true
         tokenStore.biometricServerUrl = normalizedUrl
-        tokenStore.biometricEmail = normalizedEmail
-        tokenStore.biometricPasswordHash = hashPassword(password)
+        tokenStore.biometricEmail = email
+        tokenStore.biometricPasswordHash = hashPassword(secret)
         tokenStore.biometricPasswordCipherText = encode(encrypted)
         tokenStore.biometricPasswordIv = null
         tokenStore.biometricPasswordScheme = PASSWORD_SCHEME_RSA_OAEP
+        tokenStore.biometricCredentialType = credentialType
     }
 
     fun authenticateToSaveCredentials(
@@ -71,47 +95,26 @@ class BiometricCredentialStore(
         password: String,
         onComplete: (Boolean, String?) -> Unit,
     ) {
-        if (!isBiometricAvailable()) {
-            onComplete(false, "Biometric authentication is not available.")
-            return
-        }
-
-        val executor = ContextCompat.getMainExecutor(activity)
-        val prompt = BiometricPrompt(
-            activity,
-            executor,
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    runCatching {
-                        saveCredentials(serverUrl, email, password)
-                    }.onSuccess {
-                        onComplete(true, null)
-                    }.onFailure {
-                        onComplete(false, "Unable to save biometric login.")
-                    }
-                }
-
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    val message = when (errorCode) {
-                        BiometricPrompt.ERROR_NEGATIVE_BUTTON,
-                        BiometricPrompt.ERROR_USER_CANCELED,
-                        BiometricPrompt.ERROR_CANCELED -> null
-                        else -> errString.toString()
-                    }
-                    onComplete(false, message)
-                }
-
-                override fun onAuthenticationFailed() = Unit
-            },
+        authenticateToSaveSecret(
+            activity = activity,
+            subtitle = "Use biometrics next time instead of typing your password",
+            onSave = { saveCredentials(serverUrl, email, password) },
+            onComplete = onComplete,
         )
+    }
 
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Enable biometric login")
-            .setSubtitle("Use biometrics next time instead of typing your password")
-            .setNegativeButtonText("Not now")
-            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-            .build()
-        prompt.authenticate(promptInfo)
+    fun authenticateToSaveApiKeyCredentials(
+        activity: FragmentActivity,
+        serverUrl: String,
+        apiKey: String,
+        onComplete: (Boolean, String?) -> Unit,
+    ) {
+        authenticateToSaveSecret(
+            activity = activity,
+            subtitle = "Use biometrics next time instead of pasting your API key",
+            onSave = { saveApiKeyCredentials(serverUrl, apiKey) },
+            onComplete = onComplete,
+        )
     }
 
     fun clearStoredCredentials() {
@@ -122,6 +125,7 @@ class BiometricCredentialStore(
         tokenStore.biometricPasswordCipherText = null
         tokenStore.biometricPasswordIv = null
         tokenStore.biometricPasswordScheme = null
+        tokenStore.biometricCredentialType = null
     }
 
     fun authenticateWithBiometrics(
@@ -186,6 +190,55 @@ class BiometricCredentialStore(
     private fun isBiometricAvailable(): Boolean {
         return BiometricManager.from(context)
             .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
+    }
+
+    private fun authenticateToSaveSecret(
+        activity: FragmentActivity,
+        subtitle: String,
+        onSave: () -> Unit,
+        onComplete: (Boolean, String?) -> Unit,
+    ) {
+        if (!isBiometricAvailable()) {
+            onComplete(false, "Biometric authentication is not available.")
+            return
+        }
+
+        val executor = ContextCompat.getMainExecutor(activity)
+        val prompt = BiometricPrompt(
+            activity,
+            executor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    runCatching {
+                        onSave()
+                    }.onSuccess {
+                        onComplete(true, null)
+                    }.onFailure {
+                        onComplete(false, "Unable to save biometric login.")
+                    }
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    val message = when (errorCode) {
+                        BiometricPrompt.ERROR_NEGATIVE_BUTTON,
+                        BiometricPrompt.ERROR_USER_CANCELED,
+                        BiometricPrompt.ERROR_CANCELED -> null
+                        else -> errString.toString()
+                    }
+                    onComplete(false, message)
+                }
+
+                override fun onAuthenticationFailed() = Unit
+            },
+        )
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Enable biometric login")
+            .setSubtitle(subtitle)
+            .setNegativeButtonText("Not now")
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .build()
+        prompt.authenticate(promptInfo)
     }
 
     private fun normalize(url: String): String = url.trim().trimEnd('/')

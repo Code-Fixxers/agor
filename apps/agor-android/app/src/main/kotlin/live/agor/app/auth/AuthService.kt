@@ -109,9 +109,6 @@ class AuthService(
         val result = client.loginWithApiKey(apiKey)
         _user.value = result.user
         _state.value = AuthState.Authenticated
-        runCatching {
-            biometricStore.clearStoredCredentials()
-        }
     }
 
     /** Clears tokens but keeps URL + email so the login form pre-fills. */
