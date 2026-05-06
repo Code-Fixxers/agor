@@ -54,7 +54,9 @@ fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
     val scope = rememberCoroutineScope()
     val activity = remember(context) { context as? FragmentActivity }
 
-    var mode by remember { mutableStateOf(LoginMode.Credentials) }
+    var mode by remember {
+        mutableStateOf(if (container.biometricStore.prefersApiKeyLogin()) LoginMode.ApiKey else LoginMode.Credentials)
+    }
     var url by remember { mutableStateOf(container.tokenStore.serverUrl.orEmpty().ifBlank { DEFAULT_SERVER_URL }) }
     var email by remember { mutableStateOf(container.tokenStore.lastEmail.orEmpty()) }
     var password by remember { mutableStateOf("") }
@@ -69,13 +71,12 @@ fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
         email = container.tokenStore.lastEmail.orEmpty()
     }
 
-    val canUseBiometrics = if (mode == LoginMode.Credentials) {
-        container.biometricStore.canUnlockFor(
+    val canUseBiometrics = when (mode) {
+        LoginMode.Credentials -> container.biometricStore.canUnlockFor(
             normalizeUrl(url),
             canonicalizeEmailForCredentials(email),
         )
-    } else {
-        false
+        LoginMode.ApiKey -> container.biometricStore.canUnlockApiKeyFor(normalizeUrl(url))
     }
 
     fun submitLogin(
@@ -140,7 +141,25 @@ fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
                 container.authService.loginWithApiKey(normalizedUrl, rawApiKey)
             }.onSuccess {
                 busy = false
-                onLoginSuccess()
+                val savedUrl = container.tokenStore.serverUrl ?: normalizedUrl
+                if (
+                    activity != null &&
+                    container.biometricStore.canEnrollBiometrics() &&
+                    !container.biometricStore.canUnlockApiKeyFor(savedUrl)
+                ) {
+                    busy = true
+                    container.biometricStore.authenticateToSaveApiKeyCredentials(
+                        activity = activity,
+                        serverUrl = savedUrl,
+                        apiKey = rawApiKey,
+                    ) { _, reason ->
+                        busy = false
+                        if (showError && !reason.isNullOrBlank()) error = reason
+                        onLoginSuccess()
+                    }
+                } else {
+                    onLoginSuccess()
+                }
             }.onFailure { throwable ->
                 busy = false
                 if (showError) error = throwable.message ?: "Sign in failed"
@@ -149,7 +168,7 @@ fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
     }
 
     fun submitBiometricLogin(showError: Boolean) {
-        if (!container.biometricStore.canUnlockFor(normalizeUrl(url), canonicalizeEmailForCredentials(email))) return
+        if (!canUseBiometrics) return
         val act = activity
         if (act == null) {
             if (showError) error = "Biometric login requires a valid screen."
@@ -160,14 +179,23 @@ fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
         if (showError) error = null
         container.biometricStore.authenticateWithBiometrics(
             activity = act,
-            onSuccess = { recoveredPassword ->
-                submitLogin(
-                    normalizeUrl(url),
-                    normalizeEmailForLogin(email),
-                    recoveredPassword,
-                    showError,
-                    allowBusy = true,
-                )
+            onSuccess = { recoveredSecret ->
+                if (mode == LoginMode.Credentials) {
+                    submitLogin(
+                        normalizeUrl(url),
+                        normalizeEmailForLogin(email),
+                        recoveredSecret,
+                        showError,
+                        allowBusy = true,
+                    )
+                } else {
+                    submitApiKeyLogin(
+                        normalizeUrl(url),
+                        recoveredSecret,
+                        showError,
+                        allowBusy = true,
+                    )
+                }
             },
             onFailure = { reason ->
                 if (!showError) {
@@ -181,9 +209,15 @@ fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
     }
 
     LaunchedEffect(url, email, mode) {
-        if (mode != LoginMode.Credentials) return@LaunchedEffect
         if (autoLoginAttempted || busy) return@LaunchedEffect
-        if (container.biometricStore.canUnlockFor(normalizeUrl(url), canonicalizeEmailForCredentials(email))) {
+        val canAutoLogin = when (mode) {
+            LoginMode.Credentials -> container.biometricStore.canUnlockFor(
+                normalizeUrl(url),
+                canonicalizeEmailForCredentials(email),
+            )
+            LoginMode.ApiKey -> container.biometricStore.canUnlockApiKeyFor(normalizeUrl(url))
+        }
+        if (canAutoLogin) {
             autoLoginAttempted = true
             submitBiometricLogin(showError = false)
         }
