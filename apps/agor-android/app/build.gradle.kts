@@ -49,8 +49,11 @@ val skipWhisperBundle: Boolean = System.getenv("SKIP_WHISPER")?.let {
 val whisperModel: String = (project.findProperty("whisperModel") as? String)
     ?.takeIf { it.isNotBlank() }
     ?: "base.en"
-val whisperCppDir = layout.projectDirectory.dir("app/src/main/cpp/whisper.cpp")
-val whisperModelFile = layout.projectDirectory.file("app/src/main/assets/whisper/ggml-$whisperModel.bin")
+val androidRootDir = rootProject.layout.projectDirectory
+val whisperCppDir = layout.projectDirectory.dir("src/main/cpp/whisper.cpp")
+val whisperModelFile = layout.projectDirectory.file("src/main/assets/whisper/ggml-$whisperModel.bin")
+val syncWhisperScript = androidRootDir.file("scripts/sync-whisper.sh")
+val fetchWhisperModelScript = androidRootDir.file("scripts/fetch-whisper-model.sh")
 
 val syncWhisperCpp = tasks.register("syncWhisperCpp") {
     group = "agor"
@@ -61,7 +64,7 @@ val syncWhisperCpp = tasks.register("syncWhisperCpp") {
     }
     doLast {
         exec {
-            commandLine("bash", "scripts/sync-whisper.sh")
+            commandLine("bash", syncWhisperScript.asFile.absolutePath)
         }
     }
 }
@@ -75,7 +78,7 @@ val fetchWhisperModel = tasks.register("fetchWhisperModel") {
     }
     doLast {
         exec {
-            commandLine("bash", "scripts/fetch-whisper-model.sh", whisperModel)
+            commandLine("bash", fetchWhisperModelScript.asFile.absolutePath, whisperModel)
         }
     }
 }
