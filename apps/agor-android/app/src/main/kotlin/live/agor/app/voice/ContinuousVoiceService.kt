@@ -62,7 +62,7 @@ class ContinuousVoiceService : Service() {
         super.onCreate()
         container = (application as AgorApplication).container
         audio = AudioCapture(this)
-        vad = VoiceActivityDetector()
+        vad = VoiceActivityDetector(this)
         tts = TextToSpeechService(this)
         transcription = TranscriptionService(this)
 
@@ -119,7 +119,7 @@ class ContinuousVoiceService : Service() {
             _phase.value = Phase.Listening
             return
         }
-        val text = transcription.transcribe(pcm)
+        val text = transcription.transcribe(pcm).text
         if (text.isBlank()) {
             _phase.value = Phase.Listening
             return

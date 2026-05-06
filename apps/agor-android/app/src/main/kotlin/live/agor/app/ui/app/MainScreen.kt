@@ -34,6 +34,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import live.agor.app.LocalAppContainer
@@ -67,6 +70,7 @@ fun MainScreen(app: AppViewModel) {
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val processLifecycle = ProcessLifecycleOwner.get().lifecycle
     // Default to Hermes when configured — that's the orchestrator-first flow.
     // Otherwise fall back to the original empty-home + sidebar entry pattern.
     val initialRoute: MainRoute = if (container.hermesClient.isConfigured) MainRoute.Hermes()
@@ -76,6 +80,15 @@ fun MainScreen(app: AppViewModel) {
     LaunchedEffect(Unit) { nav.start() }
     LaunchedEffect(Unit) { updateVm.checkSilently() }
     DisposableEffect(Unit) { onDispose { nav.stop() } }
+    DisposableEffect(processLifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                container.hermesVoice.stopForBackground()
+            }
+        }
+        processLifecycle.addObserver(observer)
+        onDispose { processLifecycle.removeObserver(observer) }
+    }
 
     // Route to a chat when an external entry point (notification tap, deep-link)
     // requests a specific session. Consume immediately so the same id won't re-fire

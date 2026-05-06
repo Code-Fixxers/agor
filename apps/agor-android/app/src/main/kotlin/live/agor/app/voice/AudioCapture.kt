@@ -35,6 +35,8 @@ class AudioCapture(private val context: Context) {
     var onFrame: ((FloatArray) -> Unit)? = null
 
     private val captureBuffer = ArrayList<Short>(SAMPLE_RATE * 30) // ≤30s buffer
+    private val preRollBuffer = ArrayList<Short>(SAMPLE_RATE * 2)
+    private var preRollCapacity = SAMPLE_RATE * 2
     private var recordingActive = false
 
     fun hasPermission(): Boolean =
@@ -85,6 +87,12 @@ class AudioCapture(private val context: Context) {
                         synchronized(captureBuffer) {
                             for (i in 0 until read) captureBuffer.add(shortBuf[i])
                         }
+                    } else {
+                        synchronized(preRollBuffer) {
+                            for (i in 0 until read) preRollBuffer.add(shortBuf[i])
+                            val overflow = preRollBuffer.size - preRollCapacity
+                            if (overflow > 0) preRollBuffer.subList(0, overflow).clear()
+                        }
                     }
                     onFrame?.invoke(floatBuf)
                 }
@@ -101,8 +109,17 @@ class AudioCapture(private val context: Context) {
         captureJob = null
     }
 
-    fun startBuffering() {
-        synchronized(captureBuffer) { captureBuffer.clear() }
+    fun startBuffering(preRollMillis: Long = 0) {
+        preRollCapacity = ((SAMPLE_RATE * preRollMillis) / 1_000L).toInt().coerceIn(0, SAMPLE_RATE * 5)
+        synchronized(captureBuffer) {
+            captureBuffer.clear()
+            if (preRollCapacity > 0) {
+                synchronized(preRollBuffer) {
+                    val start = (preRollBuffer.size - preRollCapacity).coerceAtLeast(0)
+                    for (i in start until preRollBuffer.size) captureBuffer.add(preRollBuffer[i])
+                }
+            }
+        }
         recordingActive = true
     }
 
@@ -124,6 +141,6 @@ class AudioCapture(private val context: Context) {
 
     companion object {
         const val SAMPLE_RATE = 16_000
-        const val FRAME_SAMPLES = 1024
+        const val FRAME_SAMPLES = 512
     }
 }

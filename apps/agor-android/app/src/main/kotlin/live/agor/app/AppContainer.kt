@@ -20,6 +20,7 @@ import live.agor.app.notifications.AgorNotificationManager
 import live.agor.app.update.UpdateChecker
 import live.agor.app.update.UpdateInstaller
 import live.agor.app.util.AppLogger
+import live.agor.app.voice.HermesVoiceManager
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -42,6 +43,7 @@ class AppContainer(context: Context) {
     val chatCache: ChatCache = ChatCache(appContext, tokenStore)
     val hermesSessions: HermesSessionStore = HermesSessionStore(appContext, tokenStore)
     val hermesImages: HermesImageStore = HermesImageStore(appContext)
+    val hermesVoice: HermesVoiceManager = HermesVoiceManager(appContext, tokenStore, hermesSessions)
     val notifications: AgorNotificationManager = AgorNotificationManager(appContext)
 
     // Dedicated HTTP client for the in-app updater. Long read timeout because

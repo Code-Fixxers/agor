@@ -38,7 +38,7 @@ class HermesVoiceController(
     val phase: StateFlow<Phase> = _phase.asStateFlow()
 
     private val audio = AudioCapture(context)
-    private val vad = VoiceActivityDetector()
+    private val vad = VoiceActivityDetector(context)
     private val transcription = TranscriptionService(context)
     private val tts = TextToSpeechService(context)
 
@@ -115,7 +115,7 @@ class HermesVoiceController(
             _phase.value = Phase.Listening
             return
         }
-        val text = transcription.transcribe(pcm).trim()
+        val text = transcription.transcribe(pcm).text.trim()
         if (text.isBlank()) {
             _phase.value = Phase.Listening
             return
