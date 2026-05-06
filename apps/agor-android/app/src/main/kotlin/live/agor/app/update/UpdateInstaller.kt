@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import live.agor.app.auth.SecureTokenStore
 import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
 import okhttp3.OkHttpClient
@@ -28,6 +29,7 @@ import java.io.File
 class UpdateInstaller(
     private val context: Context,
     private val http: OkHttpClient,
+    private val tokens: SecureTokenStore,
 ) {
     /** Streams the APK to disk. Returns the file written, or null on failure. */
     suspend fun download(
@@ -37,7 +39,10 @@ class UpdateInstaller(
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         val out = File(dir, "${info.versionCode}.apk")
         try {
-            val req = Request.Builder().url(info.downloadUrl).build()
+            val req = Request.Builder()
+                .url(info.downloadUrl)
+                .withGithubAuth(info.downloadUrl)
+                .build()
             http.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
                     AppLogger.log("APK download HTTP ${resp.code}", LogLevel.ERROR, "Update")
@@ -102,5 +107,14 @@ class UpdateInstaller(
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
+    }
+
+    private fun Request.Builder.withGithubAuth(url: String): Request.Builder {
+        if (!url.contains("github.com", ignoreCase = true)) return this
+        val token = tokens.githubToken?.trim().orEmpty()
+        if (token.isNotBlank()) {
+            header("Authorization", "Bearer $token")
+        }
+        return this
     }
 }
