@@ -64,6 +64,19 @@ class HermesSessionStore(
         update { sessions -> sessions.filterNot { it.id == sessionId } }
     }
 
+    suspend fun syncRemote(remoteSessions: List<HermesSession>): List<HermesSession> {
+        if (remoteSessions.isEmpty()) return load()
+        return update { sessions ->
+            val remainingRemote = remoteSessions.associateBy { it.conversationId }.toMutableMap()
+            val merged = sessions.map { local ->
+                val remote = remainingRemote.remove(local.conversationId) ?: return@map local
+                mergeRemoteSession(local, remote)
+            } + remainingRemote.values
+            merged.distinctBy { it.conversationId }
+                .sortedByDescending { it.updatedAtMillis }
+        }
+    }
+
     suspend fun beginTurn(
         sessionId: String,
         prompt: String,
@@ -233,6 +246,18 @@ class HermesSessionStore(
 
     private fun scopeKey(): String = (tokens.hermesUrl ?: "default").sha256()
     private fun fileFor(key: String): File = File(root, "$key.json")
+
+    private fun mergeRemoteSession(local: HermesSession, remote: HermesSession): HermesSession {
+        if (local.active) return local
+        val useRemoteTurns = remote.turns.size > local.turns.size ||
+            (remote.turns.isNotEmpty() && remote.updatedAtMillis > local.updatedAtMillis)
+        return local.copy(
+            title = remote.title.takeIf { it.isNotBlank() && it != "Hermes session" } ?: local.title,
+            updatedAtMillis = maxOf(local.updatedAtMillis, remote.updatedAtMillis),
+            lastResponseId = remote.lastResponseId ?: local.lastResponseId,
+            turns = if (useRemoteTurns) remote.turns else local.turns,
+        )
+    }
 }
 
 @Serializable

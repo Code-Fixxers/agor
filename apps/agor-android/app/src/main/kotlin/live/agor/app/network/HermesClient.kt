@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import live.agor.app.auth.SecureTokenStore
+import live.agor.app.data.HermesSession
+import live.agor.app.data.HermesTurn
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -189,6 +191,21 @@ class HermesClient(private val tokens: SecureTokenStore) {
         }
     }
 
+    suspend fun downloadStoredSessions(maxConversations: Int = 100): List<HermesSession> =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            val (url, bearer) = requireConfig()
+            val summaries = runCatching {
+                listStoredConversationSummaries(url, bearer, maxConversations)
+            }.getOrElse {
+                return@withContext listStoredResponseSessions(url, bearer, maxConversations)
+            }
+            summaries.map { summary ->
+                val items = runCatching { listStoredConversationItems(url, bearer, summary.id) }
+                    .getOrDefault(emptyList())
+                buildHermesSession(summary, items)
+            }.sortedByDescending { it.updatedAtMillis }
+        }
+
     fun responseStream(
         conversationId: String,
         prompt: String,
@@ -318,6 +335,288 @@ class HermesClient(private val tokens: SecureTokenStore) {
         return out.toString()
     }
 
+    private fun listStoredResponseSessions(
+        url: String,
+        bearer: String,
+        maxResponses: Int,
+    ): List<HermesSession> {
+        val responses = listStoredResponses(url, bearer, maxResponses)
+        if (responses.isEmpty()) return emptyList()
+        val grouped = LinkedHashMap<String, MutableList<JSONObject>>()
+        for (response in responses) {
+            val responseId = response.optStringOrNull("id") ?: continue
+            val conversationId = response.conversationId() ?: responseId
+            grouped.getOrPut(conversationId) { mutableListOf() } += response
+        }
+        return grouped.map { (conversationId, conversationResponses) ->
+            val turns = conversationResponses.flatMap { response ->
+                val responseId = response.optStringOrNull("id")
+                val inputItems = responseId?.let {
+                    runCatching { listStoredResponseInputItems(url, bearer, it) }.getOrDefault(emptyList())
+                }.orEmpty()
+                inputItems + response
+            }.mapIndexedNotNull { index, item -> item.toHermesTurn(conversationId, index) }
+                .distinctBy { it.id }
+                .sortedBy { it.createdAtMillis }
+            val createdAt = turns.firstOrNull()?.createdAtMillis
+                ?: conversationResponses.mapNotNull { parseRemoteTime(it.opt("created_at")) }.minOrNull()
+                ?: System.currentTimeMillis()
+            val updatedAt = turns.lastOrNull()?.createdAtMillis
+                ?: conversationResponses.mapNotNull { parseRemoteTime(it.opt("created_at")) }.maxOrNull()
+                ?: createdAt
+            val title = turns.firstOrNull { it.role == "user" }?.content?.trim()?.take(48)?.ifBlank { null }
+                ?: "Hermes session"
+            HermesSession(
+                id = conversationId,
+                conversationId = conversationId,
+                title = title,
+                createdAtMillis = createdAt,
+                updatedAtMillis = updatedAt,
+                lastResponseId = conversationResponses.lastOrNull()?.optStringOrNull("id"),
+                turns = turns,
+            )
+        }.sortedByDescending { it.updatedAtMillis }
+    }
+
+    private fun listStoredResponses(
+        url: String,
+        bearer: String,
+        maxResponses: Int,
+    ): List<JSONObject> {
+        val out = ArrayList<JSONObject>()
+        var after: String? = null
+        while (out.size < maxResponses) {
+            val limit = minOf(50, maxResponses - out.size)
+            val query = buildString {
+                append("limit=").append(limit)
+                if (!after.isNullOrBlank()) append("&after=").append(encodeQuery(after.orEmpty()))
+            }
+            val payload = getJson(url, bearer, "/v1/responses?$query")
+            val data = payload.optJSONArray("data") ?: JSONArray()
+            if (data.length() == 0) break
+            for (i in 0 until data.length()) {
+                data.optJSONObject(i)?.let { out += it }
+            }
+            val hasMore = payload.optBoolean("has_more", false)
+            after = payload.optStringOrNull("last_id")
+                ?: data.optJSONObject(data.length() - 1)?.optStringOrNull("id")
+            if (!hasMore || after.isNullOrBlank()) break
+        }
+        return out
+    }
+
+    private fun listStoredResponseInputItems(
+        url: String,
+        bearer: String,
+        responseId: String,
+    ): List<JSONObject> {
+        val payload = getJson(url, bearer, "/v1/responses/${encodePath(responseId)}/input_items?limit=100")
+        val data = payload.optJSONArray("data")
+            ?: payload.optJSONArray("items")
+            ?: JSONArray()
+        return buildList {
+            for (i in 0 until data.length()) {
+                data.optJSONObject(i)?.let { add(it) }
+            }
+        }
+    }
+
+    private fun listStoredConversationSummaries(
+        url: String,
+        bearer: String,
+        maxConversations: Int,
+    ): List<RemoteConversationSummary> {
+        val out = ArrayList<RemoteConversationSummary>()
+        var after: String? = null
+        while (out.size < maxConversations) {
+            val limit = minOf(50, maxConversations - out.size)
+            val query = buildString {
+                append("limit=").append(limit)
+                if (!after.isNullOrBlank()) append("&after=").append(encodeQuery(after.orEmpty()))
+            }
+            val payload = getJson(url, bearer, "/v1/conversations?$query")
+            val data = payload.optJSONArray("data")
+                ?: payload.optJSONArray("conversations")
+                ?: JSONArray()
+            if (data.length() == 0) break
+            for (i in 0 until data.length()) {
+                val obj = data.optJSONObject(i) ?: continue
+                val id = obj.optString("id", "")
+                if (id.isBlank()) continue
+                out += RemoteConversationSummary(
+                    id = id,
+                    title = obj.optStringOrNull("title")
+                        ?: obj.optStringOrNull("name")
+                        ?: obj.optJSONObject("metadata")?.optStringOrNull("title"),
+                    createdAtMillis = parseRemoteTime(obj.opt("created_at"))
+                        ?: parseRemoteTime(obj.opt("createdAt")),
+                    updatedAtMillis = parseRemoteTime(obj.opt("updated_at"))
+                        ?: parseRemoteTime(obj.opt("updatedAt"))
+                        ?: parseRemoteTime(obj.opt("last_active_at"))
+                        ?: parseRemoteTime(obj.opt("lastActiveAt")),
+                )
+            }
+            val hasMore = payload.optBoolean("has_more", false)
+            after = payload.optStringOrNull("last_id")
+                ?: data.optJSONObject(data.length() - 1)?.optStringOrNull("id")
+            if (!hasMore || after.isNullOrBlank()) break
+        }
+        return out
+    }
+
+    private fun listStoredConversationItems(
+        url: String,
+        bearer: String,
+        conversationId: String,
+    ): List<JSONObject> {
+        val encodedId = encodePath(conversationId)
+        val payload = getJson(url, bearer, "/v1/conversations/$encodedId/items?limit=100&order=asc")
+        val data = payload.optJSONArray("data")
+            ?: payload.optJSONArray("items")
+            ?: JSONArray()
+        return buildList {
+            for (i in 0 until data.length()) {
+                data.optJSONObject(i)?.let { add(it) }
+            }
+        }
+    }
+
+    private fun getJson(url: String, bearer: String, path: String): JSONObject {
+        val req = Request.Builder()
+            .url("$url$path")
+            .header("Authorization", "Bearer $bearer")
+            .header("Accept", "application/json")
+            .get()
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw IOException("Hermes ${resp.code}: ${text.take(400)}")
+            }
+            return JSONObject(text)
+        }
+    }
+
+    private fun buildHermesSession(
+        summary: RemoteConversationSummary,
+        items: List<JSONObject>,
+    ): HermesSession {
+        val turns = items.mapIndexedNotNull { index, item -> item.toHermesTurn(summary.id, index) }
+            .sortedBy { it.createdAtMillis }
+        val createdAt = summary.createdAtMillis
+            ?: turns.firstOrNull()?.createdAtMillis
+            ?: System.currentTimeMillis()
+        val updatedAt = listOfNotNull(
+            summary.updatedAtMillis,
+            turns.lastOrNull()?.createdAtMillis,
+            createdAt,
+        ).maxOrNull() ?: createdAt
+        val title = summary.title
+            ?: turns.firstOrNull { it.role == "user" }?.content?.trim()?.take(48)?.ifBlank { null }
+            ?: "Hermes session"
+        val lastResponseId = items.asReversed()
+            .firstOrNull { it.optString("role") == "assistant" || it.optString("type").contains("response") }
+            ?.optStringOrNull("id")
+        return HermesSession(
+            id = summary.id,
+            conversationId = summary.id,
+            title = title,
+            createdAtMillis = createdAt,
+            updatedAtMillis = updatedAt,
+            active = false,
+            lastResponseId = lastResponseId,
+            turns = turns,
+        )
+    }
+
+    private fun JSONObject.toHermesTurn(conversationId: String, index: Int): HermesTurn? {
+        val type = optString("type", "")
+        val role = optStringOrNull("role")
+            ?: optJSONObject("message")?.optStringOrNull("role")
+            ?: when {
+                type.contains("input", ignoreCase = true) -> "user"
+                type.contains("message", ignoreCase = true) -> "assistant"
+                type.contains("response", ignoreCase = true) -> "assistant"
+                else -> null
+            }
+            ?: return null
+        if (role !in setOf("user", "assistant")) return null
+        val text = extractMessageText(this).trim()
+        if (text.isBlank()) return null
+        val createdAt = parseRemoteTime(opt("created_at"))
+            ?: parseRemoteTime(opt("createdAt"))
+            ?: parseRemoteTime(optJSONObject("message")?.opt("created_at"))
+            ?: System.currentTimeMillis()
+        return HermesTurn(
+            id = optStringOrNull("id") ?: "$conversationId-$index-$role",
+            role = role,
+            content = text,
+            createdAtMillis = createdAt,
+        )
+    }
+
+    private fun extractMessageText(obj: JSONObject): String {
+        obj.optStringOrNull("text")?.let { return it }
+        obj.optStringOrNull("output_text")?.let { return it }
+        obj.optJSONObject("message")?.let { return extractMessageText(it) }
+        obj.optJSONArray("content")?.let { return extractTextArray(it) }
+        obj.optJSONArray("output")?.let { output ->
+            val out = StringBuilder()
+            for (i in 0 until output.length()) {
+                output.optJSONObject(i)?.let { item ->
+                    val text = extractMessageText(item)
+                    if (text.isNotBlank()) out.append(text)
+                }
+            }
+            return out.toString()
+        }
+        obj.optStringOrNull("content")?.let { return it }
+        return ""
+    }
+
+    private fun extractTextArray(parts: JSONArray): String {
+        val out = StringBuilder()
+        for (i in 0 until parts.length()) {
+            val part = parts.opt(i)
+            when (part) {
+                is String -> out.append(part)
+                is JSONObject -> {
+                    val text = part.optStringOrNull("text")
+                        ?: part.optStringOrNull("content")
+                        ?: part.optStringOrNull("input_text")
+                        ?: part.optStringOrNull("output_text")
+                        ?: part.optJSONObject("text")?.optStringOrNull("value")
+                    if (!text.isNullOrBlank()) out.append(text)
+                }
+            }
+        }
+        return out.toString()
+    }
+
+    private fun parseRemoteTime(raw: Any?): Long? {
+        return when (raw) {
+            null, JSONObject.NULL -> null
+            is Number -> raw.toLong().let { if (it < 100_000_000_000L) it * 1000L else it }
+            is String -> raw.toLongOrNull()?.let { if (it < 100_000_000_000L) it * 1000L else it }
+            else -> null
+        }
+    }
+
+    private fun JSONObject.optStringOrNull(name: String): String? {
+        return if (has(name) && !isNull(name)) optString(name).takeIf { it.isNotBlank() } else null
+    }
+
+    private fun JSONObject.conversationId(): String? {
+        optStringOrNull("conversation")?.let { return it }
+        val conversation = optJSONObject("conversation") ?: return null
+        return conversation.optStringOrNull("id")
+    }
+
+    private fun encodePath(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.toString())
+        .replace("+", "%20")
+
+    private fun encodeQuery(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.toString())
+
     companion object {
         const val DEFAULT_MODEL = "hermes-agent"
     }
@@ -380,4 +679,11 @@ private data class WebhookResponse(
     val message: String = "",
     val data: String? = null,
     val raw: String = "",
+)
+
+private data class RemoteConversationSummary(
+    val id: String,
+    val title: String?,
+    val createdAtMillis: Long?,
+    val updatedAtMillis: Long?,
 )

@@ -2,6 +2,7 @@ package live.agor.app.ui.nav
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Immutable
@@ -52,6 +53,15 @@ sealed interface SidebarRow {
         val keyPrefix: String,
     ) : SidebarRow {
         override val key: String get() = "$keyPrefix-$sessionId"
+    }
+
+    @Immutable
+    data class HermesSessionItem(
+        val sessionId: String,
+        val title: String,
+        val active: Boolean,
+    ) : SidebarRow {
+        override val key: String get() = "hermes-session-$sessionId"
     }
 
     @Immutable
@@ -117,6 +127,18 @@ class SidebarRowFlattener {
         }
 
         add(SidebarRow.HermesShortcut(configured = hermesConfigured))
+        if (state.hermesSessions.isNotEmpty()) {
+            add(SidebarRow.Header("Hermes Chats", Icons.Default.AutoAwesome, "h-hermes-chats"))
+            for (session in state.hermesSessions) {
+                add(
+                    SidebarRow.HermesSessionItem(
+                        sessionId = session.id,
+                        title = session.title,
+                        active = session.active,
+                    ),
+                )
+            }
+        }
         add(SidebarRow.DividerRow("after-hermes"))
 
         val attention = state.sessions

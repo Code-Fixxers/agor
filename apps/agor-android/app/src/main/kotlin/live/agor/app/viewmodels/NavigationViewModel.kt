@@ -21,6 +21,7 @@ import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import live.agor.app.AppContainer
+import live.agor.app.data.HermesSession
 import live.agor.app.data.SidebarCache
 import live.agor.app.models.Board
 import live.agor.app.models.DrawerSessionFilter
@@ -48,6 +49,7 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
         val worktreesByBoard: Map<String, List<Worktree>> = emptyMap(),
         val sessionsByWorktree: Map<String, List<Session>> = emptyMap(),
         val sessions: List<Session> = emptyList(),
+        val hermesSessions: List<HermesSession> = emptyList(),
         val favorites: Set<String> = emptySet(),
         val showArchived: Boolean = false,
     )
@@ -95,6 +97,13 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
     init {
         container.socket.onSessionPatched { patched ->
             viewModelScope.launch { applySessionPatch(patched) }
+        }
+        viewModelScope.launch {
+            container.hermesSessions.load()
+            container.hermesSessions.sessions.collect { sessions ->
+                val filter = DrawerSessionFilter.fromToken(container.tokenStore.drawerSessionFilter)
+                _state.value = _state.value.copy(hermesSessions = filterHermesSessionsForDrawer(sessions, filter))
+            }
         }
     }
 
@@ -204,7 +213,7 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
         val started = SystemClock.elapsedRealtime()
         try {
             val filter = DrawerSessionFilter.fromToken(container.tokenStore.drawerSessionFilter)
-            val (boards, worktrees, sessions) = coroutineScope {
+            val (boards, worktrees, sessions, hermesSessions) = coroutineScope {
                 val boardsDeferred = async { container.client.listBoards() }
                 val worktreesDeferred = async { container.client.listWorktrees(includeArchived = filter.includeArchived) }
                 val sessionsDeferred = async {
@@ -213,7 +222,13 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
                         includeArchived = filter.includeArchived,
                     )
                 }
-                Triple(boardsDeferred.await(), worktreesDeferred.await(), sessionsDeferred.await())
+                val hermesDeferred = async { loadAndSyncHermesSessions(filter) }
+                Quad(
+                    boardsDeferred.await(),
+                    worktreesDeferred.await(),
+                    sessionsDeferred.await(),
+                    hermesDeferred.await(),
+                )
             }
             val visibleSessions = filterSessionsForDrawer(sessions, filter)
             _state.value = _state.value.copy(
@@ -221,13 +236,15 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
                 worktreesByBoard = worktrees.groupBy { it.boardId ?: "" },
                 sessionsByWorktree = visibleSessions.groupBy { it.worktreeId },
                 sessions = visibleSessions,
+                hermesSessions = hermesSessions,
                 showArchived = filter.includeArchived,
             )
             _loadState.value = LoadState(isLoading = false, errorMessage = null)
             val elapsed = SystemClock.elapsedRealtime() - started
             AppLogger.log(
                 "Sidebar refresh loaded ${boards.size} boards, ${worktrees.size} worktrees, " +
-                    "${visibleSessions.size}/${sessions.size} compact sessions in ${elapsed}ms",
+                    "${visibleSessions.size}/${sessions.size} compact sessions and " +
+                    "${hermesSessions.size} Hermes sessions in ${elapsed}ms",
                 LogLevel.DEBUG,
                 "Perf",
             )
@@ -288,6 +305,32 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    private suspend fun loadAndSyncHermesSessions(filter: DrawerSessionFilter): List<HermesSession> {
+        val local = container.hermesSessions.load()
+        val sessions = if (container.hermesClient.isConfigured) {
+            runCatching {
+                container.hermesSessions.syncRemote(container.hermesClient.downloadStoredSessions())
+            }.onFailure {
+                AppLogger.log("Hermes session import failed: ${it.message}", LogLevel.WARNING, "Hermes")
+            }.getOrDefault(local)
+        } else {
+            local
+        }
+        return filterHermesSessionsForDrawer(sessions, filter)
+    }
+
+    private fun filterHermesSessionsForDrawer(
+        sessions: List<HermesSession>,
+        filter: DrawerSessionFilter,
+    ): List<HermesSession> {
+        val cutoff = filter.cutoffDays?.let {
+            System.currentTimeMillis() - it * 24L * 60L * 60L * 1000L
+        }
+        return sessions.filter { session ->
+            cutoff == null || session.updatedAtMillis >= cutoff
+        }
+    }
+
     private fun parseEpochMillis(value: String?): Long? {
         if (value.isNullOrBlank()) return null
         return runCatching { Instant.parse(value).toEpochMilli() }
@@ -300,4 +343,11 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
                     }
             }
     }
+
+    private data class Quad<A, B, C, D>(
+        val first: A,
+        val second: B,
+        val third: C,
+        val fourth: D,
+    )
 }

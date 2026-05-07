@@ -43,6 +43,7 @@ import live.agor.app.viewmodels.NavigationViewModel
 fun SidebarScreen(
     nav: NavigationViewModel,
     onSelectSession: (String) -> Unit,
+    onSelectHermesSession: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHermes: (() -> Unit)? = null,
 ) {
@@ -90,6 +91,11 @@ fun SidebarScreen(
                     onClick = { onSelectSession(row.sessionId) },
                     onToggleFavorite = { nav.toggleFavorite(row.sessionId) },
                 )
+                is SidebarRow.HermesSessionItem -> HermesSessionRow(
+                    title = row.title,
+                    active = row.active,
+                    onClick = { onSelectHermesSession(row.sessionId) },
+                )
                 is SidebarRow.BoardItem -> BoardRow(
                     name = row.name,
                     emoji = row.emoji,
@@ -103,6 +109,39 @@ fun SidebarScreen(
                     onClick = { nav.toggleWorktree(row.worktreeId) },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun HermesSessionRow(title: String, active: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("sidebar-hermes-session-row")
+            .clickable(onClick = onClick)
+            .padding(start = 32.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Default.AutoAwesome,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            title,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+        )
+        if (active) {
+            Text(
+                "Running",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }

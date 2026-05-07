@@ -130,6 +130,10 @@ fun MainScreen(app: AppViewModel) {
                         route = MainRoute.Chat(sessionId)
                         scope.launch { drawerState.close() }
                     },
+                    onSelectHermesSession = { sessionId ->
+                        route = MainRoute.Hermes(sessionId)
+                        scope.launch { drawerState.close() }
+                    },
                     onOpenSettings = {
                         route = MainRoute.Settings
                         scope.launch { drawerState.close() }
