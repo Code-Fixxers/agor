@@ -71,11 +71,14 @@ class VoiceActivityDetector(
         _threshold.value = config.threshold
         resetRuntimeState()
         ensureModelLoaded()
+        if (ortSession == null) {
+            _threshold.value = fallbackThreshold()
+        }
         _state.value = State.Listening
         onCalibrationComplete?.invoke()
         AppLogger.log(
             "VAD started: backend=${if (ortSession == null) "energy-fallback" else "silero-onnx"} " +
-                "threshold=${config.threshold} silence=${config.silenceDurationMillis}ms",
+                "threshold=${_threshold.value} silence=${config.silenceDurationMillis}ms",
             LogLevel.INFO,
             "Voice",
         )
@@ -200,13 +203,16 @@ class VoiceActivityDetector(
     }
 
     private fun processFallbackEnergy() {
-        val threshold = (energyFloor * 2.0f).coerceAtLeast(0.004f)
+        val threshold = fallbackThreshold()
+        _threshold.value = threshold
         when (_state.value) {
             State.Listening -> if (smoothedEnergy >= threshold) handleProbability(1f)
             State.SpeechDetected -> if (smoothedEnergy < threshold * 0.55f) handleProbability(0f) else handleProbability(1f)
             State.Idle -> Unit
         }
     }
+
+    private fun fallbackThreshold(): Float = (energyFloor * 1.6f).coerceAtLeast(0.0025f)
 
     private fun endSpeech(force: Boolean) {
         if (_state.value != State.SpeechDetected) return

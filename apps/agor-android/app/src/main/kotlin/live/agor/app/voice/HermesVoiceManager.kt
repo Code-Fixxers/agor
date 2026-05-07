@@ -69,6 +69,7 @@ class HermesVoiceManager(
 
     private var transcriptionJob: Job? = null
     private var reviewJob: Job? = null
+    private var modelPreparationJob: Job? = null
     private var eventJob: Job? = null
     private var logJob: Job? = null
     private var streamBuffer = ""
@@ -81,6 +82,12 @@ class HermesVoiceManager(
                 tts.stop()
                 audio.startBuffering(vad.config.preRollMillis)
                 setPhase(HermesVoicePhase.Recording)
+            } else {
+                AppLogger.log(
+                    "Hermes voice ignored speech start while phase=${_state.value.phase}",
+                    LogLevel.WARNING,
+                    "Voice",
+                )
             }
         }
         vad.onSpeechEnd = {
@@ -148,14 +155,21 @@ class HermesVoiceManager(
             return
         }
         AppLogger.log("Hermes voice start requested", LogLevel.INFO, "Voice")
-        _state.value = _state.value.copy(enabled = true, phase = HermesVoicePhase.LoadingModels, errorMessage = null)
-        startCaptureIfNeeded()
+        _state.value = _state.value.copy(
+            enabled = true,
+            phase = HermesVoicePhase.LoadingModels,
+            errorMessage = null,
+            modelDownloadInProgress = true,
+        )
+        prepareModelsAndStartCapture()
     }
 
     fun stop() {
         AppLogger.log("Hermes voice stop requested", LogLevel.INFO, "Voice")
+        modelPreparationJob?.cancel()
         transcriptionJob?.cancel()
         reviewJob?.cancel()
+        modelPreparationJob = null
         transcriptionJob = null
         reviewJob = null
         pauseCapture()
@@ -168,6 +182,7 @@ class HermesVoiceManager(
             phase = HermesVoicePhase.Idle,
             pendingTranscript = null,
             errorMessage = null,
+            modelDownloadInProgress = false,
         )
     }
 
@@ -253,6 +268,23 @@ class HermesVoiceManager(
         }
         vad.start()
         setPhase(HermesVoicePhase.Listening)
+    }
+
+    private fun prepareModelsAndStartCapture() {
+        modelPreparationJob?.cancel()
+        modelPreparationJob = scope.launch {
+            val vadReady = models.ensureVadModelDownloaded()
+            if (!vadReady) {
+                AppLogger.log(
+                    "Hermes voice continuing with energy fallback VAD",
+                    LogLevel.WARNING,
+                    "Voice",
+                )
+            }
+            _state.value = _state.value.copy(modelDownloadInProgress = false)
+            if (!_state.value.enabled || hermesRunning) return@launch
+            startCaptureIfNeeded()
+        }
     }
 
     private fun pauseCapture() {

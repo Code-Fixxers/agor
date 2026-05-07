@@ -11,7 +11,7 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class VadConfig(
-    @SerialName("threshold") var threshold: Float = 0.70f,
+    @SerialName("threshold") var threshold: Float = 0.60f,
     @SerialName("silenceDurationMillis") var silenceDurationMillis: Long = 3_000,
     @SerialName("preRollMillis") var preRollMillis: Long = 2_000,
     @SerialName("minSpeechMillis") var minSpeechMillis: Long = 450,
