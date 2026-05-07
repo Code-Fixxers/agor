@@ -202,6 +202,12 @@ Agor is built on 5 primitives:
 - After build and test both pass, commit normally and push the branch.
 - If verification fails, fix the failure and rerun build and test before committing.
 
+**Android App and iOS Reference:**
+
+- For `apps/agor-android`, the Android app is the sole implementation target.
+- The maroun2 iOS app or `apps/agor-ios` branch is reference material only.
+- When a task mentions the iOS app in Android work, inspect it only for feature inspiration, expected behavior, or design comparison; do not edit, commit, or push iOS files unless the user explicitly asks for iOS changes.
+
 **Git Commits:**
 
 - ❌ **NEVER use `git commit --no-verify`** without explicit user permission
