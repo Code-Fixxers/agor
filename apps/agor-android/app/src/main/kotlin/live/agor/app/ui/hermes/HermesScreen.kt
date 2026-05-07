@@ -70,6 +70,7 @@ import live.agor.app.LocalAppContainer
 import live.agor.app.data.HermesImageInput
 import live.agor.app.data.HermesSession
 import live.agor.app.data.HermesTurn
+import live.agor.app.ui.messageblocks.MarkdownText
 import live.agor.app.ui.simpleViewModelFactory
 import live.agor.app.viewmodels.HermesViewModel
 import live.agor.app.voice.HermesVoicePhase
@@ -82,6 +83,7 @@ fun HermesScreen(
     initialSessionId: String? = null,
     onOpenDrawer: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenSession: (String) -> Unit,
 ) {
     val container = LocalAppContainer.current
     val context = LocalContext.current
@@ -229,7 +231,9 @@ fun HermesScreen(
                         modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(state.turns, key = { it.id }) { turn -> TurnBubble(turn) }
+                        items(state.turns, key = { it.id }) { turn ->
+                            TurnBubble(turn, onSessionClick = onOpenSession)
+                        }
                         state.errorMessage?.let { error ->
                             item { ErrorBubble(error, onDismiss = vm::cancel, onOpenSettings = onOpenSettings) }
                         }
@@ -448,7 +452,10 @@ private fun SessionStrip(
 }
 
 @Composable
-private fun TurnBubble(turn: HermesTurn) {
+private fun TurnBubble(
+    turn: HermesTurn,
+    onSessionClick: (String) -> Unit,
+) {
     val isUser = turn.role == "user"
     val align = if (isUser) Alignment.End else Alignment.Start
     Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = align) {
@@ -478,10 +485,7 @@ private fun TurnBubble(turn: HermesTurn) {
                     turn.streaming -> "..."
                     else -> ""
                 }
-                Text(
-                    displayContent,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                MarkdownText(markdown = displayContent, onSessionClick = onSessionClick)
                 if (turn.progress.isNotEmpty()) {
                     Spacer(Modifier.height(6.dp))
                     for (item in turn.progress.takeLast(4)) {

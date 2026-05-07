@@ -57,6 +57,7 @@ fun ChatScreen(
     sessionId: String,
     onOpenDrawer: () -> Unit,
     onClose: () -> Unit,
+    onOpenSession: (String) -> Unit,
 ) {
     val container = LocalAppContainer.current
     val vm: ChatViewModel = viewModel(
@@ -166,7 +167,7 @@ fun ChatScreen(
                                 TextButton(onClick = vm::loadEarlier) { Text("Load earlier messages") }
                             }
                             is ChatRow.TaskHeaderRow -> TaskHeader(row.task)
-                            is ChatRow.TextBubbleRow -> TextBubble(row)
+                            is ChatRow.TextBubbleRow -> TextBubble(row, onSessionClick = onOpenSession)
                             is ChatRow.ToolUseRow -> ToolUseBlockView(row)
                             is ChatRow.ToolResultRow -> ToolResultBlockView(row)
                             is ChatRow.ThinkingRow -> ThinkingBlockView(row)

@@ -148,6 +148,7 @@ fun MainScreen(app: AppViewModel) {
                 initialSessionId = r.sessionId,
                 onOpenDrawer = { scope.launch { drawerState.open() } },
                 onOpenSettings = { route = MainRoute.HermesSetup },
+                onOpenSession = { route = MainRoute.Chat(it) },
             )
             is MainRoute.HermesSetup -> HermesSetupScreen(
                 onClose = { route = if (container.hermesClient.isConfigured) MainRoute.Hermes() else MainRoute.EmptyHome },
@@ -157,6 +158,7 @@ fun MainScreen(app: AppViewModel) {
                 sessionId = r.sessionId,
                 onOpenDrawer = { scope.launch { drawerState.open() } },
                 onClose = { route = if (container.hermesClient.isConfigured) MainRoute.Hermes() else MainRoute.EmptyHome },
+                onOpenSession = { route = MainRoute.Chat(it) },
             )
             is MainRoute.Settings -> SettingsScreen(
                 app = app,

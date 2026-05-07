@@ -30,7 +30,10 @@ private val BubbleMaxWidth = 600.dp
  * out, no recompose for unrelated messages.
  */
 @Composable
-fun TextBubble(row: ChatRow.TextBubbleRow) {
+fun TextBubble(
+    row: ChatRow.TextBubbleRow,
+    onSessionClick: (String) -> Unit,
+) {
     val alignment = if (row.role == MessageRole.USER) Alignment.End else Alignment.Start
     val bubbleColor = when (row.role) {
         MessageRole.USER -> MaterialTheme.colorScheme.primaryContainer
@@ -56,7 +59,7 @@ fun TextBubble(row: ChatRow.TextBubbleRow) {
             if (row.streaming) {
                 Text(text = row.text)
             } else {
-                MarkdownText(markdown = row.text)
+                MarkdownText(markdown = row.text, onSessionClick = onSessionClick)
             }
         }
     }
