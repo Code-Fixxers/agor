@@ -24,6 +24,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.Button
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -48,6 +49,7 @@ import live.agor.app.ui.common.ConnectionIndicator
 import live.agor.app.ui.simpleViewModelFactory
 import live.agor.app.viewmodels.AppViewModel
 import live.agor.app.viewmodels.UpdateViewModel
+import live.agor.app.auth.SecureTokenStore
 import kotlinx.coroutines.launch
 
 private const val DEFAULT_WHISPER_EN_URL = "http://100.101.157.56:8080"
@@ -307,6 +309,8 @@ private fun BiometricLoginRow(defaultEmail: String?) {
     val canEnroll = container.biometricStore.canEnrollBiometrics()
     val serverUrl = container.tokenStore.serverUrl.orEmpty().ifBlank { container.client.baseUrl }
     val email = container.tokenStore.lastEmail.orEmpty().ifBlank { defaultEmail.orEmpty() }
+    val savedApiKey = container.tokenStore.savedApiKey.orEmpty()
+    val apiKeyMode = savedApiKey.isNotBlank()
 
     fun enableBiometrics() {
         if (busy) return
@@ -319,7 +323,11 @@ private fun BiometricLoginRow(defaultEmail: String?) {
             message = "Biometric setup requires a valid screen."
             return
         }
-        if (serverUrl.isBlank() || email.isBlank() || password.isBlank()) {
+        if (serverUrl.isBlank()) {
+            message = "Server URL is missing."
+            return
+        }
+        if (!apiKeyMode && (email.isBlank() || password.isBlank())) {
             message = "Enter your current Agor password to enable biometric login."
             return
         }
@@ -327,21 +335,41 @@ private fun BiometricLoginRow(defaultEmail: String?) {
         message = null
         scope.launch {
             runCatching {
-                container.authService.login(serverUrl, email, password)
+                if (apiKeyMode) {
+                    container.authService.loginWithApiKey(serverUrl, savedApiKey)
+                } else {
+                    container.authService.login(serverUrl, email, password)
+                }
             }.onSuccess {
-                container.biometricStore.authenticateToSaveCredentials(
-                    activity = act,
-                    serverUrl = container.tokenStore.serverUrl ?: serverUrl,
-                    email = container.tokenStore.lastEmail ?: email,
-                    password = password,
-                ) { success, reason ->
-                    busy = false
-                    enabled = container.biometricStore.canUnlock
-                    if (success) {
-                        password = ""
-                        message = "Biometric login enabled."
-                    } else if (!reason.isNullOrBlank()) {
-                        message = reason
+                if (apiKeyMode) {
+                    container.biometricStore.authenticateToSaveApiKeyCredentials(
+                        activity = act,
+                        serverUrl = container.tokenStore.serverUrl ?: serverUrl,
+                        apiKey = savedApiKey,
+                    ) { success, reason ->
+                        busy = false
+                        enabled = container.biometricStore.canUnlock
+                        if (success) {
+                            message = "Biometric login enabled for API key."
+                        } else if (!reason.isNullOrBlank()) {
+                            message = reason
+                        }
+                    }
+                } else {
+                    container.biometricStore.authenticateToSaveCredentials(
+                        activity = act,
+                        serverUrl = container.tokenStore.serverUrl ?: serverUrl,
+                        email = container.tokenStore.lastEmail ?: email,
+                        password = password,
+                    ) { success, reason ->
+                        busy = false
+                        enabled = container.biometricStore.canUnlock
+                        if (success) {
+                            password = ""
+                            message = "Biometric login enabled."
+                        } else if (!reason.isNullOrBlank()) {
+                            message = reason
+                        }
                     }
                 }
             }.onFailure { throwable ->
@@ -359,7 +387,9 @@ private fun BiometricLoginRow(defaultEmail: String?) {
             Text("Biometric login", style = MaterialTheme.typography.bodyMedium)
             Text(
                 when {
+                    enabled && container.biometricStore.prefersApiKeyLogin() -> "Enabled for saved API key."
                     enabled -> "Enabled for ${container.tokenStore.biometricEmail ?: email.ifBlank { "saved login" }}"
+                    apiKeyMode && canEnroll -> "Enable biometrics for the API key you used to sign in."
                     canEnroll -> "Enter your password, then enable biometrics."
                     else -> "No strong biometric method is available."
                 },
@@ -389,7 +419,14 @@ private fun BiometricLoginRow(defaultEmail: String?) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    if (email.isNotBlank()) {
+    if (apiKeyMode) {
+        Spacer(Modifier.height(2.dp))
+        Text(
+            "Credential: saved API key",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    } else if (email.isNotBlank()) {
         Spacer(Modifier.height(2.dp))
         Text(
             "Email: $email",
@@ -397,20 +434,22 @@ private fun BiometricLoginRow(defaultEmail: String?) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-    Spacer(Modifier.height(8.dp))
-    OutlinedTextField(
-        value = password,
-        onValueChange = {
-            password = it
-            if (message == "Enter your current Agor password to enable biometric login.") message = null
-        },
-        label = { Text("Current password") },
-        singleLine = true,
-        enabled = !busy && canEnroll,
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-        modifier = Modifier.fillMaxWidth().testTag("settings-biometric-password"),
-    )
+    if (!apiKeyMode) {
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = password,
+            onValueChange = {
+                password = it
+                if (message == "Enter your current Agor password to enable biometric login.") message = null
+            },
+            label = { Text("Current password") },
+            singleLine = true,
+            enabled = !busy && canEnroll,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth().testTag("settings-biometric-password"),
+        )
+    }
     Spacer(Modifier.height(4.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {
         TextButton(

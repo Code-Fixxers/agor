@@ -419,6 +419,14 @@ private fun VoiceStatusBar(
                     }
                 }
             }
+            state.lastDiagnostic?.let { diagnostic ->
+                Text(
+                    diagnostic,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
         }
     }
 }

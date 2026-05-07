@@ -49,15 +49,24 @@ class TranscriptionService(
         }
 
     override suspend fun transcribe(samples: ShortArray): TranscriptionResult {
+        AppLogger.log("Transcription requested: samples=${samples.size} remote=${remote != null} localReady=${isOnDeviceReady()}", LogLevel.INFO, "Voice")
         val remoteProvider = remote
         if (remoteProvider != null) {
             runCatching { remoteProvider.transcribe(samples) }
-                .onSuccess { return it.copy(text = cleanTranscript(it.text)) }
+                .onSuccess {
+                    val cleaned = cleanTranscript(it.text)
+                    AppLogger.log("Remote Whisper succeeded: chars=${cleaned.length}", LogLevel.INFO, "Voice")
+                    return it.copy(text = cleaned)
+                }
                 .onFailure {
                     AppLogger.log("Remote Whisper failed, falling back local: ${it.message}", LogLevel.WARNING, "Voice")
                 }
         }
-        return local.transcribe(samples).let { it.copy(text = cleanTranscript(it.text)) }
+        return local.transcribe(samples).let {
+            val cleaned = cleanTranscript(it.text)
+            AppLogger.log("Local Whisper result: source=${it.source} chars=${cleaned.length}", LogLevel.INFO, "Voice")
+            it.copy(text = cleaned)
+        }
     }
 
     fun defaultModelPath(): File = local.defaultModelPath()
@@ -86,7 +95,12 @@ class LocalWhisperTranscriber(
         val w = whisper ?: return@withContext TranscriptionResult("", "local-unavailable")
         val floats = FloatArray(samples.size)
         for (i in samples.indices) floats[i] = samples[i] / 32768f
-        TranscriptionResult(w.transcribe(floats, AudioCapture.SAMPLE_RATE), "local")
+        val text = runCatching {
+            w.transcribe(floats, AudioCapture.SAMPLE_RATE)
+        }.onFailure {
+            AppLogger.log("Local Whisper JNI failed: ${it.message}", LogLevel.ERROR, "Voice")
+        }.getOrDefault("")
+        TranscriptionResult(text, "local")
     }
 
     private fun ensureModelFile(): File? {
@@ -109,6 +123,7 @@ class RemoteWhisperTranscriber(
         .build()
 
     override suspend fun transcribe(samples: ShortArray): TranscriptionResult = withContext(Dispatchers.IO) {
+        AppLogger.log("Remote Whisper POST $baseUrl/inference samples=${samples.size}", LogLevel.INFO, "Voice")
         val wav = encodeWav(samples)
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)

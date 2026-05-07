@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import live.agor.app.util.LogEntry
 import live.agor.app.auth.SecureTokenStore
 import live.agor.app.data.HermesSessionEvent
 import live.agor.app.data.HermesSessionStore
@@ -40,6 +41,7 @@ data class HermesVoiceState(
     val errorMessage: String? = null,
     val needsWhisperDownload: Boolean = false,
     val modelDownloadInProgress: Boolean = false,
+    val lastDiagnostic: String? = null,
 )
 
 /**
@@ -68,6 +70,7 @@ class HermesVoiceManager(
     private var transcriptionJob: Job? = null
     private var reviewJob: Job? = null
     private var eventJob: Job? = null
+    private var logJob: Job? = null
     private var streamBuffer = ""
     private var streamedCurrentReply = false
     private var hermesRunning = false
@@ -99,6 +102,14 @@ class HermesVoiceManager(
                 startCaptureIfNeeded()
             }
         }
+        _state.value = _state.value.copy(lastDiagnostic = latestVoiceLog())
+        logJob = scope.launch {
+            AppLogger.stream.collect { entry ->
+                if (entry.category == "Voice" || entry.category == "TTS") {
+                    _state.value = _state.value.copy(lastDiagnostic = entry.toDiagnostic())
+                }
+            }
+        }
         eventJob = scope.launch {
             sessions.events.collect { event -> handleHermesEvent(event) }
         }
@@ -128,6 +139,7 @@ class HermesVoiceManager(
     fun start() {
         if (_state.value.enabled) return
         if (!audio.hasPermission()) {
+            AppLogger.log("Hermes voice start rejected: missing microphone permission", LogLevel.WARNING, "Voice")
             _state.value = _state.value.copy(
                 enabled = false,
                 phase = HermesVoicePhase.Error,
@@ -135,11 +147,13 @@ class HermesVoiceManager(
             )
             return
         }
+        AppLogger.log("Hermes voice start requested", LogLevel.INFO, "Voice")
         _state.value = _state.value.copy(enabled = true, phase = HermesVoicePhase.LoadingModels, errorMessage = null)
         startCaptureIfNeeded()
     }
 
     fun stop() {
+        AppLogger.log("Hermes voice stop requested", LogLevel.INFO, "Voice")
         transcriptionJob?.cancel()
         reviewJob?.cancel()
         transcriptionJob = null
@@ -218,6 +232,7 @@ class HermesVoiceManager(
     fun release() {
         stop()
         eventJob?.cancel()
+        logJob?.cancel()
         tts.shutdown()
         audio.close()
         scope.cancel()
@@ -227,7 +242,15 @@ class HermesVoiceManager(
         if (!_state.value.enabled || hermesRunning) return
         if (_state.value.phase == HermesVoicePhase.Listening || _state.value.phase == HermesVoicePhase.Recording) return
         setPhase(HermesVoicePhase.LoadingModels)
-        audio.start()
+        if (!audio.start()) {
+            vad.stop()
+            _state.value = _state.value.copy(
+                enabled = false,
+                phase = HermesVoicePhase.Error,
+                errorMessage = "Microphone capture could not start. Check Android microphone permission/privacy indicators.",
+            )
+            return
+        }
         vad.start()
         setPhase(HermesVoicePhase.Listening)
     }
@@ -242,9 +265,11 @@ class HermesVoiceManager(
         val pcm = audio.stopBufferingAndDrain()
         pauseCapture()
         if (pcm.isEmpty()) {
+            AppLogger.log("Hermes voice transcription skipped: empty audio buffer", LogLevel.WARNING, "Voice")
             startCaptureIfNeeded()
             return
         }
+        AppLogger.log("Hermes voice transcribing ${pcm.size} PCM samples", LogLevel.INFO, "Voice")
         val result = transcriber.transcribe(pcm)
         val text = result.text.trim()
         if (text.isBlank()) {
@@ -260,6 +285,7 @@ class HermesVoiceManager(
             startCaptureIfNeeded()
             return
         }
+        AppLogger.log("Hermes voice transcript accepted from ${result.source}: ${text.take(120)}", LogLevel.INFO, "Voice")
         _state.value = _state.value.copy(phase = HermesVoicePhase.Reviewing, pendingTranscript = text)
         reviewJob?.cancel()
         reviewJob = scope.launch {
@@ -358,4 +384,10 @@ class HermesVoiceManager(
         const val REVIEW_DELAY_MS = 5_000L
         const val MAX_TTS_CHARS = 600
     }
+
+    private fun latestVoiceLog(): String? = AppLogger.snapshot()
+        .lastOrNull { it.category == "Voice" || it.category == "TTS" }
+        ?.toDiagnostic()
+
+    private fun LogEntry.toDiagnostic(): String = "[${level.name}] $category: $message"
 }

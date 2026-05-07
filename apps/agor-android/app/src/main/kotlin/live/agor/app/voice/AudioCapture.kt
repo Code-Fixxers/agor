@@ -44,17 +44,21 @@ class AudioCapture(private val context: Context) {
             PackageManager.PERMISSION_GRANTED
 
     @SuppressLint("MissingPermission")
-    fun start() {
-        if (running.get()) return
+    fun start(): Boolean {
+        if (running.get()) return true
         if (!hasPermission()) {
             AppLogger.log("AudioCapture: missing RECORD_AUDIO permission", LogLevel.WARNING, "Voice")
-            return
+            return false
         }
         val minBuf = AudioRecord.getMinBufferSize(
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
         )
+        if (minBuf <= 0) {
+            AppLogger.log("AudioRecord min buffer invalid: $minBuf", LogLevel.ERROR, "Voice")
+            return false
+        }
         val bufferSize = (minBuf * 4).coerceAtLeast(SAMPLE_RATE)
         val record = AudioRecord(
             MediaRecorder.AudioSource.VOICE_RECOGNITION,
@@ -65,18 +69,39 @@ class AudioCapture(private val context: Context) {
         )
         if (record.state != AudioRecord.STATE_INITIALIZED) {
             AppLogger.log("AudioRecord init failed", LogLevel.ERROR, "Voice")
-            return
+            record.release()
+            return false
+        }
+        val started = runCatching {
+            record.startRecording()
+            record.recordingState == AudioRecord.RECORDSTATE_RECORDING
+        }.getOrElse {
+            AppLogger.log("AudioRecord start failed: ${it.message}", LogLevel.ERROR, "Voice")
+            false
+        }
+        if (!started) {
+            AppLogger.log("AudioRecord did not enter recording state", LogLevel.ERROR, "Voice")
+            record.release()
+            return false
         }
         running.set(true)
-        record.startRecording()
+        AppLogger.log("AudioCapture started: minBuf=$minBuf bufferSize=$bufferSize frame=$FRAME_SAMPLES", LogLevel.INFO, "Voice")
 
         captureJob = scope.launch {
             val shortBuf = ShortArray(FRAME_SAMPLES)
             val floatBuf = FloatArray(FRAME_SAMPLES)
+            var lastReadError = 0
             try {
                 while (isActive && running.get()) {
                     val read = record.read(shortBuf, 0, FRAME_SAMPLES)
-                    if (read <= 0) continue
+                    if (read <= 0) {
+                        if (read != lastReadError) {
+                            lastReadError = read
+                            AppLogger.log("AudioRecord read returned $read", LogLevel.WARNING, "Voice")
+                        }
+                        continue
+                    }
+                    lastReadError = 0
                     for (i in 0 until read) {
                         floatBuf[i] = shortBuf[i] / 32768f
                     }
@@ -99,8 +124,10 @@ class AudioCapture(private val context: Context) {
             } finally {
                 runCatching { record.stop() }
                 runCatching { record.release() }
+                AppLogger.log("AudioCapture stopped", LogLevel.INFO, "Voice")
             }
         }
+        return true
     }
 
     fun stop() {
@@ -121,6 +148,7 @@ class AudioCapture(private val context: Context) {
             }
         }
         recordingActive = true
+        AppLogger.log("AudioCapture buffering started: preRoll=${preRollCapacity} samples", LogLevel.DEBUG, "Voice")
     }
 
     /** Returns the accumulated speech segment as 16-bit PCM at 16kHz, then clears. */
@@ -130,6 +158,7 @@ class AudioCapture(private val context: Context) {
             val arr = ShortArray(captureBuffer.size)
             for ((i, v) in captureBuffer.withIndex()) arr[i] = v
             captureBuffer.clear()
+            AppLogger.log("AudioCapture drained ${arr.size} samples", LogLevel.INFO, "Voice")
             arr
         }
     }
