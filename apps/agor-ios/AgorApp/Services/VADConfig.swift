@@ -9,7 +9,7 @@ struct VADConfig: Codable, Equatable {
     /// FluidAudio speech probability threshold (0.0–1.0).
     /// Lower = more sensitive (catches quieter speech but more false positives).
     /// Recommended: 0.3–0.6 for noisy, 0.7–0.9 for clean environments.
-    var threshold: Float = 0.6
+    var threshold: Float = 0.7
 
     // MARK: - Timing
 
@@ -29,6 +29,6 @@ struct VADConfig: Codable, Equatable {
 
     /// Inverse: maps a FluidAudio threshold back to sensitivity.
     static func sensitivity(for threshold: Float) -> Float {
-        max(0.0, min(1.0, (0.9 - threshold) / 0.6))
+        (0.9 - threshold) / 0.6
     }
 }

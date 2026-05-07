@@ -97,22 +97,19 @@ final class ContinuousVoiceService {
         playTone(frequency: 1046, duration: 0.08)  // C6 — "ready" ding
 
         // FluidAudio fires onCalibrationComplete immediately (no calibration needed).
-        // Recording readiness is set before VAD starts below so an early speechStart
-        // event cannot be dropped while this service is still in .preparing.
         vad.onCalibrationComplete = { [weak self] in
-            guard self != nil else { return }
-            AppLogger.shared.log("[Voice] ✅ FluidAudio calibration complete", level: .info, category: "Voice")
+            guard let self, self.state == .preparing else { return }
+            self.state = .listening
+            self.startPreRollRecorder()
+            AppLogger.shared.log("[Voice] ✅ FluidAudio ready — now listening", level: .info, category: "Voice")
         }
 
         // Brief delay so the beep doesn't land in the pre-roll recording
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self, self.state == .preparing else { return }
-            self.state = .listening
             do {
                 try self.vad.startListening()
-                self.startPreRollRecorder()
                 AppLogger.shared.log("[Voice] VAD started (FluidAudio Silero)", level: .info, category: "Voice")
-                AppLogger.shared.log("[Voice] ✅ FluidAudio ready — now listening", level: .info, category: "Voice")
             } catch {
                 AppLogger.shared.log("[Voice] ❌ VAD start failed: \(error.localizedDescription)", level: .error, category: "Voice")
                 self.state = .disabled
@@ -443,7 +440,7 @@ final class ContinuousVoiceService {
     /// Direct access to VAD tuning constants — change at any time.
     var vadConfig: VADConfig {
         get { vad.config }
-        set { vad.applyConfig(newValue) }
+        set { vad.config = newValue }
     }
 
     func setSensitivity(_ sensitivity: Float) {
