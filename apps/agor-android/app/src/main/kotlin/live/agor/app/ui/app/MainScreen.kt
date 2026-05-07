@@ -81,9 +81,20 @@ fun MainScreen(app: AppViewModel) {
     LaunchedEffect(Unit) { updateVm.checkSilently() }
     DisposableEffect(Unit) { onDispose { nav.stop() } }
     DisposableEffect(processLifecycle) {
+        var returnedFromBackground = false
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
-                container.hermesVoice.stopForBackground()
+            when (event) {
+                Lifecycle.Event.ON_START -> {
+                    if (returnedFromBackground) {
+                        returnedFromBackground = false
+                        app.lockForBiometricIfNeeded()
+                    }
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    returnedFromBackground = true
+                    container.hermesVoice.stopForBackground()
+                }
+                else -> Unit
             }
         }
         processLifecycle.addObserver(observer)

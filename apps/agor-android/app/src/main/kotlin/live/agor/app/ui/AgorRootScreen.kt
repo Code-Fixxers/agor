@@ -14,6 +14,7 @@ import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.lifecycle.viewmodel.compose.viewModel
 import live.agor.app.LocalAppContainer
 import live.agor.app.auth.AuthState
+import live.agor.app.ui.app.BiometricUnlockScreen
 import live.agor.app.ui.app.ConnectionSetupScreen
 import live.agor.app.ui.app.MainScreen
 import live.agor.app.viewmodels.AppViewModel
@@ -34,6 +35,10 @@ fun AgorRootScreen() {
             when (auth) {
                 AuthState.Unknown -> Unit
                 AuthState.NeedsLogin -> ConnectionSetupScreen(onLoginSuccess = { app.onLoginSuccess() })
+                AuthState.NeedsBiometricUnlock -> BiometricUnlockScreen(
+                    onUnlockSuccess = { app.onLoginSuccess() },
+                    onLogout = { app.logout() },
+                )
                 AuthState.Authenticated -> MainScreen(app = app)
             }
         }

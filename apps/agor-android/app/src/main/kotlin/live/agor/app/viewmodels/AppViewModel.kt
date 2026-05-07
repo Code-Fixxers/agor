@@ -62,6 +62,12 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         container.socket.connect()
     }
 
+    fun lockForBiometricIfNeeded() {
+        if (container.authService.lockForBiometricIfEnabled()) {
+            container.socket.disconnect()
+        }
+    }
+
     fun showToast(text: String) { _toast.value = text }
     fun consumeToast() { _toast.value = null }
 

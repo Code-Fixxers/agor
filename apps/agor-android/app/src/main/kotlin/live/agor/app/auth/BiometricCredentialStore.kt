@@ -130,6 +130,7 @@ class BiometricCredentialStore(
 
     fun authenticateWithBiometrics(
         activity: FragmentActivity,
+        negativeButtonText: String = "Use password",
         onSuccess: (String) -> Unit,
         onFailure: (String?) -> Unit,
     ) {
@@ -181,7 +182,7 @@ class BiometricCredentialStore(
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
             .setTitle("Sign in")
             .setSubtitle("Use biometrics to unlock your saved credentials")
-            .setNegativeButtonText("Use password")
+            .setNegativeButtonText(negativeButtonText)
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
             .build()
         prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(decryptCipher))

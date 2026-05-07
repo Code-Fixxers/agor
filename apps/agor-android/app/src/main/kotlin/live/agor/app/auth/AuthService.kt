@@ -9,7 +9,7 @@ import live.agor.app.network.AgorClient
 import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
 
-enum class AuthState { Unknown, NeedsLogin, Authenticated }
+enum class AuthState { Unknown, NeedsLogin, NeedsBiometricUnlock, Authenticated }
 
 /**
  * Coordinates client + token store: smart-URL probe, login, restore-on-launch,
@@ -35,6 +35,12 @@ class AuthService(
             return
         }
         client.setBaseUrl(url)
+        if (biometricStore.canUnlock) {
+            tokens.clearTokensKeepUrl()
+            _user.value = null
+            _state.value = AuthState.NeedsBiometricUnlock
+            return
+        }
         if (!token.isNullOrEmpty()) {
             try {
                 val u = client.me()
@@ -52,6 +58,27 @@ class AuthService(
         } else {
             AuthState.NeedsLogin
         }
+    }
+
+    suspend fun loginWithBiometricSecret(secret: String) {
+        val url = tokens.biometricServerUrl ?: tokens.serverUrl
+            ?: throw AgorClient.HttpException(0, "No saved server for biometric login", "")
+        if (biometricStore.prefersApiKeyLogin()) {
+            loginWithApiKey(url, secret)
+            return
+        }
+
+        val email = tokens.biometricEmail ?: tokens.lastEmail
+            ?: throw AgorClient.HttpException(0, "No saved email for biometric login", "")
+        login(url, email, secret)
+    }
+
+    fun lockForBiometricIfEnabled(): Boolean {
+        if (_state.value != AuthState.Authenticated || !biometricStore.canUnlock) return false
+        tokens.clearTokensKeepUrl()
+        _user.value = null
+        _state.value = AuthState.NeedsBiometricUnlock
+        return true
     }
 
     suspend fun login(rawUrl: String, email: String, password: String) {
