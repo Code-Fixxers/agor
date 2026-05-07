@@ -126,6 +126,15 @@ fun PromptInputBar(
                     },
                     modifier = Modifier.testTag("prompt-voice-status"),
                 )
+                voiceState.liveTranscript?.takeIf { it.isNotBlank() }?.let { partial ->
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = partial,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("prompt-voice-partial"),
+                    )
+                }
                 if (voiceState.phase == PromptVoicePhase.Listening || voiceState.phase == PromptVoicePhase.Recording) {
                     Spacer(Modifier.height(4.dp))
                     LinearProgressIndicator(
@@ -156,7 +165,7 @@ private fun voiceStatusLabel(state: PromptVoiceInputState): String {
         PromptVoicePhase.Idle -> ""
         PromptVoicePhase.LoadingModels -> "Loading voice input..."
         PromptVoicePhase.Listening -> "Listening..."
-        PromptVoicePhase.Recording -> "Recording..."
+        PromptVoicePhase.Recording -> if (state.liveTranscript.isNullOrBlank()) "Recording..." else "Live transcribing..."
         PromptVoicePhase.Transcribing -> "Transcribing..."
         PromptVoicePhase.Error -> state.errorMessage ?: "Voice input failed"
     }

@@ -6,9 +6,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import live.agor.app.auth.SecureTokenStore
 import live.agor.app.util.AppLogger
@@ -30,6 +32,7 @@ data class PromptVoiceInputState(
     val errorMessage: String? = null,
     val needsWhisperDownload: Boolean = false,
     val modelDownloadInProgress: Boolean = false,
+    val liveTranscript: String? = null,
 )
 
 /**
@@ -53,15 +56,19 @@ class PromptVoiceInputController(
     val state: StateFlow<PromptVoiceInputState> = _state.asStateFlow()
 
     var onTranscribed: ((String) -> Unit)? = null
+    var onPartialTranscribed: ((String) -> Unit)? = null
 
     private var modelPreparationJob: Job? = null
     private var transcriptionJob: Job? = null
+    private var liveTranscriptionJob: Job? = null
+    private var lastPartialTranscript = ""
 
     init {
         vad.onSpeechStart = {
             if (_state.value.phase == PromptVoicePhase.Listening) {
                 audio.startBuffering(vad.config.preRollMillis)
                 setPhase(PromptVoicePhase.Recording)
+                startLiveTranscription()
             } else {
                 AppLogger.log(
                     "Prompt voice ignored speech start while phase=${_state.value.phase}",
@@ -71,6 +78,8 @@ class PromptVoiceInputController(
             }
         }
         vad.onSpeechEnd = {
+            liveTranscriptionJob?.cancel()
+            liveTranscriptionJob = null
             transcriptionJob?.cancel()
             transcriptionJob = scope.launch { transcribeCurrentBuffer() }
         }
@@ -109,13 +118,17 @@ class PromptVoiceInputController(
         modelPreparationJob?.cancel()
         modelPreparationJob = null
         if (_state.value.phase == PromptVoicePhase.Recording) {
+            liveTranscriptionJob?.cancel()
+            liveTranscriptionJob = null
             if (transcriptionJob?.isActive == true) return
             transcriptionJob = scope.launch { transcribeCurrentBuffer() }
             AppLogger.log("Prompt voice recording stopped; transcribing buffered audio", LogLevel.INFO, "Voice")
             return
         }
         transcriptionJob?.cancel()
+        liveTranscriptionJob?.cancel()
         transcriptionJob = null
+        liveTranscriptionJob = null
         stopCapture()
         resetState()
         AppLogger.log("Prompt voice dictation cancelled", LogLevel.INFO, "Voice")
@@ -189,6 +202,8 @@ class PromptVoiceInputController(
 
     private suspend fun transcribeCurrentBuffer() {
         setPhase(PromptVoicePhase.Transcribing)
+        liveTranscriptionJob?.cancel()
+        liveTranscriptionJob = null
         val pcm = audio.stopBufferingAndDrain()
         stopCapture()
         if (pcm.isEmpty()) {
@@ -222,11 +237,40 @@ class PromptVoiceInputController(
         vad.stop()
     }
 
+    private fun startLiveTranscription() {
+        liveTranscriptionJob?.cancel()
+        lastPartialTranscript = ""
+        liveTranscriptionJob = scope.launch {
+            delay(LIVE_TRANSCRIPTION_INITIAL_DELAY_MS)
+            while (isActive && _state.value.phase == PromptVoicePhase.Recording) {
+                val pcm = audio.snapshotBufferedAudio()
+                if (pcm.size >= LIVE_TRANSCRIPTION_MIN_SAMPLES) {
+                    transcriber.transcribeRemoteOnly(pcm)?.text
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() && it != lastPartialTranscript }
+                        ?.let { partial ->
+                            lastPartialTranscript = partial
+                            _state.value = _state.value.copy(liveTranscript = partial)
+                            onPartialTranscribed?.invoke(partial)
+                        }
+                }
+                delay(LIVE_TRANSCRIPTION_INTERVAL_MS)
+            }
+        }
+    }
+
     private fun resetState() {
+        lastPartialTranscript = ""
         _state.value = PromptVoiceInputState(threshold = vad.config.threshold)
     }
 
     private fun setPhase(phase: PromptVoicePhase) {
         _state.value = _state.value.copy(phase = phase, errorMessage = null, needsWhisperDownload = false)
+    }
+
+    private companion object {
+        const val LIVE_TRANSCRIPTION_INITIAL_DELAY_MS = 1_200L
+        const val LIVE_TRANSCRIPTION_INTERVAL_MS = 1_200L
+        const val LIVE_TRANSCRIPTION_MIN_SAMPLES = AudioCapture.SAMPLE_RATE
     }
 }

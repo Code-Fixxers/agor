@@ -163,6 +163,15 @@ class AudioCapture(private val context: Context) {
         }
     }
 
+    /** Returns a copy of the currently buffered speech without stopping capture. */
+    fun snapshotBufferedAudio(): ShortArray {
+        return synchronized(captureBuffer) {
+            val arr = ShortArray(captureBuffer.size)
+            for ((i, v) in captureBuffer.withIndex()) arr[i] = v
+            arr
+        }
+    }
+
     fun close() {
         stop()
         scope.cancel()

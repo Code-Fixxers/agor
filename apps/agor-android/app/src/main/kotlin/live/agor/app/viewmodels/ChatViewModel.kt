@@ -37,6 +37,7 @@ import live.agor.app.ui.chat.ChatRowFlattener
 import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
 import live.agor.app.voice.PromptVoiceInputController
+import live.agor.app.voice.PromptVoicePhase
 import java.io.IOException
 import java.util.UUID
 
@@ -104,6 +105,7 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
 
     private val rowFlattener = ChatRowFlattener()
     private var cacheSaveJob: Job? = null
+    private var voiceDraftPrefix: String? = null
 
     /** Lazy derivation — scans messages from the end, returns first pending. */
     val pendingPermissionId: StateFlow<String?> = _messages
@@ -136,14 +138,11 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
+        promptVoice.onPartialTranscribed = { text ->
+            viewModelScope.launch { applyVoiceDraft(text, final = false) }
+        }
         promptVoice.onTranscribed = { text ->
-            viewModelScope.launch {
-                _uiState.update { current ->
-                    val draft = current.draft.trimEnd()
-                    val next = if (draft.isBlank()) text else "$draft $text"
-                    current.copy(draft = next)
-                }
-            }
+            viewModelScope.launch { applyVoiceDraft(text, final = true) }
         }
         container.socket.onMessageCreated { msg ->
             if (msg.sessionId != sessionId) return@onMessageCreated
@@ -244,11 +243,15 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
     fun hasMicPermission(): Boolean = promptVoice.hasMicPermission()
 
     fun startVoiceInput() {
+        voiceDraftPrefix = _uiState.value.draft.trimEnd()
         promptVoice.start()
     }
 
     fun stopVoiceInput() {
         promptVoice.stop()
+        if (promptVoiceState.value.phase != PromptVoicePhase.Recording) {
+            voiceDraftPrefix = null
+        }
     }
 
     fun downloadVoiceWhisperModel() {
@@ -406,6 +409,17 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         for (m in existing) byId[m.messageId] = m
         for (m in incoming) byId[m.messageId] = m
         return byId.values.sortedBy { it.index }
+    }
+
+    private fun applyVoiceDraft(text: String, final: Boolean) {
+        val transcript = text.trim()
+        if (transcript.isBlank()) return
+        _uiState.update { current ->
+            val prefix = voiceDraftPrefix ?: current.draft.trimEnd().also { voiceDraftPrefix = it }
+            val next = if (prefix.isBlank()) transcript else "$prefix $transcript"
+            current.copy(draft = next)
+        }
+        if (final) voiceDraftPrefix = null
     }
 
     private fun readAttachment(uri: Uri): PendingSessionAttachment {

@@ -69,6 +69,20 @@ class TranscriptionService(
         }
     }
 
+    suspend fun transcribeRemoteOnly(samples: ShortArray): TranscriptionResult? {
+        val remoteProvider = remote ?: return null
+        return runCatching { remoteProvider.transcribe(samples) }
+            .map {
+                val cleaned = cleanTranscript(it.text)
+                AppLogger.log("Remote Whisper partial succeeded: chars=${cleaned.length}", LogLevel.DEBUG, "Voice")
+                it.copy(text = cleaned)
+            }
+            .onFailure {
+                AppLogger.log("Remote Whisper partial failed: ${it.message}", LogLevel.WARNING, "Voice")
+            }
+            .getOrNull()
+    }
+
     fun defaultModelPath(): File = local.defaultModelPath()
     fun isOnDeviceReady(): Boolean = local.isReady()
     suspend fun downloadOnDeviceModel(): File = models.downloadWhisperModel()
@@ -123,7 +137,7 @@ class RemoteWhisperTranscriber(
         .build()
 
     override suspend fun transcribe(samples: ShortArray): TranscriptionResult = withContext(Dispatchers.IO) {
-        AppLogger.log("Remote Whisper POST $baseUrl/inference samples=${samples.size}", LogLevel.INFO, "Voice")
+        AppLogger.log("Remote Whisper POST $baseUrl/v1/audio/transcriptions samples=${samples.size}", LogLevel.INFO, "Voice")
         val wav = encodeWav(samples)
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
@@ -135,17 +149,29 @@ class RemoteWhisperTranscriber(
             .addFormDataPart("temperature", "0.0")
             .addFormDataPart("response_format", "json")
             .build()
+        val openAiResult = runCatching {
+            postTranscription("$baseUrl/v1/audio/transcriptions", body)
+        }.getOrElse { error ->
+            if ((error as? WhisperHttpException)?.statusCode != 404) throw error
+            AppLogger.log("Remote Whisper v1 endpoint unavailable, falling back to /inference", LogLevel.WARNING, "Voice")
+            null
+        }
+        if (openAiResult != null) return@withContext openAiResult
+        postTranscription("$baseUrl/inference", body)
+    }
+
+    private fun postTranscription(url: String, body: MultipartBody): TranscriptionResult {
         val req = Request.Builder()
-            .url("$baseUrl/inference")
+            .url(url)
             .header("Accept", "application/json")
             .apply {
                 if (!bearer.isNullOrBlank()) header("Authorization", "Bearer $bearer")
             }
             .post(body)
             .build()
-        http.newCall(req).execute().use { resp ->
+        return http.newCall(req).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) throw IOException("Whisper ${resp.code}: ${text.take(300)}")
+            if (!resp.isSuccessful) throw WhisperHttpException(resp.code, "Whisper ${resp.code}: ${text.take(300)}")
             TranscriptionResult(parseRemoteText(text), "remote")
         }
     }
@@ -176,6 +202,8 @@ class RemoteWhisperTranscriber(
         return out.toString()
     }
 }
+
+private class WhisperHttpException(val statusCode: Int, message: String) : IOException(message)
 
 fun cleanTranscript(raw: String): String {
     return raw
