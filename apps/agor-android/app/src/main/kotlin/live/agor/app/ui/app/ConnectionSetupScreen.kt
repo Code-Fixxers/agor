@@ -32,9 +32,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.fragment.app.FragmentActivity
 import kotlinx.coroutines.launch
 import live.agor.app.LocalAppContainer
+import live.agor.app.ui.common.findFragmentActivity
 
 private enum class LoginMode {
     Credentials,
@@ -52,7 +52,7 @@ fun ConnectionSetupScreen(onLoginSuccess: () -> Unit) {
     val container = LocalAppContainer.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val activity = remember(context) { context as? FragmentActivity }
+    val activity = remember(context) { context.findFragmentActivity() }
 
     var mode by remember {
         mutableStateOf(if (container.biometricStore.prefersApiKeyLogin()) LoginMode.ApiKey else LoginMode.Credentials)

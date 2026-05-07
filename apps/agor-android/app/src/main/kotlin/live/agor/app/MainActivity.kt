@@ -2,10 +2,10 @@ package live.agor.app
 
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -18,7 +18,7 @@ import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
 import live.agor.app.ui.theme.AgorTheme
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     private companion object {
         const val ACTION_NATIVE_LOGIN = "live.agor.app.action.NATIVE_LOGIN"

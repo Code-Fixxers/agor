@@ -40,12 +40,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.viewmodel.compose.viewModel
 import live.agor.app.BuildConfig
 import live.agor.app.LocalAppContainer
 import live.agor.app.network.ConnectionState
 import live.agor.app.ui.common.ConnectionIndicator
+import live.agor.app.ui.common.findFragmentActivity
 import live.agor.app.ui.simpleViewModelFactory
 import live.agor.app.viewmodels.AppViewModel
 import live.agor.app.viewmodels.UpdateViewModel
@@ -299,7 +299,7 @@ private fun WhisperServerRow() {
 private fun BiometricLoginRow(defaultEmail: String?) {
     val container = LocalAppContainer.current
     val context = LocalContext.current
-    val activity = remember(context) { context as? FragmentActivity }
+    val activity = remember(context) { context.findFragmentActivity() }
     val scope = rememberCoroutineScope()
 
     var enabled by remember { mutableStateOf(container.biometricStore.canUnlock) }
