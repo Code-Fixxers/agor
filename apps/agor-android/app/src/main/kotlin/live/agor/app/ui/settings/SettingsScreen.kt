@@ -50,6 +50,9 @@ import live.agor.app.viewmodels.AppViewModel
 import live.agor.app.viewmodels.UpdateViewModel
 import kotlinx.coroutines.launch
 
+private const val DEFAULT_WHISPER_EN_URL = "http://100.101.157.56:8080"
+private const val DEFAULT_WHISPER_CZ_URL = "http://100.101.157.56:8082"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -155,6 +158,11 @@ fun SettingsScreen(
             Spacer(Modifier.height(24.dp))
             Divider()
             Spacer(Modifier.height(16.dp))
+            WhisperServerRow()
+
+            Spacer(Modifier.height(24.dp))
+            Divider()
+            Spacer(Modifier.height(16.dp))
             Text("About", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
             Text("Version ${BuildConfig.VERSION_NAME} · ${BuildConfig.GIT_SHA}",
@@ -174,6 +182,114 @@ fun SettingsScreen(
                 Text("Sign out")
             }
         }
+    }
+}
+
+@Composable
+private fun WhisperServerRow() {
+    val container = LocalAppContainer.current
+    var whisperUrl by remember {
+        mutableStateOf(container.tokenStore.remoteWhisperUrl ?: DEFAULT_WHISPER_EN_URL)
+    }
+    var whisperToken by remember { mutableStateOf(container.tokenStore.remoteWhisperToken ?: "") }
+    var message by remember { mutableStateOf<String?>(null) }
+    val savedUrl = container.tokenStore.remoteWhisperUrl
+
+    fun saveWhisperSettings() {
+        container.tokenStore.remoteWhisperUrl = whisperUrl.trim().trimEnd('/').ifBlank { null }
+        container.tokenStore.remoteWhisperToken = whisperToken.trim().ifBlank { null }
+        message = container.tokenStore.remoteWhisperUrl?.let { "Remote Whisper saved: $it" }
+            ?: "Remote Whisper disabled. Local Whisper will be used if available."
+    }
+
+    Text("Whisper transcription", style = MaterialTheme.typography.titleMedium)
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "Voice mode can use your self-hosted whisper.cpp server before falling back to bundled local Whisper.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        savedUrl?.takeIf { it.isNotBlank() } ?: "Not configured",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(8.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TextButton(
+            onClick = {
+                whisperUrl = DEFAULT_WHISPER_EN_URL
+                message = "English Whisper selected. Save to apply."
+            },
+            modifier = Modifier.weight(1f).testTag("settings-whisper-en"),
+        ) {
+            Text("Use EN")
+        }
+        Spacer(Modifier.width(8.dp))
+        TextButton(
+            onClick = {
+                whisperUrl = DEFAULT_WHISPER_CZ_URL
+                message = "Czech Whisper selected. Save to apply."
+            },
+            modifier = Modifier.weight(1f).testTag("settings-whisper-cz"),
+        ) {
+            Text("Use CZ")
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = whisperUrl,
+        onValueChange = {
+            whisperUrl = it
+            message = null
+        },
+        label = { Text("Remote Whisper URL") },
+        placeholder = { Text(DEFAULT_WHISPER_EN_URL) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        modifier = Modifier.fillMaxWidth().testTag("settings-whisper-url"),
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = whisperToken,
+        onValueChange = {
+            whisperToken = it
+            message = null
+        },
+        label = { Text("Remote Whisper token") },
+        singleLine = true,
+        visualTransformation = PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        modifier = Modifier.fillMaxWidth().testTag("settings-whisper-token"),
+    )
+    Spacer(Modifier.height(8.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TextButton(
+            onClick = {
+                whisperUrl = ""
+                whisperToken = ""
+                saveWhisperSettings()
+            },
+            modifier = Modifier.weight(1f).testTag("settings-whisper-clear"),
+        ) {
+            Text("Disable")
+        }
+        Spacer(Modifier.width(8.dp))
+        TextButton(
+            onClick = ::saveWhisperSettings,
+            modifier = Modifier.weight(1f).testTag("settings-whisper-save"),
+        ) {
+            Text("Save Whisper")
+        }
+    }
+    message?.let {
+        Spacer(Modifier.height(4.dp))
+        Text(
+            it,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
