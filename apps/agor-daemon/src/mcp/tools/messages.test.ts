@@ -72,7 +72,16 @@ async function registerAndGetHandler(ctx: { userId: string; role?: string }): Pr
   } as unknown as McpServer;
 
   registerMessageTools(fakeServer, {
-    app: {} as any,
+    app: {
+      service: (name: string) => {
+        if (name !== 'sessions') throw new Error(`Unexpected service: ${name}`);
+        return {
+          find: vi.fn(async () => ({
+            data: [{ session_id: 'sess-active-1' }, { session_id: 'sess-active-2' }],
+          })),
+        };
+      },
+    } as any,
     db: {} as any,
     userId: ctx.userId as import('@agor/core/types').UserID,
     sessionId: 'sess-0001' as import('@agor/core/types').SessionID,

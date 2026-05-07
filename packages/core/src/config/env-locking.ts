@@ -3,13 +3,31 @@ import type { UserID } from '../types';
 import { resolveUserEnvironment } from './env-resolver';
 
 /**
- * Per-user locks to prevent process.env race conditions
+ * Global lock to prevent process.env race conditions.
  *
- * When multiple queries run concurrently, they could overwrite each other's
- * environment variables in the shared process.env object. This lock mechanism
- * ensures only one operation at a time can augment process.env for a given user.
+ * process.env is shared process-wide, so even different users must be
+ * serialized while their environment variables are temporarily injected.
  */
-const userEnvLocks = new Map<UserID, Promise<void>>();
+let processEnvLock = Promise.resolve();
+
+async function acquireProcessEnvLock(): Promise<() => void> {
+  let release!: () => void;
+  const previousLock = processEnvLock;
+  const currentLock = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  processEnvLock = previousLock.catch(() => {}).then(() => currentLock);
+  await previousLock.catch(() => {});
+
+  let released = false;
+  return () => {
+    if (!released) {
+      released = true;
+      release();
+    }
+  };
+}
 
 /**
  * Execute a function with user environment variables augmented in process.env
@@ -33,18 +51,7 @@ export async function withUserEnvironment<T>(
   db: Database,
   fn: () => Promise<T>
 ): Promise<T> {
-  // Wait for any existing lock for this user
-  const existingLock = userEnvLocks.get(userId);
-  if (existingLock) {
-    await existingLock;
-  }
-
-  // Create new lock promise
-  let releaseLock: () => void;
-  const lock = new Promise<void>((resolve) => {
-    releaseLock = resolve;
-  });
-  userEnvLocks.set(userId, lock);
+  const releaseLock = await acquireProcessEnvLock();
 
   try {
     // Resolve user environment
@@ -70,9 +77,7 @@ export async function withUserEnvironment<T>(
       }
     }
   } finally {
-    // Release lock for next operation
-    releaseLock!();
-    userEnvLocks.delete(userId);
+    releaseLock();
   }
 }
 

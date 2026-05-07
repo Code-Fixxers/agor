@@ -369,7 +369,7 @@ describe('env-locking', () => {
       expect(fn1EndIdx).toBeLessThan(fn2StartIdx);
     });
 
-    it('should allow parallel access for different users', async () => {
+    it('should serialize access for different users because process.env is global', async () => {
       const executionLog: string[] = [];
 
       vi.mocked(resolverModule.resolveUserEnvironment)
@@ -398,8 +398,8 @@ describe('env-locking', () => {
       const user2StartIdx = executionLog.indexOf('user-2-start');
       const user1EndIdx = executionLog.indexOf('user-1-end');
 
-      // user2 should start before user1 ends
-      expect(user2StartIdx).toBeLessThan(user1EndIdx);
+      // user2 must not start before user1 ends because process.env is global.
+      expect(user2StartIdx).toBeGreaterThan(user1EndIdx);
     });
   });
 });

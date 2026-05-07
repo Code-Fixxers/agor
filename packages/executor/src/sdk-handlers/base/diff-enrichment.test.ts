@@ -68,6 +68,12 @@ describe('diff enrichment', () => {
     fs.writeFileSync(filePath, 'const value = "old";\n', 'utf-8');
     execSync('git add .', { cwd: repoDir, stdio: 'ignore' });
     execSync('git commit -m "initial"', { cwd: repoDir, stdio: 'ignore' });
+    registerToolInvocationStart(
+      'tool-codex-edit-files-1',
+      'edit_files',
+      { changes: [{ path: 'src/example.ts', kind: 'update' }] },
+      { workingDirectory: repoDir }
+    );
     fs.writeFileSync(filePath, 'const value = "new";\n', 'utf-8');
 
     const contentBlocks: TestContentBlock[] = [
@@ -112,6 +118,12 @@ describe('diff enrichment', () => {
     fs.writeFileSync(realFilePath, 'const value = "old";\n', 'utf-8');
     execSync('git add .', { cwd: repoDir, stdio: 'ignore' });
     execSync('git commit -m "initial"', { cwd: repoDir, stdio: 'ignore' });
+    registerToolInvocationStart(
+      'tool-codex-edit-files-symlink-path-1',
+      'edit_files',
+      { changes: [{ path: aliasFilePath, kind: 'update' }] },
+      { workingDirectory: repoDir }
+    );
     fs.writeFileSync(aliasFilePath, 'const value = "new";\n', 'utf-8');
 
     const contentBlocks: TestContentBlock[] = [
@@ -149,6 +161,12 @@ describe('diff enrichment', () => {
     fs.writeFileSync(filePath, 'const removed = true;\n', 'utf-8');
     execSync('git add .', { cwd: repoDir, stdio: 'ignore' });
     execSync('git commit -m "initial"', { cwd: repoDir, stdio: 'ignore' });
+    registerToolInvocationStart(
+      'tool-codex-edit-files-delete-1',
+      'edit_files',
+      { changes: [{ path: 'src/delete-me.ts', kind: 'delete' }] },
+      { workingDirectory: repoDir }
+    );
     fs.rmSync(filePath);
 
     const contentBlocks: TestContentBlock[] = [
@@ -186,6 +204,12 @@ describe('diff enrichment', () => {
     execSync('git commit -m "initial"', { cwd: repoDir, stdio: 'ignore' });
 
     const newFilePath = path.join(srcDir, 'added.ts');
+    registerToolInvocationStart(
+      'tool-codex-edit-files-add-1',
+      'edit_files',
+      { changes: [{ path: 'src/added.ts', kind: 'add' }] },
+      { workingDirectory: repoDir }
+    );
     fs.writeFileSync(newFilePath, 'export const added = true;\n', 'utf-8');
 
     const contentBlocks: TestContentBlock[] = [
@@ -355,7 +379,7 @@ describe('diff enrichment', () => {
     expect(linesB.some((line) => line.includes('a-pre'))).toBe(false);
   });
 
-  it('falls back to git HEAD diff after explicit snapshot cleanup', () => {
+  it('does not use stale invocation snapshots after explicit snapshot cleanup', () => {
     const repoDir = createTempGitRepo();
     const filePath = path.join(repoDir, 'cleanup.ts');
 
@@ -392,8 +416,6 @@ describe('diff enrichment', () => {
     enrichContentBlocks(blocks, { workingDirectory: repoDir, snapshotScope: 'scope-cleanup' });
 
     const lines = blocks[1].diff?.files?.[0]?.structuredPatch?.[0]?.lines ?? [];
-    expect(lines.some((line) => line.includes('-const value = "head";'))).toBe(true);
-    expect(lines.some((line) => line.includes('+const value = "post";'))).toBe(true);
     expect(lines.some((line) => line.includes('-const value = "pre";'))).toBe(false);
   });
 

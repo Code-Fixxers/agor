@@ -19,7 +19,13 @@ import { networkInterfaces } from 'node:os';
  * loopback interfaces).
  */
 export function detectPrimaryIpv4(): string | undefined {
-  const ifaces = networkInterfaces();
+  const ifaces = (() => {
+    try {
+      return networkInterfaces();
+    } catch {
+      return {};
+    }
+  })();
   const candidates: string[] = [];
 
   for (const [name, addrs] of Object.entries(ifaces)) {

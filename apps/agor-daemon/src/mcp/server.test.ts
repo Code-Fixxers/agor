@@ -70,6 +70,8 @@ function captureMcpHandler() {
     post: (_path: string, fn: typeof handler) => {
       handler = fn;
     },
+    get: (_path: string, _fn: typeof handler) => {},
+    delete: (_path: string, _fn: typeof handler) => {},
   } as unknown as Parameters<typeof setupMCPRoutes>[0];
   setupMCPRoutes(app, {} as never, /* toolSearchEnabled */ false);
   if (!handler) throw new Error('MCP handler was not registered');
