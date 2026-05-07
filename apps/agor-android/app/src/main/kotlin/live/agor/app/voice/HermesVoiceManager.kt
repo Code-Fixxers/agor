@@ -288,8 +288,8 @@ class HermesVoiceManager(
     }
 
     private fun pauseCapture() {
-        vad.stop()
         audio.stop()
+        vad.stop()
     }
 
     private suspend fun transcribeCurrentBuffer() {

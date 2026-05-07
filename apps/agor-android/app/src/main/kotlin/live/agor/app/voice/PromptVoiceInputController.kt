@@ -107,13 +107,18 @@ class PromptVoiceInputController(
 
     fun stop() {
         modelPreparationJob?.cancel()
-        transcriptionJob?.cancel()
         modelPreparationJob = null
+        if (_state.value.phase == PromptVoicePhase.Recording) {
+            if (transcriptionJob?.isActive == true) return
+            transcriptionJob = scope.launch { transcribeCurrentBuffer() }
+            AppLogger.log("Prompt voice recording stopped; transcribing buffered audio", LogLevel.INFO, "Voice")
+            return
+        }
+        transcriptionJob?.cancel()
         transcriptionJob = null
-        vad.stop()
-        audio.stop()
-        _state.value = PromptVoiceInputState(threshold = vad.config.threshold)
-        AppLogger.log("Prompt voice dictation stopped", LogLevel.INFO, "Voice")
+        stopCapture()
+        resetState()
+        AppLogger.log("Prompt voice dictation cancelled", LogLevel.INFO, "Voice")
     }
 
     fun downloadWhisperModel() {
@@ -185,11 +190,10 @@ class PromptVoiceInputController(
     private suspend fun transcribeCurrentBuffer() {
         setPhase(PromptVoicePhase.Transcribing)
         val pcm = audio.stopBufferingAndDrain()
-        vad.stop()
-        audio.stop()
+        stopCapture()
         if (pcm.isEmpty()) {
             AppLogger.log("Prompt voice transcription skipped: empty audio buffer", LogLevel.WARNING, "Voice")
-            _state.value = PromptVoiceInputState(threshold = vad.config.threshold)
+            resetState()
             return
         }
         AppLogger.log("Prompt voice transcribing ${pcm.size} PCM samples", LogLevel.INFO, "Voice")
@@ -204,12 +208,21 @@ class PromptVoiceInputController(
                     errorMessage = "Remote Whisper is unavailable and the local Whisper model has not been downloaded.",
                 )
             } else {
-                _state.value = PromptVoiceInputState(threshold = vad.config.threshold)
+                resetState()
             }
             return
         }
         AppLogger.log("Prompt voice transcript accepted from ${result.source}: ${text.take(120)}", LogLevel.INFO, "Voice")
         onTranscribed?.invoke(text)
+        resetState()
+    }
+
+    private fun stopCapture() {
+        audio.stop()
+        vad.stop()
+    }
+
+    private fun resetState() {
         _state.value = PromptVoiceInputState(threshold = vad.config.threshold)
     }
 

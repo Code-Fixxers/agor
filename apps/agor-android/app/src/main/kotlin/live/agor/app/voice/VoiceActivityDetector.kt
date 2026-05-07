@@ -66,6 +66,7 @@ class VoiceActivityDetector(
         _threshold.value = config.threshold
     }
 
+    @Synchronized
     fun start() {
         if (_state.value != State.Idle) return
         _threshold.value = config.threshold
@@ -86,6 +87,7 @@ class VoiceActivityDetector(
 
     fun skipCalibration() {}
 
+    @Synchronized
     fun stop() {
         if (_state.value == State.Idle) return
         cancelTimers()
@@ -94,6 +96,7 @@ class VoiceActivityDetector(
         AppLogger.log("VAD stopped", LogLevel.INFO, "Voice")
     }
 
+    @Synchronized
     fun process(samples: FloatArray) {
         if (_state.value == State.Idle) return
         updateEnergyLevel(samples)
@@ -214,6 +217,7 @@ class VoiceActivityDetector(
 
     private fun fallbackThreshold(): Float = (energyFloor * 1.6f).coerceAtLeast(0.0025f)
 
+    @Synchronized
     private fun endSpeech(force: Boolean) {
         if (_state.value != State.SpeechDetected) return
         val elapsed = System.currentTimeMillis() - speechStartTimeMs
