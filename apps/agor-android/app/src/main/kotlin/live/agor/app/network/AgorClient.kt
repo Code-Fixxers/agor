@@ -25,6 +25,8 @@ import live.agor.app.models.Repo
 import live.agor.app.models.Session
 import live.agor.app.models.User
 import live.agor.app.models.Worktree
+import live.agor.app.util.AppLogger
+import live.agor.app.util.LogLevel
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -99,8 +101,22 @@ class AgorClient(private val tokens: SecureTokenStore) {
 
     private fun healthOk(url: String): Boolean {
         val u = "$url/health".toHttpUrlOrNull() ?: return false
+        val started = System.nanoTime()
         return runCatching {
-            http.newCall(Request.Builder().url(u).get().build()).execute().use { it.isSuccessful }
+            http.newCall(Request.Builder().url(u).get().build()).execute().use {
+                AppLogger.log(
+                    "Probe ${u.host}:${u.port} /health -> ${it.code} in ${elapsedMs(started)}ms",
+                    if (it.isSuccessful) LogLevel.DEBUG else LogLevel.WARNING,
+                    "Network",
+                )
+                it.isSuccessful
+            }
+        }.onFailure {
+            AppLogger.log(
+                "Probe ${u.host}:${u.port} /health failed in ${elapsedMs(started)}ms: ${it.message}",
+                LogLevel.WARNING,
+                "Network",
+            )
         }.getOrDefault(false)
     }
 
@@ -109,6 +125,7 @@ class AgorClient(private val tokens: SecureTokenStore) {
     // ---- Auth ----
 
     suspend fun login(email: String, password: String): LoginResult = withContext(Dispatchers.IO) {
+        AppLogger.log("Agor login requested for ${redactEmail(email)}", LogLevel.INFO, "Network")
         val body = JsonObject(
             mapOf(
                 "strategy" to JsonPrimitive("local"),
@@ -128,10 +145,12 @@ class AgorClient(private val tokens: SecureTokenStore) {
         tokens.accessToken = accessToken
         tokens.refreshToken = refreshToken
         tokens.lastEmail = email
+        AppLogger.log("Agor login succeeded for ${redactEmail(email)}", LogLevel.INFO, "Network")
         LoginResult(accessToken, refreshToken, user)
     }
 
     suspend fun loginWithApiKey(apiKey: String): LoginResult = withContext(Dispatchers.IO) {
+        AppLogger.log("Agor API-key login requested", LogLevel.INFO, "Network")
         val body = JsonObject(
             mapOf(
                 "strategy" to JsonPrimitive("api-key"),
@@ -149,6 +168,7 @@ class AgorClient(private val tokens: SecureTokenStore) {
         }
         tokens.accessToken = accessToken
         tokens.refreshToken = refreshToken
+        AppLogger.log("Agor API-key login succeeded", LogLevel.INFO, "Network")
         LoginResult(accessToken, refreshToken, user)
     }
 
@@ -234,6 +254,11 @@ class AgorClient(private val tokens: SecureTokenStore) {
     }
 
     suspend fun sendPrompt(sessionId: String, prompt: String, taskId: String? = null) {
+        AppLogger.log(
+            "Sending session prompt session=${sessionId.take(8)} chars=${prompt.length} task=${taskId?.take(8) ?: "none"}",
+            LogLevel.INFO,
+            "Chat",
+        )
         val body = buildJsonObject {
             put("prompt", JsonPrimitive(prompt))
             put("stream", JsonPrimitive(true))
@@ -249,6 +274,12 @@ class AgorClient(private val tokens: SecureTokenStore) {
         message: String,
     ): UploadFilesResult {
         if (files.isEmpty()) throw IOException("No files selected")
+        val totalBytes = files.sumOf { it.bytes.size.toLong() }
+        AppLogger.log(
+            "Uploading ${files.size} attachment(s) to session=${sessionId.take(8)} bytes=$totalBytes notify=$notifyAgent",
+            LogLevel.INFO,
+            "Chat",
+        )
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("notifyAgent", notifyAgent.toString())
@@ -269,7 +300,13 @@ class AgorClient(private val tokens: SecureTokenStore) {
             buildUrl("/sessions/$sessionId/upload", mapOf("destination" to "worktree")),
             body,
         )
-        return AgorJson.decodeFromJsonElement(UploadFilesResult.serializer(), resp)
+        return AgorJson.decodeFromJsonElement(UploadFilesResult.serializer(), resp).also { result ->
+            AppLogger.log(
+                "Uploaded ${result.files.size} attachment(s) to session=${sessionId.take(8)} warning=${result.warning != null}",
+                if (result.warning == null) LogLevel.INFO else LogLevel.WARNING,
+                "Chat",
+            )
+        }
     }
 
     suspend fun stopSession(sessionId: String) {
@@ -425,6 +462,7 @@ class AgorClient(private val tokens: SecureTokenStore) {
     ): okhttp3.Response {
         if (baseUrl.isEmpty()) throw IOException("Server URL not configured")
         val url = if (pathOrUrl.startsWith("http")) pathOrUrl else "$baseUrl$pathOrUrl"
+        val started = System.nanoTime()
         val builder = Request.Builder().url(url)
         if (useAuth) {
             tokens.accessToken?.let { builder.header("Authorization", "Bearer $it") }
@@ -432,7 +470,21 @@ class AgorClient(private val tokens: SecureTokenStore) {
         builder.header("Accept", "application/json")
         val rb = body?.let { AgorJson.encodeToString(JsonElement.serializer(), it).toRequestBody(jsonMedia) }
         builder.method(method, rb ?: if (method != "GET") "".toRequestBody(jsonMedia) else null)
-        return http.newCall(builder.build()).execute()
+        return runCatching {
+            http.newCall(builder.build()).execute()
+        }.onSuccess {
+            AppLogger.log(
+                "Agor $method ${redactUrl(url)} -> ${it.code} in ${elapsedMs(started)}ms",
+                if (it.isSuccessful) LogLevel.DEBUG else LogLevel.WARNING,
+                "Network",
+            )
+        }.onFailure {
+            AppLogger.log(
+                "Agor $method ${redactUrl(url)} failed in ${elapsedMs(started)}ms: ${it.message}",
+                LogLevel.ERROR,
+                "Network",
+            )
+        }.getOrThrow()
     }
 
     private fun doMultipartUpload(
@@ -442,6 +494,7 @@ class AgorClient(private val tokens: SecureTokenStore) {
     ): okhttp3.Response {
         if (baseUrl.isEmpty()) throw IOException("Server URL not configured")
         val url = if (pathOrUrl.startsWith("http")) pathOrUrl else "$baseUrl$pathOrUrl"
+        val started = System.nanoTime()
         val builder = Request.Builder()
             .url(url)
             .header("Accept", "application/json")
@@ -449,7 +502,21 @@ class AgorClient(private val tokens: SecureTokenStore) {
         if (useAuth) {
             tokens.accessToken?.let { builder.header("Authorization", "Bearer $it") }
         }
-        return http.newCall(builder.build()).execute()
+        return runCatching {
+            http.newCall(builder.build()).execute()
+        }.onSuccess {
+            AppLogger.log(
+                "Agor upload ${redactUrl(url)} -> ${it.code} in ${elapsedMs(started)}ms",
+                if (it.isSuccessful) LogLevel.INFO else LogLevel.WARNING,
+                "Network",
+            )
+        }.onFailure {
+            AppLogger.log(
+                "Agor upload ${redactUrl(url)} failed in ${elapsedMs(started)}ms: ${it.message}",
+                LogLevel.ERROR,
+                "Network",
+            )
+        }.getOrThrow()
     }
 
     private fun readJson(resp: okhttp3.Response): JsonElement = resp.use { r ->
@@ -458,9 +525,15 @@ class AgorClient(private val tokens: SecureTokenStore) {
             val message = runCatching {
                 AgorJson.parseToJsonElement(text).jsonObject["message"]?.jsonPrimitive?.contentOrNull
             }.getOrNull() ?: "HTTP ${r.code}"
+            AppLogger.log("Agor HTTP ${r.code}: $message", LogLevel.WARNING, "Network")
             throw HttpException(r.code, message, text)
         }
-        if (text.isBlank()) JsonObject(emptyMap()) else AgorJson.parseToJsonElement(text)
+        return runCatching {
+            if (text.isBlank()) JsonObject(emptyMap()) else AgorJson.parseToJsonElement(text)
+        }.getOrElse {
+            AppLogger.log("Agor JSON parse failed for HTTP ${r.code}: ${it.message}", LogLevel.ERROR, "Network")
+            throw it
+        }
     }
 
     data class LoginResult(val accessToken: String, val refreshToken: String?, val user: User)
@@ -494,6 +567,23 @@ private inline fun buildJsonObject(block: MutableMap<String, JsonElement>.() -> 
     val map = mutableMapOf<String, JsonElement>()
     map.block()
     return JsonObject(map)
+}
+
+private fun elapsedMs(startedNanos: Long): Long =
+    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos)
+
+private fun redactUrl(url: String): String {
+    val parsed = url.toHttpUrlOrNull() ?: return url.substringBefore('?')
+    return buildString {
+        append(parsed.encodedPath)
+        if (parsed.querySize > 0) append("?...")
+    }
+}
+
+private fun redactEmail(email: String): String {
+    val at = email.indexOf('@')
+    if (at <= 1) return "***"
+    return email.take(1) + "***" + email.substring(at)
 }
 
 private val COMPACT_SESSION_FIELDS = listOf(

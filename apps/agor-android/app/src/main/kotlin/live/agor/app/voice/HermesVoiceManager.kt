@@ -98,11 +98,21 @@ class HermesVoiceManager(
             if (_state.value.enabled && !hermesRunning) setPhase(HermesVoicePhase.Listening)
         }
         audio.onFrame = { samples ->
-            if (_state.value.phase != HermesVoicePhase.Speaking && !hermesRunning) {
-                vad.process(samples)
+            runCatching {
+                if (_state.value.phase != HermesVoicePhase.Speaking && !hermesRunning) {
+                    vad.process(samples)
+                }
+                val level = vad.currentAudioLevel.value
+                _state.value = _state.value.copy(audioLevel = level, threshold = vad.energyThreshold.value)
+            }.onFailure {
+                AppLogger.log("Hermes voice frame processing failed: ${it.message}", LogLevel.ERROR, "Voice")
+                stop()
+                _state.value = _state.value.copy(
+                    enabled = false,
+                    phase = HermesVoicePhase.Error,
+                    errorMessage = "Voice processing failed: ${it.message}",
+                )
             }
-            val level = vad.currentAudioLevel.value
-            _state.value = _state.value.copy(audioLevel = level, threshold = vad.energyThreshold.value)
         }
         tts.onSpeechFinished = {
             if (_state.value.enabled && !hermesRunning) {

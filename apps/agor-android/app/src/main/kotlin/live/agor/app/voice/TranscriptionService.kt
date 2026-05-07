@@ -161,6 +161,7 @@ class RemoteWhisperTranscriber(
     }
 
     private fun postTranscription(url: String, body: MultipartBody): TranscriptionResult {
+        val started = System.nanoTime()
         val req = Request.Builder()
             .url(url)
             .header("Accept", "application/json")
@@ -171,6 +172,11 @@ class RemoteWhisperTranscriber(
             .build()
         return http.newCall(req).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
+            AppLogger.log(
+                "Remote Whisper ${url.substringAfterLast('/')} -> ${resp.code} in ${elapsedMs(started)}ms bytes=${text.length}",
+                if (resp.isSuccessful) LogLevel.INFO else LogLevel.WARNING,
+                "Voice",
+            )
             if (!resp.isSuccessful) throw WhisperHttpException(resp.code, "Whisper ${resp.code}: ${text.take(300)}")
             TranscriptionResult(parseRemoteText(text), "remote")
         }
@@ -204,6 +210,9 @@ class RemoteWhisperTranscriber(
 }
 
 private class WhisperHttpException(val statusCode: Int, message: String) : IOException(message)
+
+private fun elapsedMs(startedNanos: Long): Long =
+    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos)
 
 fun cleanTranscript(raw: String): String {
     return raw

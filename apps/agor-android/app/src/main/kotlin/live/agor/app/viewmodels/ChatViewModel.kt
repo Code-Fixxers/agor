@@ -304,6 +304,7 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         val pendingAttachments = _attachments.value
         if (text.isEmpty() && pendingAttachments.isEmpty()) return
         viewModelScope.launch {
+            val started = SystemClock.elapsedRealtime()
             try {
                 if (pendingAttachments.isEmpty()) {
                     container.client.sendPrompt(sessionId, text)
@@ -323,10 +324,19 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
                         AppLogger.log("Upload notification warning: $warning", LogLevel.WARNING, "Chat")
                     }
                 }
+                AppLogger.log(
+                    "Session send completed session=${sessionId.take(8)} attachments=${pendingAttachments.size} elapsed=${SystemClock.elapsedRealtime() - started}ms",
+                    LogLevel.INFO,
+                    "Chat",
+                )
                 _uiState.update { it.copy(draft = "") }
                 _attachments.value = emptyList()
             } catch (t: Throwable) {
-                AppLogger.log("Send failed: ${t.message}", LogLevel.ERROR, "Chat")
+                AppLogger.log(
+                    "Send failed session=${sessionId.take(8)} attachments=${pendingAttachments.size} elapsed=${SystemClock.elapsedRealtime() - started}ms: ${t.message}",
+                    LogLevel.ERROR,
+                    "Chat",
+                )
                 _uiState.update { it.copy(errorMessage = t.message) }
             }
         }

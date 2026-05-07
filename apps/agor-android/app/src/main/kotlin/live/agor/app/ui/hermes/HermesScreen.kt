@@ -76,6 +76,7 @@ import live.agor.app.ui.common.AttachmentPickerDialog
 import live.agor.app.ui.messageblocks.MarkdownText
 import live.agor.app.ui.simpleViewModelFactory
 import live.agor.app.util.AppLogger
+import live.agor.app.util.LogLevel
 import live.agor.app.viewmodels.HermesViewModel
 import live.agor.app.voice.HermesVoicePhase
 import live.agor.app.voice.HermesVoiceState
@@ -143,7 +144,11 @@ fun HermesScreen(
         contract = ActivityResultContracts.GetContent(),
     ) { uri ->
         if (uri != null) scope.launch {
-            pendingImages = pendingImages + container.hermesImages.importUri(uri)
+            runCatching { container.hermesImages.importUri(uri) }
+                .onSuccess { pendingImages = pendingImages + it }
+                .onFailure {
+                    AppLogger.log("Hermes image attach failed: ${it.message}", LogLevel.ERROR, "Hermes")
+                }
         }
     }
     val fileLauncher = rememberLauncherForActivityResult(
@@ -152,9 +157,17 @@ fun HermesScreen(
         if (uri != null) scope.launch {
             val mimeType = context.contentResolver.getType(uri).orEmpty()
             if (mimeType.startsWith("image/")) {
-                pendingImages = pendingImages + container.hermesImages.importUri(uri)
+                runCatching { container.hermesImages.importUri(uri) }
+                    .onSuccess { pendingImages = pendingImages + it }
+                    .onFailure {
+                        AppLogger.log("Hermes image file attach failed: ${it.message}", LogLevel.ERROR, "Hermes")
+                    }
             } else {
-                draft = appendPromptAttachment(draft, readHermesTextAttachment(context, uri))
+                runCatching { readHermesTextAttachment(context, uri) }
+                    .onSuccess { draft = appendPromptAttachment(draft, it) }
+                    .onFailure {
+                        AppLogger.log("Hermes text file attach failed: ${it.message}", LogLevel.ERROR, "Hermes")
+                    }
             }
         }
     }
@@ -163,7 +176,11 @@ fun HermesScreen(
     ) { ok ->
         val uri = cameraUri
         if (ok && uri != null) scope.launch {
-            pendingImages = pendingImages + container.hermesImages.importUri(uri)
+            runCatching { container.hermesImages.importUri(uri) }
+                .onSuccess { pendingImages = pendingImages + it }
+                .onFailure {
+                    AppLogger.log("Hermes camera image attach failed: ${it.message}", LogLevel.ERROR, "Hermes")
+                }
         }
     }
     val cameraPermLauncher = rememberLauncherForActivityResult(

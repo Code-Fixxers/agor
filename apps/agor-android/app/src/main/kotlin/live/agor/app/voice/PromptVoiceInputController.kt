@@ -84,11 +84,20 @@ class PromptVoiceInputController(
             transcriptionJob = scope.launch { transcribeCurrentBuffer() }
         }
         audio.onFrame = { samples ->
-            vad.process(samples)
-            _state.value = _state.value.copy(
-                audioLevel = vad.currentAudioLevel.value,
-                threshold = vad.energyThreshold.value,
-            )
+            runCatching {
+                vad.process(samples)
+                _state.value = _state.value.copy(
+                    audioLevel = vad.currentAudioLevel.value,
+                    threshold = vad.energyThreshold.value,
+                )
+            }.onFailure {
+                AppLogger.log("Prompt voice frame processing failed: ${it.message}", LogLevel.ERROR, "Voice")
+                stop()
+                _state.value = _state.value.copy(
+                    phase = PromptVoicePhase.Error,
+                    errorMessage = "Voice processing failed: ${it.message}",
+                )
+            }
         }
     }
 

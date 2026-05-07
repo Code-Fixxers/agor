@@ -9,6 +9,8 @@ import kotlinx.serialization.json.Json
 import live.agor.app.auth.SecureTokenStore
 import live.agor.app.data.HermesSession
 import live.agor.app.data.HermesTurn
+import live.agor.app.util.AppLogger
+import live.agor.app.util.LogLevel
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -77,6 +79,8 @@ class HermesClient(private val tokens: SecureTokenStore) {
         rawModel: String? = null,
     ): String = kotlinx.coroutines.withContext(Dispatchers.IO) {
         val (url, token) = requireConfig(rawUrl, bearer)
+        val started = System.nanoTime()
+        AppLogger.log("Hermes chat request messages=${messages.size} model=${rawModel ?: model}", LogLevel.INFO, "Hermes")
         val body = ChatCompletionRequest(
             model = rawModel?.takeIf { it.isNotBlank() } ?: model,
             messages = messages,
@@ -91,6 +95,11 @@ class HermesClient(private val tokens: SecureTokenStore) {
             .build()
         http.newCall(req).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
+            AppLogger.log(
+                "Hermes chat response ${resp.code} in ${elapsedMs(started)}ms bytes=${text.length}",
+                if (resp.isSuccessful) LogLevel.INFO else LogLevel.WARNING,
+                "Hermes",
+            )
             if (!resp.isSuccessful) {
                 throw IOException("Hermes ${resp.code}: ${text.take(400)}")
             }
@@ -113,9 +122,11 @@ class HermesClient(private val tokens: SecureTokenStore) {
         bearer: String? = null,
     ): String = kotlinx.coroutines.withContext(Dispatchers.IO) {
         val (url, token) = requireConfig(rawUrl, bearer)
+        val started = System.nanoTime()
         val name = webhook.trim().trim('/').ifBlank {
             throw IOException("Webhook route is required")
         }
+        AppLogger.log("Hermes webhook request route=$name chars=${prompt.length}", LogLevel.INFO, "Hermes")
 
         val encodedRoute = URLEncoder.encode(name, Charsets.UTF_8.toString())
             .replace("+", "%20")
@@ -130,6 +141,11 @@ class HermesClient(private val tokens: SecureTokenStore) {
 
         http.newCall(req).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
+            AppLogger.log(
+                "Hermes webhook route=$name response ${resp.code} in ${elapsedMs(started)}ms bytes=${text.length}",
+                if (resp.isSuccessful) LogLevel.INFO else LogLevel.WARNING,
+                "Hermes",
+            )
             if (!resp.isSuccessful) {
                 throw IOException("Hermes ${resp.code}: ${text.take(400)}")
             }
@@ -146,6 +162,10 @@ class HermesClient(private val tokens: SecureTokenStore) {
      */
     fun chatStream(messages: List<HermesMessage>): Flow<String> = flow {
         val (url, bearer) = requireConfig()
+        val started = System.nanoTime()
+        var chunks = 0
+        var chars = 0
+        AppLogger.log("Hermes chat stream opening messages=${messages.size} model=$model", LogLevel.INFO, "Hermes")
         val body = ChatCompletionRequest(
             model = model,
             messages = messages,
@@ -161,6 +181,7 @@ class HermesClient(private val tokens: SecureTokenStore) {
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
                 val text = resp.body?.string().orEmpty().take(400)
+                AppLogger.log("Hermes chat stream HTTP ${resp.code} in ${elapsedMs(started)}ms: $text", LogLevel.WARNING, "Hermes")
                 throw IOException("Hermes ${resp.code}: $text")
             }
             val source = resp.body?.source() ?: throw IOException("empty response")
@@ -171,13 +192,19 @@ class HermesClient(private val tokens: SecureTokenStore) {
                 if (payload == "[DONE]") break
                 val chunk = runCatching { json.decodeFromString(ChatCompletionChunk.serializer(), payload) }.getOrNull()
                 val delta = chunk?.choices?.firstOrNull()?.delta?.content
-                if (!delta.isNullOrEmpty()) emit(delta)
+                if (!delta.isNullOrEmpty()) {
+                    chunks += 1
+                    chars += delta.length
+                    emit(delta)
+                }
             }
         }
+        AppLogger.log("Hermes chat stream closed chunks=$chunks chars=$chars elapsed=${elapsedMs(started)}ms", LogLevel.INFO, "Hermes")
     }.flowOn(Dispatchers.IO)
 
     suspend fun capabilities(): String = kotlinx.coroutines.withContext(Dispatchers.IO) {
         val (url, bearer) = requireConfig()
+        val started = System.nanoTime()
         val req = Request.Builder()
             .url("$url/v1/capabilities")
             .header("Authorization", "Bearer $bearer")
@@ -186,6 +213,11 @@ class HermesClient(private val tokens: SecureTokenStore) {
             .build()
         http.newCall(req).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
+            AppLogger.log(
+                "Hermes capabilities response ${resp.code} in ${elapsedMs(started)}ms",
+                if (resp.isSuccessful) LogLevel.DEBUG else LogLevel.WARNING,
+                "Hermes",
+            )
             if (!resp.isSuccessful) {
                 throw IOException("Hermes ${resp.code}: ${text.take(400)}")
             }
@@ -196,16 +228,21 @@ class HermesClient(private val tokens: SecureTokenStore) {
     suspend fun downloadStoredSessions(maxConversations: Int = 100): List<HermesSession> =
         kotlinx.coroutines.withContext(Dispatchers.IO) {
             val (url, bearer) = requireConfig()
+            val started = System.nanoTime()
+            AppLogger.log("Hermes stored session import requested max=$maxConversations", LogLevel.INFO, "Hermes")
             val summaries = runCatching {
                 listStoredConversationSummaries(url, bearer, maxConversations)
             }.getOrElse {
+                AppLogger.log("Hermes conversation summary import failed, falling back responses: ${it.message}", LogLevel.WARNING, "Hermes")
                 return@withContext listStoredResponseSessions(url, bearer, maxConversations)
             }
             summaries.map { summary ->
                 val items = runCatching { listStoredConversationItems(url, bearer, summary.id) }
                     .getOrDefault(emptyList())
                 buildHermesSession(summary, items)
-            }.sortedByDescending { it.updatedAtMillis }
+            }.sortedByDescending { it.updatedAtMillis }.also {
+                AppLogger.log("Hermes stored session import loaded ${it.size} sessions in ${elapsedMs(started)}ms", LogLevel.INFO, "Hermes")
+            }
         }
 
     fun responseStream(
@@ -214,6 +251,13 @@ class HermesClient(private val tokens: SecureTokenStore) {
         imageDataUrls: List<String> = emptyList(),
     ): Flow<HermesResponseEvent> = flow {
         val (url, bearer) = requireConfig()
+        val started = System.nanoTime()
+        var events = 0
+        AppLogger.log(
+            "Hermes response stream opening conversation=${conversationId.take(8)} chars=${prompt.length} images=${imageDataUrls.size}",
+            LogLevel.INFO,
+            "Hermes",
+        )
         val req = Request.Builder()
             .url("$url/v1/responses")
             .header("Authorization", "Bearer $bearer")
@@ -223,6 +267,7 @@ class HermesClient(private val tokens: SecureTokenStore) {
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
                 val text = resp.body?.string().orEmpty().take(400)
+                AppLogger.log("Hermes response stream HTTP ${resp.code} in ${elapsedMs(started)}ms: $text", LogLevel.WARNING, "Hermes")
                 throw IOException("Hermes ${resp.code}: $text")
             }
             val source = resp.body?.source() ?: throw IOException("empty response")
@@ -234,11 +279,15 @@ class HermesClient(private val tokens: SecureTokenStore) {
                     line.startsWith("data:") -> {
                         val payload = line.removePrefix("data:").trim()
                         if (payload == "[DONE]") break
-                        parseResponseEvent(eventName, payload)?.let { emit(it) }
+                        parseResponseEvent(eventName, payload)?.let {
+                            events += 1
+                            emit(it)
+                        }
                     }
                 }
             }
         }
+        AppLogger.log("Hermes response stream closed events=$events elapsed=${elapsedMs(started)}ms", LogLevel.INFO, "Hermes")
     }.flowOn(Dispatchers.IO)
 
     private fun requireConfig(): Pair<String, String> {
@@ -689,3 +738,6 @@ private data class RemoteConversationSummary(
     val createdAtMillis: Long?,
     val updatedAtMillis: Long?,
 )
+
+private fun elapsedMs(startedNanos: Long): Long =
+    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos)
