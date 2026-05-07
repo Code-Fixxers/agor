@@ -88,10 +88,10 @@ sealed interface SidebarRow {
 /**
  * Flatten a navigation snapshot into a stable, render-ready row list.
  *
- * Computes "Important" (favorites + running + ready-for-prompt) and "Needs
- * Attention" (awaiting permission/input) inline from `state` so the caller
- * doesn't have to pre-compute them. Active sessions float to the top of each
- * worktree group; idle/finished follow.
+ * Computes "Important" (starred sessions only) and "Needs Attention" (awaiting
+ * permission/input) inline from `state` so the caller doesn't have to
+ * pre-compute them. Active sessions float to the top of each worktree group;
+ * idle/finished follow.
  */
 fun flattenSidebarRows(
     state: NavigationViewModel.State,
@@ -154,11 +154,7 @@ class SidebarRowFlattener {
 
         val important = state.sessions
             .asSequence()
-            .filter {
-                state.favorites.contains(it.sessionId) ||
-                    it.status == SessionStatus.RUNNING ||
-                    it.readyForPrompt == true
-            }
+            .filter { state.favorites.contains(it.sessionId) }
             .sortedByDescending { it.lastUpdated }
             .take(20)
             .toList()
