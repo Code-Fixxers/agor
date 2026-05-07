@@ -1,5 +1,6 @@
 package live.agor.app.ui.settings
 
+import android.content.Intent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +41,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import live.agor.app.BuildConfig
 import live.agor.app.LocalAppContainer
@@ -48,10 +50,12 @@ import live.agor.app.network.ConnectionState
 import live.agor.app.ui.common.ConnectionIndicator
 import live.agor.app.ui.common.findFragmentActivity
 import live.agor.app.ui.simpleViewModelFactory
+import live.agor.app.util.AppLogger
 import live.agor.app.viewmodels.AppViewModel
 import live.agor.app.viewmodels.UpdateViewModel
 import live.agor.app.auth.SecureTokenStore
 import kotlinx.coroutines.launch
+import java.io.File
 
 private const val DEFAULT_WHISPER_EN_URL = "http://100.101.157.56:8080"
 private const val DEFAULT_WHISPER_CZ_URL = "http://100.101.157.56:8082"
@@ -172,6 +176,11 @@ fun SettingsScreen(
             Spacer(Modifier.height(24.dp))
             Divider()
             Spacer(Modifier.height(16.dp))
+            DiagnosticsRow()
+
+            Spacer(Modifier.height(24.dp))
+            Divider()
+            Spacer(Modifier.height(16.dp))
             Text("About", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
             Text("Version ${BuildConfig.VERSION_NAME} · ${BuildConfig.GIT_SHA}",
@@ -191,6 +200,55 @@ fun SettingsScreen(
                 Text("Sign out")
             }
         }
+    }
+}
+
+@Composable
+private fun DiagnosticsRow() {
+    val context = LocalContext.current
+    var message by remember { mutableStateOf<String?>(null) }
+
+    fun shareLogs() {
+        runCatching {
+            val dir = File(context.cacheDir, "logs").apply { mkdirs() }
+            val file = File(dir, "agor-logs-${System.currentTimeMillis()}.txt")
+            file.writeText(AppLogger.exportText())
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.update.fileprovider",
+                file,
+            )
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "Agor Android logs")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(sendIntent, "Share Agor logs"))
+            message = "Log export ready."
+        }.onFailure {
+            message = "Could not export logs: ${it.message}"
+        }
+    }
+
+    Text("Diagnostics", style = MaterialTheme.typography.titleMedium)
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "Export recent app logs for voice, transcription, networking, and update debugging.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(8.dp))
+    TextButton(onClick = ::shareLogs, modifier = Modifier.fillMaxWidth().testTag("settings-export-logs")) {
+        Text("Download logs")
+    }
+    message?.let {
+        Spacer(Modifier.height(4.dp))
+        Text(
+            it,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

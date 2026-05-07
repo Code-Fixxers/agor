@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 
 enum class LogLevel { DEBUG, INFO, WARNING, ERROR }
 
@@ -38,4 +39,22 @@ object AppLogger {
     }
 
     fun snapshot(): List<LogEntry> = synchronized(buffer) { buffer.toList() }
+
+    fun exportText(): String {
+        return buildString {
+            appendLine("Agor Android logs")
+            appendLine("Generated: ${Clock.System.now()}")
+            appendLine("Entries: ${snapshot().size}")
+            appendLine()
+            snapshot().forEach { entry ->
+                append(Instant.fromEpochMilliseconds(entry.timestampMillis))
+                append(" ")
+                append(entry.level.name.padEnd(7))
+                append(" [")
+                append(entry.category)
+                append("] ")
+                appendLine(entry.message)
+            }
+        }
+    }
 }

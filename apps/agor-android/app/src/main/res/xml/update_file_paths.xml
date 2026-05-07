@@ -9,4 +9,7 @@
     <cache-path
         name="hermes_camera"
         path="hermes_camera/" />
+    <cache-path
+        name="agor_logs"
+        path="logs/" />
 </paths>
