@@ -169,14 +169,19 @@ fun HermesSetupScreen(
                         scope.launch {
                             probing = true
                             statusOk = false
-                            val models = container.hermesClient.probe(url.trim(), token.trim())
-                            probing = false
-                            if (models == null) {
-                                status = "Could not reach $url. Check Tailscale + token."
-                            } else {
-                                statusOk = true
-                                status = "OK — models: ${models.joinToString(", ").take(160)}"
+                            runCatching {
+                                container.hermesClient.probe(url.trim(), token.trim())
+                            }.onSuccess { models ->
+                                if (models == null) {
+                                    status = "Could not reach $url. Check Tailscale + token."
+                                } else {
+                                    statusOk = true
+                                    status = "OK — models: ${models.joinToString(", ").take(160)}"
+                                }
+                            }.onFailure { throwable ->
+                                status = throwable.message ?: "Hermes connection test failed."
                             }
+                            probing = false
                         }
                     },
                     enabled = !probing && url.isNotBlank() && token.isNotBlank(),

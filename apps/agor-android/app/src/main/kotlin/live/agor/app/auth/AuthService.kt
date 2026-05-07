@@ -155,8 +155,7 @@ class AuthService(
     }
 
     fun logout() {
-        tokens.clearAll()
-        biometricStore.clearStoredCredentials()
+        tokens.clearAuthCredentialsKeepAppSettings()
         _user.value = null
         _state.value = AuthState.NeedsLogin
     }

@@ -33,10 +33,18 @@ class BiometricCredentialStore(
 ) {
 
     val canUnlock: Boolean
-        get() = tokenStore.biometricEnabled &&
-            tokenStore.biometricPasswordCipherText != null &&
-            tokenStore.biometricPasswordHash != null &&
-            tokenStore.biometricPasswordScheme == PASSWORD_SCHEME_RSA_OAEP
+        get() {
+            if (!tokenStore.biometricEnabled) return false
+            return when (tokenStore.biometricCredentialType ?: CREDENTIAL_TYPE_PASSWORD) {
+                CREDENTIAL_TYPE_API_KEY -> !tokenStore.savedApiKey.isNullOrBlank()
+                else -> !tokenStore.savedLoginPassword.isNullOrBlank() ||
+                    (
+                        tokenStore.biometricPasswordCipherText != null &&
+                            tokenStore.biometricPasswordHash != null &&
+                            tokenStore.biometricPasswordScheme == PASSWORD_SCHEME_RSA_OAEP
+                        )
+            }
+        }
 
     fun canUnlockFor(serverUrl: String, email: String): Boolean {
         if (!canUnlock) return false
@@ -139,6 +147,21 @@ class BiometricCredentialStore(
             return
         }
 
+        val savedSecret = when (tokenStore.biometricCredentialType ?: CREDENTIAL_TYPE_PASSWORD) {
+            CREDENTIAL_TYPE_API_KEY -> tokenStore.savedApiKey
+            else -> tokenStore.savedLoginPassword
+        }
+        if (!savedSecret.isNullOrBlank()) {
+            authenticateToUnlockSavedSecret(
+                activity = activity,
+                subtitle = "Use biometrics to unlock your saved credentials",
+                negativeButtonText = negativeButtonText,
+                onUnlock = { onSuccess(savedSecret) },
+                onFailure = onFailure,
+            )
+            return
+        }
+
         val ciphertext = tokenStore.biometricPasswordCipherText
             ?: return onFailure("No saved password available.")
         if (tokenStore.biometricPasswordScheme != PASSWORD_SCHEME_RSA_OAEP) {
@@ -237,6 +260,41 @@ class BiometricCredentialStore(
             .setTitle("Enable biometric login")
             .setSubtitle(subtitle)
             .setNegativeButtonText("Not now")
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .build()
+        prompt.authenticate(promptInfo)
+    }
+
+    private fun authenticateToUnlockSavedSecret(
+        activity: FragmentActivity,
+        subtitle: String,
+        negativeButtonText: String,
+        onUnlock: () -> Unit,
+        onFailure: (String?) -> Unit,
+    ) {
+        val executor = ContextCompat.getMainExecutor(activity)
+        val prompt = BiometricPrompt(
+            activity,
+            executor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    onUnlock()
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    onFailure(errString.toString())
+                }
+
+                override fun onAuthenticationFailed() {
+                    onFailure("Biometric check did not match.")
+                }
+            },
+        )
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Sign in")
+            .setSubtitle(subtitle)
+            .setNegativeButtonText(negativeButtonText)
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
             .build()
         prompt.authenticate(promptInfo)

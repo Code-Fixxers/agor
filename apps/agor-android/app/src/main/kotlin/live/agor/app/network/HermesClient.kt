@@ -9,6 +9,7 @@ import kotlinx.serialization.json.Json
 import live.agor.app.auth.SecureTokenStore
 import live.agor.app.data.HermesSession
 import live.agor.app.data.HermesTurn
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -51,13 +52,14 @@ class HermesClient(private val tokens: SecureTokenStore) {
      */
     suspend fun probe(url: String, bearer: String): List<String>? = kotlinx.coroutines.withContext(Dispatchers.IO) {
         val cleaned = url.trim().trimEnd('/')
-        val req = Request.Builder()
-            .url("$cleaned/v1/models")
-            .header("Authorization", "Bearer $bearer")
-            .header("Accept", "application/json")
-            .get()
-            .build()
         runCatching {
+            val endpoint = "$cleaned/v1/models".toHttpUrlOrNull() ?: return@runCatching null
+            val req = Request.Builder()
+                .url(endpoint)
+                .header("Authorization", "Bearer $bearer")
+                .header("Accept", "application/json")
+                .get()
+                .build()
             http.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val body = resp.body?.string().orEmpty()

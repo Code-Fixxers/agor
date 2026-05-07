@@ -138,6 +138,25 @@ class SecureTokenStore(context: Context) {
             .apply()
     }
 
+    fun clearAuthCredentialsKeepAppSettings() {
+        prefs.edit()
+            .remove(KEY_ACCESS_TOKEN)
+            .remove(KEY_REFRESH_TOKEN)
+            .remove(KEY_SERVER_URL)
+            .remove(KEY_LAST_EMAIL)
+            .remove(KEY_SAVED_LOGIN_PASSWORD)
+            .remove(KEY_SAVED_API_KEY)
+            .remove(KEY_BIOMETRIC_ENABLED)
+            .remove(KEY_BIOMETRIC_SERVER_URL)
+            .remove(KEY_BIOMETRIC_EMAIL)
+            .remove(KEY_BIOMETRIC_PASSWORD_HASH)
+            .remove(KEY_BIOMETRIC_PASSWORD_CIPHERTEXT)
+            .remove(KEY_BIOMETRIC_PASSWORD_IV)
+            .remove(KEY_BIOMETRIC_PASSWORD_SCHEME)
+            .remove(KEY_BIOMETRIC_CREDENTIAL_TYPE)
+            .apply()
+    }
+
     fun clearAll() {
         prefs.edit().clear().apply()
     }
