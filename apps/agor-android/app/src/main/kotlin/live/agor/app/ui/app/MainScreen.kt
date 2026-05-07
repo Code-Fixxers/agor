@@ -165,6 +165,7 @@ fun MainScreen(app: AppViewModel) {
                 onOpenDrawer = { scope.launch { drawerState.open() } },
                 onClose = { route = if (container.hermesClient.isConfigured) MainRoute.Hermes() else MainRoute.EmptyHome },
                 onOpenHermesSetup = { route = MainRoute.HermesSetup },
+                onDrawerSessionFilterChanged = { scope.launch { nav.refresh() } },
             )
         }
     }

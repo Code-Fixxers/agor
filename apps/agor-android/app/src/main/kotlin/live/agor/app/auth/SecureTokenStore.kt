@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import live.agor.app.models.DrawerSessionFilter
 
 /**
  * Encrypted persistence for JWT/refresh tokens, server URL, and last login email.
@@ -81,6 +82,10 @@ class SecureTokenStore(context: Context) {
         get() = prefs.getString(KEY_REMOTE_WHISPER_TOKEN, null)
         set(value) = prefs.edit().putString(KEY_REMOTE_WHISPER_TOKEN, value).apply()
 
+    var drawerSessionFilter: String
+        get() = prefs.getString(KEY_DRAWER_SESSION_FILTER, null) ?: DrawerSessionFilter.SevenDays.token
+        set(value) = prefs.edit().putString(KEY_DRAWER_SESSION_FILTER, value).apply()
+
     var biometricEnabled: Boolean
         get() = prefs.getBoolean(KEY_BIOMETRIC_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_BIOMETRIC_ENABLED, value).apply()
@@ -150,6 +155,7 @@ class SecureTokenStore(context: Context) {
         const val KEY_GITHUB_TOKEN = "github_token"
         const val KEY_REMOTE_WHISPER_URL = "remote_whisper_url"
         const val KEY_REMOTE_WHISPER_TOKEN = "remote_whisper_token"
+        const val KEY_DRAWER_SESSION_FILTER = "drawer_session_filter"
         const val KEY_BIOMETRIC_ENABLED = "biometric_enabled"
         const val KEY_BIOMETRIC_SERVER_URL = "biometric_server_url"
         const val KEY_BIOMETRIC_EMAIL = "biometric_email"

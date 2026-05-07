@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import live.agor.app.BuildConfig
 import live.agor.app.LocalAppContainer
+import live.agor.app.models.DrawerSessionFilter
 import live.agor.app.network.ConnectionState
 import live.agor.app.ui.common.ConnectionIndicator
 import live.agor.app.ui.common.findFragmentActivity
@@ -62,6 +63,7 @@ fun SettingsScreen(
     onOpenDrawer: () -> Unit,
     onClose: () -> Unit,
     onOpenHermesSetup: (() -> Unit)? = null,
+    onDrawerSessionFilterChanged: () -> Unit = {},
 ) {
     val container = LocalAppContainer.current
     val user by app.user.collectAsState()
@@ -137,6 +139,11 @@ fun SettingsScreen(
             Spacer(Modifier.height(24.dp))
             Divider()
             Spacer(Modifier.height(16.dp))
+            DrawerSessionFilterRow(onChanged = onDrawerSessionFilterChanged)
+
+            Spacer(Modifier.height(24.dp))
+            Divider()
+            Spacer(Modifier.height(16.dp))
             BiometricLoginRow(defaultEmail = user?.email)
 
             onOpenHermesSetup?.let { open ->
@@ -185,6 +192,62 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+@Composable
+private fun DrawerSessionFilterRow(onChanged: () -> Unit) {
+    val container = LocalAppContainer.current
+    var selected by remember {
+        mutableStateOf(DrawerSessionFilter.fromToken(container.tokenStore.drawerSessionFilter))
+    }
+
+    fun select(option: DrawerSessionFilter) {
+        if (selected == option) return
+        selected = option
+        container.tokenStore.drawerSessionFilter = option.token
+        onChanged()
+    }
+
+    Text("Drawer sessions", style = MaterialTheme.typography.titleMedium)
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "Choose how much session history appears in the drawer.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(8.dp))
+    DrawerSessionFilter.entries.chunked(2).forEach { row ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            row.forEach { option ->
+                val modifier = Modifier
+                    .weight(1f)
+                    .testTag("settings-drawer-${option.token}")
+                if (selected == option) {
+                    Button(onClick = { select(option) }, modifier = modifier) {
+                        Text(option.label)
+                    }
+                } else {
+                    TextButton(onClick = { select(option) }, modifier = modifier) {
+                        Text(option.label)
+                    }
+                }
+                if (option != row.last()) Spacer(Modifier.width(8.dp))
+            }
+            if (row.size == 1) Spacer(Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+    val description = when (selected) {
+        DrawerSessionFilter.SevenDays -> "Showing non-archived sessions updated in the last 7 days."
+        DrawerSessionFilter.ThirtyDays -> "Showing non-archived sessions updated in the last 30 days."
+        DrawerSessionFilter.All -> "Showing all non-archived sessions."
+        DrawerSessionFilter.Archived -> "Showing all sessions and worktrees, including archived items."
+    }
+    Text(
+        description,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable

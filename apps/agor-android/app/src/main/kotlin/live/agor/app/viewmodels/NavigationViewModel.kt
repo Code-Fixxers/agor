@@ -16,9 +16,14 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import live.agor.app.AppContainer
 import live.agor.app.data.SidebarCache
 import live.agor.app.models.Board
+import live.agor.app.models.DrawerSessionFilter
 import live.agor.app.models.Session
 import live.agor.app.models.SessionStatus
 import live.agor.app.models.Worktree
@@ -44,6 +49,7 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
         val sessionsByWorktree: Map<String, List<Session>> = emptyMap(),
         val sessions: List<Session> = emptyList(),
         val favorites: Set<String> = emptySet(),
+        val showArchived: Boolean = false,
     )
 
     @androidx.compose.runtime.Immutable
@@ -137,10 +143,25 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
      */
     private fun applySessionPatch(patched: Session) {
         val current = _state.value
+        val filter = DrawerSessionFilter.fromToken(container.tokenStore.drawerSessionFilter)
+        val patchVisible = filterSessionsForDrawer(listOf(patched), filter).isNotEmpty()
         val sessions = current.sessions
         val idx = sessions.indexOfFirst { it.sessionId == patched.sessionId }
         val oldWtId = if (idx >= 0) sessions[idx].worktreeId else null
         val newWtId = patched.worktreeId
+
+        if (!patchVisible) {
+            if (idx < 0) return
+            val newByWt = current.sessionsByWorktree.toMutableMap()
+            newByWt[oldWtId ?: newWtId] = newByWt[oldWtId ?: newWtId].orEmpty()
+                .filter { it.sessionId != patched.sessionId }
+            _state.value = current.copy(
+                sessions = sessions.filter { it.sessionId != patched.sessionId },
+                sessionsByWorktree = newByWt,
+            )
+            scheduleCacheSave()
+            return
+        }
 
         val newSessions: List<Session> = if (idx >= 0) {
             sessions.toMutableList().apply { set(idx, patched) }
@@ -182,23 +203,31 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
         _loadState.value = LoadState(isLoading = true, errorMessage = null)
         val started = SystemClock.elapsedRealtime()
         try {
+            val filter = DrawerSessionFilter.fromToken(container.tokenStore.drawerSessionFilter)
             val (boards, worktrees, sessions) = coroutineScope {
                 val boardsDeferred = async { container.client.listBoards() }
-                val worktreesDeferred = async { container.client.listWorktrees() }
-                val sessionsDeferred = async { container.client.listSessions(compact = true) }
+                val worktreesDeferred = async { container.client.listWorktrees(includeArchived = filter.includeArchived) }
+                val sessionsDeferred = async {
+                    container.client.listSessions(
+                        compact = true,
+                        includeArchived = filter.includeArchived,
+                    )
+                }
                 Triple(boardsDeferred.await(), worktreesDeferred.await(), sessionsDeferred.await())
             }
+            val visibleSessions = filterSessionsForDrawer(sessions, filter)
             _state.value = _state.value.copy(
                 boards = boards,
                 worktreesByBoard = worktrees.groupBy { it.boardId ?: "" },
-                sessionsByWorktree = sessions.groupBy { it.worktreeId },
-                sessions = sessions,
+                sessionsByWorktree = visibleSessions.groupBy { it.worktreeId },
+                sessions = visibleSessions,
+                showArchived = filter.includeArchived,
             )
             _loadState.value = LoadState(isLoading = false, errorMessage = null)
             val elapsed = SystemClock.elapsedRealtime() - started
             AppLogger.log(
                 "Sidebar refresh loaded ${boards.size} boards, ${worktrees.size} worktrees, " +
-                    "${sessions.size} compact sessions in ${elapsed}ms",
+                    "${visibleSessions.size}/${sessions.size} compact sessions in ${elapsed}ms",
                 LogLevel.DEBUG,
                 "Perf",
             )
@@ -207,7 +236,7 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
                     System.currentTimeMillis(),
                     boards,
                     worktrees,
-                    sessions,
+                    visibleSessions,
                 ),
             )
         } catch (t: Throwable) {
@@ -240,5 +269,35 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
                 ),
             )
         }
+    }
+
+    private fun filterSessionsForDrawer(
+        sessions: List<Session>,
+        filter: DrawerSessionFilter,
+    ): List<Session> {
+        val cutoff = filter.cutoffDays?.let {
+            System.currentTimeMillis() - it * 24L * 60L * 60L * 1000L
+        }
+        return sessions.filter { session ->
+            if (!filter.includeArchived && session.archived == true) return@filter false
+            if (cutoff == null) return@filter true
+            val timestamp = parseEpochMillis(session.lastUpdated)
+                ?: parseEpochMillis(session.createdAt)
+                ?: return@filter true
+            timestamp >= cutoff
+        }
+    }
+
+    private fun parseEpochMillis(value: String?): Long? {
+        if (value.isNullOrBlank()) return null
+        return runCatching { Instant.parse(value).toEpochMilli() }
+            .getOrElse {
+                runCatching { OffsetDateTime.parse(value).toInstant().toEpochMilli() }
+                    .getOrElse {
+                        runCatching {
+                            LocalDateTime.parse(value).toInstant(ZoneOffset.UTC).toEpochMilli()
+                        }.getOrNull()
+                    }
+            }
     }
 }

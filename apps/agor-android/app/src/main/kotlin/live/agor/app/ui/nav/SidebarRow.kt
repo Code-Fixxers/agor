@@ -173,7 +173,7 @@ class SidebarRowFlattener {
                 if (!wtOpen) continue
 
                 val sessions = state.sessionsByWorktree[wt.worktreeId].orEmpty()
-                    .filter { it.archived != true && !it.isScheduled }
+                    .filter { (state.showArchived || it.archived != true) && !it.isScheduled }
                     .sortedWith(
                         compareByDescending<Session> { it.status.isActive }
                             .thenByDescending { it.lastUpdated },
