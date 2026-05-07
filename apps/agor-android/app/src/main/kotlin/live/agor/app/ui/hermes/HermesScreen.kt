@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
@@ -101,6 +102,29 @@ fun HermesScreen(
     }
     LaunchedEffect(state.isSending) {
         voice.setHermesRunning(state.isSending)
+    }
+
+    if (voiceState.needsWhisperDownload) {
+        AlertDialog(
+            onDismissRequest = voice::dismissWhisperDownloadPrompt,
+            title = { Text("Download local Whisper model?") },
+            text = {
+                Text(
+                    "Remote Whisper is unavailable. Download the base English model once for on-device fallback. " +
+                        "It is stored in app data and survives APK updates.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = voice::downloadWhisperModel) {
+                    Text(if (voiceState.modelDownloadInProgress) "Downloading..." else "Download")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = voice::dismissWhisperDownloadPrompt) {
+                    Text("Not now")
+                }
+            },
+        )
     }
 
     // RECORD_AUDIO permission gate — request on first toggle, not at app launch.

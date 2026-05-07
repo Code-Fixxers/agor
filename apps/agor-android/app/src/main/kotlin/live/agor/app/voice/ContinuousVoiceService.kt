@@ -64,7 +64,7 @@ class ContinuousVoiceService : Service() {
         audio = AudioCapture(this)
         vad = VoiceActivityDetector(this)
         tts = TextToSpeechService(this)
-        transcription = TranscriptionService(this)
+        transcription = TranscriptionService(this, container.tokenStore, container.voiceModels)
 
         vad.onSpeechStart = {
             audio.startBuffering()

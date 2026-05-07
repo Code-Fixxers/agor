@@ -37,10 +37,11 @@ interface SpeechTranscriber {
  * is configured, it is attempted first and falls back to local on failure.
  */
 class TranscriptionService(
-    private val context: Context,
+    context: Context,
     private val tokens: SecureTokenStore? = null,
+    private val models: VoiceModelManager = VoiceModelManager(context),
 ) : SpeechTranscriber {
-    private val local = LocalWhisperTranscriber(context)
+    private val local = LocalWhisperTranscriber(context, models)
     private val remote: RemoteWhisperTranscriber?
         get() {
             val url = tokens?.remoteWhisperUrl?.takeIf { it.isNotBlank() } ?: return null
@@ -61,9 +62,13 @@ class TranscriptionService(
 
     fun defaultModelPath(): File = local.defaultModelPath()
     fun isOnDeviceReady(): Boolean = local.isReady()
+    suspend fun downloadOnDeviceModel(): File = models.downloadWhisperModel()
 }
 
-class LocalWhisperTranscriber(private val context: Context) : SpeechTranscriber {
+class LocalWhisperTranscriber(
+    context: Context,
+    private val models: VoiceModelManager = VoiceModelManager(context),
+) : SpeechTranscriber {
     private val whisper: WhisperJni? by lazy {
         if (!WhisperJni.loadNative()) {
             null
@@ -74,7 +79,7 @@ class LocalWhisperTranscriber(private val context: Context) : SpeechTranscriber 
         }
     }
 
-    fun defaultModelPath(): File = File(context.filesDir, "whisper/ggml-base.en.bin")
+    fun defaultModelPath(): File = models.whisperModelFile()
     fun isReady(): Boolean = whisper != null
 
     override suspend fun transcribe(samples: ShortArray): TranscriptionResult = withContext(Dispatchers.Default) {
@@ -87,15 +92,8 @@ class LocalWhisperTranscriber(private val context: Context) : SpeechTranscriber 
     private fun ensureModelFile(): File? {
         val dest = defaultModelPath()
         if (dest.exists() && dest.length() > 0) return dest
-        dest.parentFile?.mkdirs()
-        return runCatching {
-            context.assets.open("whisper/ggml-base.en.bin").use { input ->
-                dest.outputStream().use { output -> input.copyTo(output) }
-            }
-            dest
-        }.onFailure {
-            AppLogger.log("Bundled Whisper model missing: ${it.message}", LogLevel.WARNING, "Voice")
-        }.getOrNull()
+        AppLogger.log("Local Whisper model is not downloaded: ${dest.absolutePath}", LogLevel.INFO, "Voice")
+        return null
     }
 }
 

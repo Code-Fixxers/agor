@@ -117,7 +117,11 @@ class VoiceActivityDetector(
         val appContext = context ?: return
         if (ortSession != null) return
         runCatching {
-            val model = appContext.assets.open("vad/silero_vad.onnx").use { it.readBytes() }
+            val file = VoiceModelManager.vadModelFile(appContext)
+            if (!file.exists() || file.length() <= 0L) {
+                throw IllegalStateException("Silero VAD model is not downloaded yet")
+            }
+            val model = file.readBytes()
             val env = OrtEnvironment.getEnvironment()
             ortEnv = env
             ortSession = env.createSession(model, OrtSession.SessionOptions())

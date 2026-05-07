@@ -46,18 +46,13 @@ val agorVersionName: String = (project.findProperty("versionName") as? String)
 val skipWhisperBundle: Boolean = System.getenv("SKIP_WHISPER")?.let {
     it.equals("1") || it.equals("true", ignoreCase = true)
 } ?: false
-val whisperModel: String = (project.findProperty("whisperModel") as? String)
-    ?.takeIf { it.isNotBlank() }
-    ?: "base.en"
 val androidRootDir = rootProject.layout.projectDirectory
 val whisperCppDir = layout.projectDirectory.dir("src/main/cpp/whisper.cpp")
-val whisperModelFile = layout.projectDirectory.file("src/main/assets/whisper/ggml-$whisperModel.bin")
 val syncWhisperScript = androidRootDir.file("scripts/sync-whisper.sh")
-val fetchWhisperModelScript = androidRootDir.file("scripts/fetch-whisper-model.sh")
 
 val syncWhisperCpp = tasks.register("syncWhisperCpp") {
     group = "agor"
-    description = "Vendors whisper.cpp for on-device transcription unless SKIP_WHISPER=1."
+    description = "Vendors whisper.cpp native code for on-device transcription unless SKIP_WHISPER=1."
     outputs.dir(whisperCppDir)
     onlyIf {
         !skipWhisperBundle && !whisperCppDir.asFile.resolve("CMakeLists.txt").exists()
@@ -65,20 +60,6 @@ val syncWhisperCpp = tasks.register("syncWhisperCpp") {
     doLast {
         exec {
             commandLine("bash", syncWhisperScript.asFile.absolutePath)
-        }
-    }
-}
-
-val fetchWhisperModel = tasks.register("fetchWhisperModel") {
-    group = "agor"
-    description = "Downloads the ignored ggml Whisper model artifact unless SKIP_WHISPER=1."
-    outputs.file(whisperModelFile)
-    onlyIf {
-        !skipWhisperBundle && !whisperModelFile.asFile.exists()
-    }
-    doLast {
-        exec {
-            commandLine("bash", fetchWhisperModelScript.asFile.absolutePath, whisperModel)
         }
     }
 }
@@ -195,7 +176,7 @@ android {
 
 if (!skipWhisperBundle) {
     tasks.named("preBuild").configure {
-        dependsOn(syncWhisperCpp, fetchWhisperModel)
+        dependsOn(syncWhisperCpp)
     }
     tasks.configureEach {
         if (name.startsWith("configureCMake") || name.startsWith("buildCMake")) {

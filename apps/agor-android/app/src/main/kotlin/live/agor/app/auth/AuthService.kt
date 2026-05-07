@@ -30,21 +30,26 @@ class AuthService(
     suspend fun bootstrap() {
         val url = tokens.serverUrl
         val token = tokens.accessToken
-        if (url.isNullOrEmpty() || token.isNullOrEmpty()) {
+        if (url.isNullOrEmpty()) {
             _state.value = AuthState.NeedsLogin
             return
         }
         client.setBaseUrl(url)
-        _state.value = try {
-            val u = client.me()
-            _user.value = u
+        if (!token.isNullOrEmpty()) {
+            try {
+                val u = client.me()
+                _user.value = u
+                _state.value = AuthState.Authenticated
+                return
+            } catch (_: AgorClient.AuthException) {
+                tokens.clearTokensKeepUrl()
+            } catch (t: Throwable) {
+                AppLogger.log("bootstrap token restore failed: ${t.message}", LogLevel.WARNING, "Auth")
+            }
+        }
+        _state.value = if (restoreWithSavedLogin(url)) {
             AuthState.Authenticated
-        } catch (_: AgorClient.AuthException) {
-            // Retry once via refresh inside the client; if me() still fails we soft-logout.
-            softLogout()
-            AuthState.NeedsLogin
-        } catch (t: Throwable) {
-            AppLogger.log("bootstrap failed: ${t.message}", LogLevel.WARNING, "Auth")
+        } else {
             AuthState.NeedsLogin
         }
     }
@@ -79,6 +84,8 @@ class AuthService(
             ?: AgorClient.HttpException(0, "Could not authenticate", "")
 
         tokens.lastEmail = usedEmail
+        tokens.savedLoginPassword = password
+        tokens.savedApiKey = null
         _user.value = result.user
         _state.value = AuthState.Authenticated
         // Save profile
@@ -107,6 +114,8 @@ class AuthService(
             ?: throw AgorClient.HttpException(0, "Could not reach server at $rawUrl", "")
         client.setBaseUrl(resolved)
         val result = client.loginWithApiKey(apiKey)
+        tokens.savedApiKey = apiKey
+        tokens.savedLoginPassword = null
         _user.value = result.user
         _state.value = AuthState.Authenticated
     }
@@ -127,4 +136,24 @@ class AuthService(
 
     private fun normalizeUrl(input: String): String = input.trim().trimEnd('/')
     private fun normalizeEmailForLogin(input: String): String = input.trim()
+
+    private suspend fun restoreWithSavedLogin(url: String): Boolean {
+        val apiKey = tokens.savedApiKey
+        if (!apiKey.isNullOrBlank()) {
+            return runCatching {
+                loginWithApiKey(url, apiKey)
+            }.onFailure {
+                AppLogger.log("saved API-key login failed: ${it.message}", LogLevel.WARNING, "Auth")
+            }.isSuccess
+        }
+
+        val email = tokens.lastEmail
+        val password = tokens.savedLoginPassword
+        if (email.isNullOrBlank() || password.isNullOrBlank()) return false
+        return runCatching {
+            login(url, email, password)
+        }.onFailure {
+            AppLogger.log("saved password login failed: ${it.message}", LogLevel.WARNING, "Auth")
+        }.isSuccess
+    }
 }

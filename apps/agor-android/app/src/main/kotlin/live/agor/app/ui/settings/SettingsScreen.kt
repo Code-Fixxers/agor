@@ -205,7 +205,7 @@ private fun WhisperServerRow() {
     Text("Whisper transcription", style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(4.dp))
     Text(
-        "Voice mode can use your self-hosted whisper.cpp server before falling back to bundled local Whisper.",
+        "Voice mode can use your self-hosted whisper.cpp server before falling back to a downloaded local Whisper model.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

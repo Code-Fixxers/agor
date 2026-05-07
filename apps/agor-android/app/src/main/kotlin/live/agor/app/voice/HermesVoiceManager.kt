@@ -38,6 +38,8 @@ data class HermesVoiceState(
     val audioLevel: Float = 0f,
     val threshold: Float = 0.7f,
     val errorMessage: String? = null,
+    val needsWhisperDownload: Boolean = false,
+    val modelDownloadInProgress: Boolean = false,
 )
 
 /**
@@ -52,11 +54,12 @@ class HermesVoiceManager(
     private val context: Context,
     tokens: SecureTokenStore,
     private val sessions: HermesSessionStore,
+    private val models: VoiceModelManager = VoiceModelManager(context),
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val audio = AudioCapture(context)
     private val vad = VoiceActivityDetector(context, VadConfig())
-    private val transcriber = TranscriptionService(context, tokens)
+    private val transcriber = TranscriptionService(context, tokens, models)
     private val tts = TextToSpeechService(context)
 
     private val _state = MutableStateFlow(HermesVoiceState(threshold = vad.config.threshold))
@@ -183,6 +186,35 @@ class HermesVoiceManager(
         if (_state.value.enabled && !hermesRunning) startCaptureIfNeeded()
     }
 
+    fun downloadWhisperModel() {
+        if (_state.value.modelDownloadInProgress) return
+        _state.value = _state.value.copy(
+            phase = HermesVoicePhase.LoadingModels,
+            needsWhisperDownload = false,
+            modelDownloadInProgress = true,
+            errorMessage = null,
+        )
+        scope.launch {
+            runCatching { transcriber.downloadOnDeviceModel() }
+                .onSuccess {
+                    _state.value = _state.value.copy(modelDownloadInProgress = false)
+                    if (_state.value.enabled && !hermesRunning) startCaptureIfNeeded()
+                }
+                .onFailure {
+                    _state.value = _state.value.copy(
+                        phase = HermesVoicePhase.Error,
+                        modelDownloadInProgress = false,
+                        needsWhisperDownload = true,
+                        errorMessage = "Whisper model download failed: ${it.message}",
+                    )
+                }
+        }
+    }
+
+    fun dismissWhisperDownloadPrompt() {
+        _state.value = _state.value.copy(needsWhisperDownload = false)
+    }
+
     fun release() {
         stop()
         eventJob?.cancel()
@@ -220,7 +252,8 @@ class HermesVoiceManager(
             if (result.source == "local-unavailable") {
                 _state.value = _state.value.copy(
                     phase = HermesVoicePhase.Error,
-                    errorMessage = "Voice transcription is unavailable. Configure Remote Whisper or rebuild with local Whisper.",
+                    needsWhisperDownload = true,
+                    errorMessage = "Remote Whisper is unavailable and the local Whisper model has not been downloaded.",
                 )
                 return
             }
@@ -318,7 +351,7 @@ class HermesVoiceManager(
     }
 
     private fun setPhase(phase: HermesVoicePhase) {
-        _state.value = _state.value.copy(phase = phase, errorMessage = null)
+        _state.value = _state.value.copy(phase = phase, errorMessage = null, needsWhisperDownload = false)
     }
 
     private companion object {

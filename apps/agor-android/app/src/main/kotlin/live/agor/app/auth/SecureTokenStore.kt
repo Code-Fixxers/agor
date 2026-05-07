@@ -41,6 +41,16 @@ class SecureTokenStore(context: Context) {
         get() = prefs.getString(KEY_LAST_EMAIL, null)
         set(value) = prefs.edit().putString(KEY_LAST_EMAIL, value).apply()
 
+    /** Encrypted reusable password for silent re-login after process restarts/token expiry. */
+    var savedLoginPassword: String?
+        get() = prefs.getString(KEY_SAVED_LOGIN_PASSWORD, null)
+        set(value) = prefs.edit().putString(KEY_SAVED_LOGIN_PASSWORD, value?.takeIf { it.isNotBlank() }).apply()
+
+    /** Encrypted reusable API key for silent API-key re-login after process restarts/token expiry. */
+    var savedApiKey: String?
+        get() = prefs.getString(KEY_SAVED_API_KEY, null)
+        set(value) = prefs.edit().putString(KEY_SAVED_API_KEY, value?.takeIf { it.isNotBlank() }).apply()
+
     /** Hermes Agent base URL (OpenAI-compatible /v1 endpoint). e.g. http://100.101.157.56:8642 */
     var hermesUrl: String?
         get() = prefs.getString(KEY_HERMES_URL, null)
@@ -132,6 +142,8 @@ class SecureTokenStore(context: Context) {
         const val KEY_REFRESH_TOKEN = "refresh_token"
         const val KEY_SERVER_URL = "server_url"
         const val KEY_LAST_EMAIL = "last_email"
+        const val KEY_SAVED_LOGIN_PASSWORD = "saved_login_password"
+        const val KEY_SAVED_API_KEY = "saved_api_key"
         const val KEY_HERMES_URL = "hermes_url"
         const val KEY_HERMES_TOKEN = "hermes_token"
         const val KEY_HERMES_MODEL = "hermes_model"
