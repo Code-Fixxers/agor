@@ -1,6 +1,8 @@
 package live.agor.app.viewmodels
 
+import android.net.Uri
 import android.os.SystemClock
+import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +20,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import live.agor.app.AppContainer
@@ -27,11 +30,15 @@ import live.agor.app.models.Message
 import live.agor.app.models.MessageContent
 import live.agor.app.models.PermissionStatus
 import live.agor.app.models.Session
+import live.agor.app.network.UploadFileInput
 import live.agor.app.network.StreamingService
 import live.agor.app.ui.chat.ChatRow
 import live.agor.app.ui.chat.ChatRowFlattener
 import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
+import live.agor.app.voice.PromptVoiceInputController
+import java.io.IOException
+import java.util.UUID
 
 /**
  * ViewModel backing a single session's chat screen.
@@ -51,6 +58,16 @@ import live.agor.app.util.LogLevel
  *    `filterNot + sortedBy` over the whole list per event.
  */
 class ChatViewModel(private val container: AppContainer, val sessionId: String) : ViewModel() {
+
+    data class PendingSessionAttachment(
+        val id: String,
+        val filename: String,
+        val mimeType: String?,
+        val sizeBytes: Long,
+        val bytes: ByteArray,
+    ) {
+        fun toUploadInput(): UploadFileInput = UploadFileInput(filename, mimeType, bytes)
+    }
 
     /** Transient UI bits — never observed by row flattening. */
     data class UiState(
@@ -74,6 +91,16 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
 
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
+
+    private val _attachments = MutableStateFlow<List<PendingSessionAttachment>>(emptyList())
+    val attachments: StateFlow<List<PendingSessionAttachment>> = _attachments.asStateFlow()
+
+    private val promptVoice = PromptVoiceInputController(
+        container.appContext,
+        container.tokenStore,
+        container.voiceModels,
+    )
+    val promptVoiceState = promptVoice.state
 
     private val rowFlattener = ChatRowFlattener()
     private var cacheSaveJob: Job? = null
@@ -109,6 +136,15 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
+        promptVoice.onTranscribed = { text ->
+            viewModelScope.launch {
+                _uiState.update { current ->
+                    val draft = current.draft.trimEnd()
+                    val next = if (draft.isBlank()) text else "$draft $text"
+                    current.copy(draft = next)
+                }
+            }
+        }
         container.socket.onMessageCreated { msg ->
             if (msg.sessionId != sessionId) return@onMessageCreated
             viewModelScope.launch { upsertSorted(msg) }
@@ -205,13 +241,87 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         _uiState.update { it.copy(draft = text) }
     }
 
+    fun hasMicPermission(): Boolean = promptVoice.hasMicPermission()
+
+    fun startVoiceInput() {
+        promptVoice.start()
+    }
+
+    fun stopVoiceInput() {
+        promptVoice.stop()
+    }
+
+    fun downloadVoiceWhisperModel() {
+        promptVoice.downloadWhisperModel()
+    }
+
+    fun dismissVoiceWhisperDownloadPrompt() {
+        promptVoice.dismissWhisperDownloadPrompt()
+    }
+
+    fun addAttachmentFromUri(uri: Uri) {
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { readAttachment(uri) } }
+                .onSuccess { attachment ->
+                    _attachments.update { current -> current + attachment }
+                    AppLogger.log(
+                        "Attached ${attachment.filename} (${attachment.mimeType ?: "unknown"}, ${attachment.sizeBytes} bytes)",
+                        LogLevel.INFO,
+                        "Chat",
+                    )
+                }
+                .onFailure { t ->
+                    AppLogger.log("Attachment read failed: ${t.message}", LogLevel.ERROR, "Chat")
+                    _uiState.update { it.copy(errorMessage = t.message) }
+                }
+        }
+    }
+
+    fun addLogsAttachment() {
+        val text = AppLogger.exportText()
+        val filename = "agor-android-logs-${System.currentTimeMillis()}.txt"
+        _attachments.update { current ->
+            current + PendingSessionAttachment(
+                id = UUID.randomUUID().toString(),
+                filename = filename,
+                mimeType = "text/plain",
+                sizeBytes = text.toByteArray().size.toLong(),
+                bytes = text.toByteArray(),
+            )
+        }
+        AppLogger.log("Attached application logs as $filename", LogLevel.INFO, "Chat")
+    }
+
+    fun removeAttachment(id: String) {
+        _attachments.update { current -> current.filterNot { it.id == id } }
+    }
+
     fun sendPrompt() {
         val text = _uiState.value.draft.trim()
-        if (text.isEmpty()) return
+        val pendingAttachments = _attachments.value
+        if (text.isEmpty() && pendingAttachments.isEmpty()) return
         viewModelScope.launch {
             try {
-                container.client.sendPrompt(sessionId, text)
+                if (pendingAttachments.isEmpty()) {
+                    container.client.sendPrompt(sessionId, text)
+                } else {
+                    val message = if (text.isBlank()) {
+                        "Attached file(s): {filepath}\n\nPlease review these attached files."
+                    } else {
+                        "$text\n\nAttached file(s): {filepath}"
+                    }
+                    val result = container.client.uploadSessionFiles(
+                        sessionId = sessionId,
+                        files = pendingAttachments.map { it.toUploadInput() },
+                        notifyAgent = true,
+                        message = message,
+                    )
+                    result.warning?.let { warning ->
+                        AppLogger.log("Upload notification warning: $warning", LogLevel.WARNING, "Chat")
+                    }
+                }
                 _uiState.update { it.copy(draft = "") }
+                _attachments.value = emptyList()
             } catch (t: Throwable) {
                 AppLogger.log("Send failed: ${t.message}", LogLevel.ERROR, "Chat")
                 _uiState.update { it.copy(errorMessage = t.message) }
@@ -246,6 +356,11 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
                 )
             }
         }
+    }
+
+    override fun onCleared() {
+        promptVoice.release()
+        super.onCleared()
     }
 
     /**
@@ -293,6 +408,43 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         return byId.values.sortedBy { it.index }
     }
 
+    private fun readAttachment(uri: Uri): PendingSessionAttachment {
+        val resolver = container.appContext.contentResolver
+        val metadata = resolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+            if (cursor.moveToFirst()) {
+                val name = if (nameIndex >= 0) cursor.getString(nameIndex) else null
+                val size = if (sizeIndex >= 0) cursor.getLong(sizeIndex) else -1L
+                name to size
+            } else {
+                null to -1L
+            }
+        } ?: (null to -1L)
+
+        val filename = metadata.first?.takeIf { it.isNotBlank() }
+            ?: "attachment-${System.currentTimeMillis()}"
+        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: throw IOException("Could not read attachment")
+        if (bytes.size > 50 * 1024 * 1024) {
+            throw IOException("Attachment exceeds the 50 MB upload limit")
+        }
+        val mimeType = inferUploadMimeType(resolver.getType(uri), filename)
+        return PendingSessionAttachment(
+            id = UUID.randomUUID().toString(),
+            filename = filename,
+            mimeType = mimeType,
+            sizeBytes = if (metadata.second >= 0) metadata.second else bytes.size.toLong(),
+            bytes = bytes,
+        )
+    }
+
     /** Walks the (already sorted) message list from the end. */
     private fun firstPendingPermission(messages: List<Message>): String? {
         for (i in messages.indices.reversed()) {
@@ -314,5 +466,27 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
             }
         }
         return null
+    }
+}
+
+private fun inferUploadMimeType(contentResolverType: String?, filename: String): String? {
+    val provided = contentResolverType?.substringBefore(';')?.lowercase()
+    if (!provided.isNullOrBlank() && provided != "application/octet-stream") return provided
+    return when (filename.substringAfterLast('.', "").lowercase()) {
+        "png" -> "image/png"
+        "jpg", "jpeg" -> "image/jpeg"
+        "gif" -> "image/gif"
+        "webp" -> "image/webp"
+        "txt", "log" -> "text/plain"
+        "md", "markdown" -> "text/markdown"
+        "csv" -> "text/csv"
+        "json" -> "application/json"
+        "pdf" -> "application/pdf"
+        "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "zip" -> "application/zip"
+        "gz" -> "application/gzip"
+        "tar" -> "application/x-tar"
+        else -> contentResolverType
     }
 }

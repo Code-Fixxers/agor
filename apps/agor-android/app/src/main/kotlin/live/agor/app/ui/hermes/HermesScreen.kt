@@ -17,17 +17,17 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Forward
-import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -65,17 +65,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import live.agor.app.LocalAppContainer
 import live.agor.app.data.HermesImageInput
 import live.agor.app.data.HermesSession
 import live.agor.app.data.HermesTurn
+import live.agor.app.ui.common.AttachmentPickerDialog
 import live.agor.app.ui.messageblocks.MarkdownText
 import live.agor.app.ui.simpleViewModelFactory
+import live.agor.app.util.AppLogger
 import live.agor.app.viewmodels.HermesViewModel
 import live.agor.app.voice.HermesVoicePhase
 import live.agor.app.voice.HermesVoiceState
 import java.io.File
+import kotlin.math.min
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,6 +98,7 @@ fun HermesScreen(
     var draft by remember { mutableStateOf("") }
     var pendingImages by remember { mutableStateOf<List<HermesImageInput>>(emptyList()) }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    var showAttachDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(initialSessionId) { vm.openSession(initialSessionId) }
 
@@ -140,6 +146,18 @@ fun HermesScreen(
             pendingImages = pendingImages + container.hermesImages.importUri(uri)
         }
     }
+    val fileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri != null) scope.launch {
+            val mimeType = context.contentResolver.getType(uri).orEmpty()
+            if (mimeType.startsWith("image/")) {
+                pendingImages = pendingImages + container.hermesImages.importUri(uri)
+            } else {
+                draft = appendPromptAttachment(draft, readHermesTextAttachment(context, uri))
+            }
+        }
+    }
     val takePictureLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture(),
     ) { ok ->
@@ -158,6 +176,41 @@ fun HermesScreen(
         }
     }
 
+    if (showAttachDialog) {
+        AttachmentPickerDialog(
+            onDismiss = { showAttachDialog = false },
+            onFile = {
+                showAttachDialog = false
+                fileLauncher.launch("*/*")
+            },
+            onPicture = {
+                showAttachDialog = false
+                galleryLauncher.launch("image/*")
+            },
+            onCamera = {
+                showAttachDialog = false
+                val granted = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.CAMERA,
+                ) == PackageManager.PERMISSION_GRANTED
+                if (granted) {
+                    val uri = createHermesCameraUri(context)
+                    cameraUri = uri
+                    takePictureLauncher.launch(uri)
+                } else {
+                    cameraPermLauncher.launch(Manifest.permission.CAMERA)
+                }
+            },
+            onLogs = {
+                showAttachDialog = false
+                draft = appendPromptAttachment(
+                    draft,
+                    "Application logs:\n```text\n${AppLogger.exportText()}\n```",
+                )
+            },
+        )
+    }
+
     val listState = rememberLazyListState()
     LaunchedEffect(state.turns.size, state.turns.lastOrNull()?.content) {
         // Auto-scroll to the latest turn whenever a new chunk arrives.
@@ -174,26 +227,6 @@ fun HermesScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { galleryLauncher.launch("image/*") }) {
-                        Icon(Icons.Default.Image, contentDescription = "Attach image")
-                    }
-                    IconButton(
-                        onClick = {
-                            val granted = ContextCompat.checkSelfPermission(
-                                context,
-                                Manifest.permission.CAMERA,
-                            ) == PackageManager.PERMISSION_GRANTED
-                            if (granted) {
-                                val uri = createHermesCameraUri(context)
-                                cameraUri = uri
-                                takePictureLauncher.launch(uri)
-                            } else {
-                                cameraPermLauncher.launch(Manifest.permission.CAMERA)
-                            }
-                        },
-                    ) {
-                        Icon(Icons.Default.CameraAlt, contentDescription = "Take photo")
-                    }
                     IconButton(onClick = vm::newSession) {
                         Icon(Icons.Default.Add, contentDescription = "New Hermes session")
                     }
@@ -272,6 +305,7 @@ fun HermesScreen(
                     vm.send(text, images)
                 },
                 enabled = !state.isSending,
+                onAttachClick = { showAttachDialog = true },
                 voiceState = voiceState,
                 onToggleVoice = {
                     if (voiceState.enabled) {
@@ -300,6 +334,7 @@ private fun HermesInputBar(
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     enabled: Boolean,
+    onAttachClick: () -> Unit,
     voiceState: HermesVoiceState,
     onToggleVoice: () -> Unit,
     onPendingTranscriptChange: (String) -> Unit,
@@ -323,6 +358,9 @@ private fun HermesInputBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            IconButton(onClick = onAttachClick, enabled = enabled && pending == null) {
+                Icon(Icons.Default.AttachFile, contentDescription = "Attach")
+            }
             OutlinedTextField(
                 value = draft,
                 onValueChange = onDraftChange,
@@ -547,4 +585,64 @@ private fun createHermesCameraUri(context: android.content.Context): Uri {
         "${context.packageName}.update.fileprovider",
         file,
     )
+}
+
+private fun appendPromptAttachment(draft: String, attachmentText: String): String {
+    val trimmed = draft.trimEnd()
+    return if (trimmed.isBlank()) attachmentText else "$trimmed\n\n$attachmentText"
+}
+
+private suspend fun readHermesTextAttachment(context: android.content.Context, uri: Uri): String =
+    withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val metadata = resolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+            if (cursor.moveToFirst()) {
+                val name = if (nameIndex >= 0) cursor.getString(nameIndex) else null
+                val size = if (sizeIndex >= 0) cursor.getLong(sizeIndex) else -1L
+                name to size
+            } else {
+                null to -1L
+            }
+        } ?: (null to -1L)
+
+        val name = metadata.first?.takeIf { it.isNotBlank() }
+            ?: "attachment-${System.currentTimeMillis()}"
+        val mimeType = resolver.getType(uri)?.substringBefore(';')?.lowercase()
+        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: return@withContext "Attached file: $name\n\nCould not read file contents."
+
+        if (!isPromptTextAttachment(name, mimeType)) {
+            return@withContext "Attached file: $name (${mimeType ?: "unknown"}, ${bytes.size} bytes)\n\nBinary file content is not inlined in Hermes chat."
+        }
+
+        val limit = 256 * 1024
+        val used = bytes.copyOf(min(bytes.size, limit))
+        val text = used.decodeToString()
+        val truncated = bytes.size > limit
+        buildString {
+            appendLine("Attached file: $name (${mimeType ?: "text"}, ${bytes.size} bytes)")
+            if (truncated) appendLine("Showing first ${limit / 1024} KB.")
+            appendLine("```text")
+            appendLine(text)
+            appendLine("```")
+        }
+    }
+
+private fun isPromptTextAttachment(filename: String, mimeType: String?): Boolean {
+    if (mimeType != null) {
+        if (mimeType.startsWith("text/")) return true
+        if (mimeType == "application/json") return true
+    }
+    return when (filename.substringAfterLast('.', "").lowercase()) {
+        "txt", "log", "md", "markdown", "csv", "json", "yaml", "yml", "xml" -> true
+        else -> false
+    }
 }

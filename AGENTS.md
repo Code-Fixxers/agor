@@ -210,6 +210,9 @@ Agor is built on 5 primitives:
 
 **Git Commits:**
 
+- ✅ **ALWAYS commit and push completed work** before ending a turn that changed files
+- If verification fails, fix the failures and then commit/push; do not leave verified changes uncommitted
+- If a user asks for a change and does not explicitly say "do not commit" or "hold locally", assume commit and push are required
 - ❌ **NEVER use `git commit --no-verify`** without explicit user permission
 - Pre-commit hooks (typecheck, lint) exist for a reason
 - If hooks fail, fix the issues - don't bypass them

@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonElement
@@ -26,6 +27,8 @@ import live.agor.app.models.User
 import live.agor.app.models.Worktree
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -239,6 +242,36 @@ class AgorClient(private val tokens: SecureTokenStore) {
         authenticatedRequest("POST", "/sessions/$sessionId/prompt", body)
     }
 
+    suspend fun uploadSessionFiles(
+        sessionId: String,
+        files: List<UploadFileInput>,
+        notifyAgent: Boolean,
+        message: String,
+    ): UploadFilesResult {
+        if (files.isEmpty()) throw IOException("No files selected")
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("notifyAgent", notifyAgent.toString())
+            .addFormDataPart("message", message)
+            .apply {
+                files.forEach { file ->
+                    val mediaType = file.mimeType?.toMediaTypeOrNull()
+                        ?: "application/octet-stream".toMediaType()
+                    addFormDataPart(
+                        "files",
+                        file.filename,
+                        file.bytes.toRequestBody(mediaType),
+                    )
+                }
+            }
+            .build()
+        val resp = authenticatedMultipartUpload(
+            buildUrl("/sessions/$sessionId/upload", mapOf("destination" to "worktree")),
+            body,
+        )
+        return AgorJson.decodeFromJsonElement(UploadFilesResult.serializer(), resp)
+    }
+
     suspend fun stopSession(sessionId: String) {
         authenticatedRequest("POST", "/sessions/$sessionId/stop", JsonObject(emptyMap()))
     }
@@ -367,6 +400,23 @@ class AgorClient(private val tokens: SecureTokenStore) {
         readJson(doRequest(method, pathOrUrl, body, useAuth = false))
     }
 
+    private suspend fun authenticatedMultipartUpload(
+        pathOrUrl: String,
+        body: MultipartBody,
+    ): JsonElement = withContext(Dispatchers.IO) {
+        val firstResp = doMultipartUpload(pathOrUrl, body, useAuth = true)
+        if (firstResp.code == 401) {
+            firstResp.close()
+            val refreshed = refresh()
+            if (refreshed) {
+                val retry = doMultipartUpload(pathOrUrl, body, useAuth = true)
+                return@withContext readJson(retry)
+            }
+            throw AuthException("Unauthenticated")
+        }
+        readJson(firstResp)
+    }
+
     private fun doRequest(
         method: String,
         pathOrUrl: String,
@@ -382,6 +432,23 @@ class AgorClient(private val tokens: SecureTokenStore) {
         builder.header("Accept", "application/json")
         val rb = body?.let { AgorJson.encodeToString(JsonElement.serializer(), it).toRequestBody(jsonMedia) }
         builder.method(method, rb ?: if (method != "GET") "".toRequestBody(jsonMedia) else null)
+        return http.newCall(builder.build()).execute()
+    }
+
+    private fun doMultipartUpload(
+        pathOrUrl: String,
+        body: MultipartBody,
+        useAuth: Boolean,
+    ): okhttp3.Response {
+        if (baseUrl.isEmpty()) throw IOException("Server URL not configured")
+        val url = if (pathOrUrl.startsWith("http")) pathOrUrl else "$baseUrl$pathOrUrl"
+        val builder = Request.Builder()
+            .url(url)
+            .header("Accept", "application/json")
+            .post(body)
+        if (useAuth) {
+            tokens.accessToken?.let { builder.header("Authorization", "Bearer $it") }
+        }
         return http.newCall(builder.build()).execute()
     }
 
@@ -401,6 +468,27 @@ class AgorClient(private val tokens: SecureTokenStore) {
     class AuthException(message: String) : IOException(message)
     class HttpException(val statusCode: Int, message: String, val body: String) : IOException(message)
 }
+
+data class UploadFileInput(
+    val filename: String,
+    val mimeType: String?,
+    val bytes: ByteArray,
+)
+
+@Serializable
+data class UploadedSessionFile(
+    val filename: String,
+    val path: String,
+    val size: Long,
+    val mimeType: String,
+)
+
+@Serializable
+data class UploadFilesResult(
+    val success: Boolean,
+    val files: List<UploadedSessionFile>,
+    val warning: String? = null,
+)
 
 private inline fun buildJsonObject(block: MutableMap<String, JsonElement>.() -> Unit): JsonObject {
     val map = mutableMapOf<String, JsonElement>()
