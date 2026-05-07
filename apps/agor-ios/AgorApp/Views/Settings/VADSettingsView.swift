@@ -10,8 +10,9 @@ struct VADSettingsView: View {
     init(chatVM: ChatViewModel) {
         self.chatVM = chatVM
         _config = State(initialValue: chatVM.vadConfig)
-        let saved = UserDefaults.standard.object(forKey: "agor.vad.sensitivity") as? Float
-        _sensitivity = State(initialValue: chatVM.voiceService?.vad.sensitivityLevel ?? saved ?? 0.5)
+        let currentSensitivity = chatVM.voiceService?.vad.sensitivityLevel
+            ?? VADConfig.sensitivity(for: chatVM.vadConfig.threshold)
+        _sensitivity = State(initialValue: currentSensitivity)
     }
 
     var body: some View {
@@ -24,8 +25,7 @@ struct VADSettingsView: View {
                     step: 0.05,
                     format: { String(format: "%.2f", $0) }
                 ) {
-                    chatVM.voiceService?.vad.setSensitivity(sensitivity)
-                    UserDefaults.standard.set(sensitivity, forKey: "agor.vad.sensitivity")
+                    persistSensitivity()
                 }
 
                 SliderRow(
@@ -44,10 +44,8 @@ struct VADSettingsView: View {
             Section {
                 Button("Reset to defaults", role: .destructive) {
                     config = VADConfig()
-                    sensitivity = 0.5
+                    sensitivity = VADConfig.sensitivity(for: config.threshold)
                     chatVM.vadConfig = config
-                    chatVM.voiceService?.vad.setSensitivity(0.5)
-                    UserDefaults.standard.set(Float(0.5), forKey: "agor.vad.sensitivity")
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
             }
@@ -56,8 +54,13 @@ struct VADSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         // Apply config to VAD instantly on every slider drag frame
         .onChange(of: config) { _, newConfig in
-            chatVM.voiceService?.vad.config = newConfig
+            chatVM.voiceService?.vadConfig = newConfig
         }
+    }
+
+    private func persistSensitivity() {
+        config.threshold = VADConfig.threshold(for: sensitivity)
+        chatVM.vadConfig = config
     }
 
     /// Save to UserDefaults (called on slider release — avoid writes during drag)

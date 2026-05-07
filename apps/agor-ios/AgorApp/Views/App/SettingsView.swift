@@ -9,6 +9,7 @@ struct SettingsView: View {
     var onClearCache: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
+    @State private var logger = AppLogger.shared
 
     var body: some View {
         NavigationStack {
@@ -82,6 +83,18 @@ struct SettingsView: View {
                         Label("Clear Session Cache", systemImage: "trash")
                             .foregroundStyle(.red)
                     }
+                }
+
+                // Diagnostics Section
+                Section("Diagnostics") {
+                    ShareLink(
+                        item: logger.export(),
+                        subject: Text("Agor Debug Log"),
+                        message: Text("Debug log exported from Agor iOS app")
+                    ) {
+                        Label("Download Logs", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(logger.entries.isEmpty)
                 }
 
                 // Voice Section

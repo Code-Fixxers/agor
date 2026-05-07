@@ -108,6 +108,7 @@ final class ChatViewModel {
     // VAD config — persisted to UserDefaults as JSON; applied to voiceService on change.
     // @ObservationIgnored: no view reads this for display, so it must not enter AttributeGraph.
     private static let vadConfigKey = "agor.vadConfig"
+    private static let legacyVadSensitivityKey = "agor.vad.sensitivity"
     @ObservationIgnored
     var vadConfig: VADConfig = VADConfig() {
         didSet {
@@ -145,6 +146,13 @@ final class ChatViewModel {
         if let data = UserDefaults.standard.data(forKey: Self.vadConfigKey),
            let decoded = try? JSONDecoder().decode(VADConfig.self, from: data) {
             vadConfig = decoded
+        }
+        if let savedSensitivity = UserDefaults.standard.object(forKey: Self.legacyVadSensitivityKey) as? Float {
+            vadConfig.threshold = VADConfig.threshold(for: savedSensitivity)
+            UserDefaults.standard.removeObject(forKey: Self.legacyVadSensitivityKey)
+            if let data = try? JSONEncoder().encode(vadConfig) {
+                UserDefaults.standard.set(data, forKey: Self.vadConfigKey)
+            }
         }
         setupSocketHandlers()
         setupStreamingHandlers()

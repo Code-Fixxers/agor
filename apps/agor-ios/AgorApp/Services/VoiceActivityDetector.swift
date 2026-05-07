@@ -75,6 +75,12 @@ final class VoiceActivityDetector {
         )
     }
 
+    func applyConfig(_ newConfig: VADConfig) {
+        config = newConfig
+        energyThreshold = newConfig.threshold
+        sensitivityLevel = max(0.0, min(1.0, VADConfig.sensitivity(for: newConfig.threshold)))
+    }
+
     // MARK: - Start / Stop
 
     func startListening() throws {
