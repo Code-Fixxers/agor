@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import live.agor.app.models.DrawerSessionFilter
+import live.agor.app.voice.DEFAULT_REMOTE_WHISPER_URL
 
 /**
  * Encrypted persistence for JWT/refresh tokens, server URL, and last login email.
@@ -72,12 +73,25 @@ class SecureTokenStore(context: Context) {
         get() = prefs.getString(KEY_GITHUB_TOKEN, null)
         set(value) = prefs.edit().putString(KEY_GITHUB_TOKEN, value?.takeIf { it.isNotBlank() }).apply()
 
-    /** Optional self-hosted whisper.cpp server URL for faster voice transcription. */
+    /** Optional self-hosted WhisperLiveKit server URL for faster voice transcription. */
     var remoteWhisperUrl: String?
-        get() = prefs.getString(KEY_REMOTE_WHISPER_URL, null)
-        set(value) = prefs.edit().putString(KEY_REMOTE_WHISPER_URL, value).apply()
+        get() {
+            if (prefs.getBoolean(KEY_REMOTE_WHISPER_DISABLED, false)) return null
+            return prefs.getString(KEY_REMOTE_WHISPER_URL, null) ?: DEFAULT_REMOTE_WHISPER_URL
+        }
+        set(value) {
+            prefs.edit().apply {
+                if (value.isNullOrBlank()) {
+                    remove(KEY_REMOTE_WHISPER_URL)
+                    putBoolean(KEY_REMOTE_WHISPER_DISABLED, true)
+                } else {
+                    putString(KEY_REMOTE_WHISPER_URL, value)
+                    putBoolean(KEY_REMOTE_WHISPER_DISABLED, false)
+                }
+            }.apply()
+        }
 
-    /** Optional bearer token for the self-hosted whisper.cpp server. */
+    /** Optional bearer token for the self-hosted WhisperLiveKit server. */
     var remoteWhisperToken: String?
         get() = prefs.getString(KEY_REMOTE_WHISPER_TOKEN, null)
         set(value) = prefs.edit().putString(KEY_REMOTE_WHISPER_TOKEN, value).apply()
@@ -174,6 +188,7 @@ class SecureTokenStore(context: Context) {
         const val KEY_GITHUB_TOKEN = "github_token"
         const val KEY_REMOTE_WHISPER_URL = "remote_whisper_url"
         const val KEY_REMOTE_WHISPER_TOKEN = "remote_whisper_token"
+        const val KEY_REMOTE_WHISPER_DISABLED = "remote_whisper_disabled"
         const val KEY_DRAWER_SESSION_FILTER = "drawer_session_filter"
         const val KEY_BIOMETRIC_ENABLED = "biometric_enabled"
         const val KEY_BIOMETRIC_SERVER_URL = "biometric_server_url"

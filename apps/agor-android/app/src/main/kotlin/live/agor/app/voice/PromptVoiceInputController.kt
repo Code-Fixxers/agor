@@ -44,7 +44,7 @@ data class PromptVoiceInputState(
  */
 class PromptVoiceInputController(
     private val context: Context,
-    tokens: SecureTokenStore,
+    private val tokens: SecureTokenStore,
     private val models: VoiceModelManager = VoiceModelManager(context),
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -61,6 +61,7 @@ class PromptVoiceInputController(
     private var modelPreparationJob: Job? = null
     private var transcriptionJob: Job? = null
     private var liveTranscriptionJob: Job? = null
+    private var liveKitStream: WhisperLiveKitStream? = null
     private var lastPartialTranscript = ""
 
     init {
@@ -98,6 +99,12 @@ class PromptVoiceInputController(
                     errorMessage = "Voice processing failed: ${it.message}",
                 )
             }
+        }
+        audio.onPcmFrame = { samples ->
+            runCatching { liveKitStream?.sendPcm(samples) }
+                .onFailure {
+                    AppLogger.log("Prompt voice streaming PCM failed: ${it.message}", LogLevel.WARNING, "Voice")
+                }
         }
     }
 
@@ -138,6 +145,7 @@ class PromptVoiceInputController(
         liveTranscriptionJob?.cancel()
         transcriptionJob = null
         liveTranscriptionJob = null
+        stopLiveKitStream()
         stopCapture()
         resetState()
         AppLogger.log("Prompt voice dictation cancelled", LogLevel.INFO, "Voice")
@@ -197,7 +205,9 @@ class PromptVoiceInputController(
     }
 
     private fun startCapture() {
+        startLiveKitStream()
         if (!audio.start()) {
+            stopLiveKitStream()
             vad.stop()
             _state.value = _state.value.copy(
                 phase = PromptVoicePhase.Error,
@@ -214,6 +224,7 @@ class PromptVoiceInputController(
         liveTranscriptionJob?.cancel()
         liveTranscriptionJob = null
         val pcm = audio.stopBufferingAndDrain()
+        stopLiveKitStream()
         stopCapture()
         if (pcm.isEmpty()) {
             AppLogger.log("Prompt voice transcription skipped: empty audio buffer", LogLevel.WARNING, "Voice")
@@ -247,6 +258,10 @@ class PromptVoiceInputController(
     }
 
     private fun startLiveTranscription() {
+        if (liveKitStream?.isConnected == true) {
+            AppLogger.log("Prompt voice rolling REST partials skipped; WhisperLiveKit stream is active", LogLevel.DEBUG, "Voice")
+            return
+        }
         liveTranscriptionJob?.cancel()
         lastPartialTranscript = ""
         liveTranscriptionJob = scope.launch {
@@ -266,6 +281,31 @@ class PromptVoiceInputController(
                 delay(LIVE_TRANSCRIPTION_INTERVAL_MS)
             }
         }
+    }
+
+    private fun startLiveKitStream() {
+        val url = tokens.remoteWhisperUrl?.takeIf { it.isNotBlank() } ?: return
+        stopLiveKitStream()
+        liveKitStream = WhisperLiveKitClient(url, tokens.remoteWhisperToken).open(
+            onTranscript = { partial ->
+                val cleaned = partial.trim()
+                if (cleaned.isBlank() || cleaned == lastPartialTranscript) return@open
+                lastPartialTranscript = cleaned
+                _state.value = _state.value.copy(liveTranscript = cleaned)
+                onPartialTranscribed?.invoke(cleaned)
+            },
+            onFinalTranscript = { final ->
+                AppLogger.log("Prompt voice WhisperLiveKit final available: chars=${final.length}", LogLevel.DEBUG, "Voice")
+            },
+            onFailure = {
+                liveKitStream = null
+            },
+        )
+    }
+
+    private fun stopLiveKitStream() {
+        liveKitStream?.close()
+        liveKitStream = null
     }
 
     private fun resetState() {

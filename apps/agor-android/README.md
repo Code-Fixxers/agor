@@ -27,7 +27,7 @@ in Kotlin + Jetpack Compose.
 | Images | Coil |
 | Secure storage | `androidx.security:security-crypto` |
 | TTS | Android `TextToSpeech` |
-| ASR | build-fetched whisper.cpp `base.en` via NDK/JNI; optional remote whisper.cpp fallback |
+| ASR | WhisperLiveKit streaming/OpenAI-compatible remote server; local whisper.cpp `base.en` fallback via NDK/JNI |
 | Voice service | Foreground service (`microphone | mediaPlayback`) |
 
 Min SDK 28 (Android 9), target SDK 35 (Android 15).
@@ -109,9 +109,9 @@ scripts/fetch-whisper-model.sh base.en
 
 If `SKIP_WHISPER=1` is set or the local assets are otherwise unavailable, the
 JNI library still compiles as a no-op stub and the voice UI reports local
-transcription as unavailable. Hermes settings also accept an optional remote
-whisper.cpp `/inference` endpoint; if that endpoint fails, the app falls back to
-local Whisper when available.
+transcription as unavailable. Settings default remote transcription to
+WhisperLiveKit at `http://100.101.157.56:8090`, using `/v1/listen` for live
+streaming and `/v1/audio/transcriptions` for final/fallback transcription.
 
 ## Project structure
 

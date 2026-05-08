@@ -33,8 +33,8 @@ interface SpeechTranscriber {
 /**
  * Provider facade for Hermes voice STT.
  *
- * Local whisper.cpp is always the reliable path. If a remote whisper.cpp server
- * is configured, it is attempted first and falls back to local on failure.
+ * If a remote WhisperLiveKit/OpenAI-compatible server is configured, it is
+ * attempted first and falls back to local whisper.cpp on failure.
  */
 class TranscriptionService(
     context: Context,

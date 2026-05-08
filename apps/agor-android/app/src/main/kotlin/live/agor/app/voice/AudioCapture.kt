@@ -33,6 +33,7 @@ class AudioCapture(private val context: Context) {
     private var captureJob: Job? = null
 
     var onFrame: ((FloatArray) -> Unit)? = null
+    var onPcmFrame: ((ShortArray) -> Unit)? = null
 
     private val captureBuffer = ArrayList<Short>(SAMPLE_RATE * 30) // ≤30s buffer
     private val preRollBuffer = ArrayList<Short>(SAMPLE_RATE * 2)
@@ -119,6 +120,10 @@ class AudioCapture(private val context: Context) {
                             if (overflow > 0) preRollBuffer.subList(0, overflow).clear()
                         }
                     }
+                    runCatching { onPcmFrame?.invoke(shortBuf.copyOf(read)) }
+                        .onFailure {
+                            AppLogger.log("AudioCapture PCM frame callback failed: ${it.message}", LogLevel.WARNING, "Voice")
+                        }
                     onFrame?.invoke(floatBuf)
                 }
             } finally {

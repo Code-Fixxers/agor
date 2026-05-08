@@ -51,14 +51,13 @@ import live.agor.app.ui.common.ConnectionIndicator
 import live.agor.app.ui.common.findFragmentActivity
 import live.agor.app.ui.simpleViewModelFactory
 import live.agor.app.util.AppLogger
+import live.agor.app.voice.DEFAULT_REMOTE_WHISPER_URL
+import live.agor.app.voice.LEGACY_REMOTE_WHISPER_URL
 import live.agor.app.viewmodels.AppViewModel
 import live.agor.app.viewmodels.UpdateViewModel
 import live.agor.app.auth.SecureTokenStore
 import kotlinx.coroutines.launch
 import java.io.File
-
-private const val DEFAULT_WHISPER_EN_URL = "http://100.101.157.56:8080"
-private const val DEFAULT_WHISPER_CZ_URL = "http://100.101.157.56:8082"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -312,7 +311,7 @@ private fun DrawerSessionFilterRow(onChanged: () -> Unit) {
 private fun WhisperServerRow() {
     val container = LocalAppContainer.current
     var whisperUrl by remember {
-        mutableStateOf(container.tokenStore.remoteWhisperUrl ?: DEFAULT_WHISPER_EN_URL)
+        mutableStateOf(container.tokenStore.remoteWhisperUrl ?: DEFAULT_REMOTE_WHISPER_URL)
     }
     var whisperToken by remember { mutableStateOf(container.tokenStore.remoteWhisperToken ?: "") }
     var message by remember { mutableStateOf<String?>(null) }
@@ -328,7 +327,7 @@ private fun WhisperServerRow() {
     Text("Whisper transcription", style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(4.dp))
     Text(
-        "Voice mode can use your self-hosted whisper.cpp server before falling back to a downloaded local Whisper model.",
+        "Voice mode uses your self-hosted WhisperLiveKit server for streaming transcription before falling back to local Whisper when available.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -342,22 +341,22 @@ private fun WhisperServerRow() {
     Row(verticalAlignment = Alignment.CenterVertically) {
         TextButton(
             onClick = {
-                whisperUrl = DEFAULT_WHISPER_EN_URL
-                message = "English Whisper selected. Save to apply."
+                whisperUrl = DEFAULT_REMOTE_WHISPER_URL
+                message = "WhisperLiveKit selected. Save to apply."
             },
-            modifier = Modifier.weight(1f).testTag("settings-whisper-en"),
+            modifier = Modifier.weight(1f).testTag("settings-whisper-livekit"),
         ) {
-            Text("Use EN")
+            Text("Use LiveKit")
         }
         Spacer(Modifier.width(8.dp))
         TextButton(
             onClick = {
-                whisperUrl = DEFAULT_WHISPER_CZ_URL
-                message = "Czech Whisper selected. Save to apply."
+                whisperUrl = LEGACY_REMOTE_WHISPER_URL
+                message = "Legacy whisper.cpp selected. Save to apply."
             },
-            modifier = Modifier.weight(1f).testTag("settings-whisper-cz"),
+            modifier = Modifier.weight(1f).testTag("settings-whisper-legacy"),
         ) {
-            Text("Use CZ")
+            Text("Use Legacy")
         }
     }
     Spacer(Modifier.height(8.dp))
@@ -368,7 +367,7 @@ private fun WhisperServerRow() {
             message = null
         },
         label = { Text("Remote Whisper URL") },
-        placeholder = { Text(DEFAULT_WHISPER_EN_URL) },
+        placeholder = { Text(DEFAULT_REMOTE_WHISPER_URL) },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
         modifier = Modifier.fillMaxWidth().testTag("settings-whisper-url"),
