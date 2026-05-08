@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
@@ -360,7 +362,12 @@ private fun HermesInputBar(
     onSkipTts: () -> Unit,
 ) {
     val pending = voiceState.pendingTranscript
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .imePadding()
+            .navigationBarsPadding(),
+    ) {
         if (voiceState.enabled || voiceState.phase == HermesVoicePhase.Error) {
             VoiceStatusBar(
                 state = voiceState,
