@@ -18,6 +18,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Menu
@@ -28,16 +30,20 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -46,6 +52,11 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import live.agor.app.LocalAppContainer
 import live.agor.app.models.ContentBlock
 import live.agor.app.ui.common.AgentIcon
@@ -62,6 +73,11 @@ import live.agor.app.ui.simpleViewModelFactory
 import live.agor.app.viewmodels.ChatViewModel
 import live.agor.app.voice.PromptVoicePhase
 import java.io.File
+
+private enum class ChatScrollDirection {
+    TowardTop,
+    TowardBottom,
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,14 +99,46 @@ fun ChatScreen(
     val promptVoice by vm.promptVoiceState.collectAsState()
     val attachments by vm.attachments.collectAsState()
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
     var showFiles by remember { mutableStateOf(false) }
     var showAttachDialog by remember { mutableStateOf(false) }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    var initialScrollDone by remember(sessionId) { mutableStateOf(false) }
+    var lastScrollDirection by remember { mutableStateOf(ChatScrollDirection.TowardBottom) }
 
     val promptVoiceActive = promptVoice.phase == PromptVoicePhase.LoadingModels ||
         promptVoice.phase == PromptVoicePhase.Listening ||
         promptVoice.phase == PromptVoicePhase.Recording ||
         promptVoice.phase == PromptVoicePhase.Transcribing
+
+    val lastMessageIndex = remember(rows) {
+        rows.indexOfLast { it !is ChatRow.BottomSpacer }
+    }
+    val isNearTop by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
+        }
+    }
+    val isNearBottom by remember(lastMessageIndex) {
+        derivedStateOf {
+            if (lastMessageIndex < 0) return@derivedStateOf true
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            lastVisible >= lastMessageIndex - 1
+        }
+    }
+    val fastScrollTarget by remember(isNearTop, isNearBottom, lastScrollDirection) {
+        derivedStateOf {
+            when {
+                !isNearBottom && lastScrollDirection == ChatScrollDirection.TowardTop ->
+                    ChatScrollDirection.TowardBottom
+                !isNearTop && lastScrollDirection == ChatScrollDirection.TowardBottom ->
+                    ChatScrollDirection.TowardTop
+                !isNearBottom -> ChatScrollDirection.TowardBottom
+                !isNearTop -> ChatScrollDirection.TowardTop
+                else -> null
+            }
+        }
+    }
 
     LaunchedEffect(sessionId) { vm.load() }
 
@@ -119,16 +167,44 @@ fun ChatScreen(
         }
     }
 
-    // Only auto-scroll when the user is already near the bottom — yanking them out
-    // of mid-scroll-up reading is what makes chats feel janky on long sessions.
-    LaunchedEffect(rows.size) {
-        if (messageCount == 0) return@LaunchedEffect
-        val info = listState.layoutInfo
-        val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
-        val total = info.totalItemsCount
-        if (total > 0 && lastVisible >= total - 3) {
-            listState.animateScrollToItem(total - 1)
+    // On first open, land on the latest real message rather than the top of a
+    // potentially long session. After that, preserve user position.
+    LaunchedEffect(lastMessageIndex, messageCount, initialScrollDone) {
+        if (initialScrollDone || messageCount == 0 || lastMessageIndex < 0) return@LaunchedEffect
+        listState.scrollToItem(lastMessageIndex)
+        initialScrollDone = true
+    }
+
+    // Only auto-scroll when the user is already near the bottom — yanking them
+    // out of mid-scroll-up reading is what makes chats feel janky on long sessions.
+    LaunchedEffect(lastMessageIndex, messageCount, initialScrollDone) {
+        if (!initialScrollDone || messageCount == 0 || lastMessageIndex < 0) return@LaunchedEffect
+        if (isNearBottom) {
+            listState.animateScrollToItem(lastMessageIndex)
         }
+    }
+    LaunchedEffect(listState) {
+        var previousIndex = 0
+        var previousOffset = 0
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            .map { (index, offset) ->
+                when {
+                    index > previousIndex || (index == previousIndex && offset > previousOffset) ->
+                        ChatScrollDirection.TowardBottom
+                    index < previousIndex || (index == previousIndex && offset < previousOffset) ->
+                        ChatScrollDirection.TowardTop
+                    else -> null
+                }.also {
+                    previousIndex = index
+                    previousOffset = offset
+                }
+            }
+            .filter { it != null }
+            .map { it!! }
+            .distinctUntilChanged()
+            .collectLatest { direction ->
+                lastScrollDirection = direction
+            }
     }
 
     if (promptVoice.needsWhisperDownload) {
@@ -304,6 +380,40 @@ fun ChatScreen(
                             is ChatRow.LiveOrphanRow -> LiveOrphanBubble(row)
                             is ChatRow.BottomSpacer -> Spacer(Modifier.height(60.dp))
                         }
+                    }
+                }
+
+                fastScrollTarget?.let { target ->
+                    SmallFloatingActionButton(
+                        onClick = {
+                            scope.launch {
+                                when (target) {
+                                    ChatScrollDirection.TowardTop -> listState.animateScrollToItem(0)
+                                    ChatScrollDirection.TowardBottom -> {
+                                        if (lastMessageIndex >= 0) {
+                                            listState.animateScrollToItem(lastMessageIndex)
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(16.dp)
+                            .testTag("chat-fast-scroll"),
+                    ) {
+                        Icon(
+                            imageVector = if (target == ChatScrollDirection.TowardTop) {
+                                Icons.Default.ArrowUpward
+                            } else {
+                                Icons.Default.ArrowDownward
+                            },
+                            contentDescription = if (target == ChatScrollDirection.TowardTop) {
+                                "Scroll to top"
+                            } else {
+                                "Scroll to latest message"
+                            },
+                        )
                     }
                 }
             }
