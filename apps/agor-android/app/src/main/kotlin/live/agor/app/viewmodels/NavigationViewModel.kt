@@ -109,6 +109,7 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
 
     fun start() {
         viewModelScope.launch {
+            val favorites = container.favoriteSessions.load()
             val cached = container.sidebarCache.load()
             if (cached != null) {
                 _state.value = _state.value.copy(
@@ -116,7 +117,10 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
                     worktreesByBoard = cached.worktrees.groupBy { it.boardId ?: "" },
                     sessionsByWorktree = cached.sessions.groupBy { it.worktreeId },
                     sessions = cached.sessions,
+                    favorites = favorites,
                 )
+            } else {
+                _state.value = _state.value.copy(favorites = favorites)
             }
             refresh()
             startPolling()
@@ -140,9 +144,13 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
 
     fun toggleFavorite(sessionId: String) {
         val cur = _state.value.favorites
+        val updated = if (cur.contains(sessionId)) cur - sessionId else cur + sessionId
         _state.value = _state.value.copy(
-            favorites = if (cur.contains(sessionId)) cur - sessionId else cur + sessionId,
+            favorites = updated,
         )
+        viewModelScope.launch {
+            container.favoriteSessions.save(updated)
+        }
     }
 
     /**

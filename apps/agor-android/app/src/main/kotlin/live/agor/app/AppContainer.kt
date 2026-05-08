@@ -9,6 +9,7 @@ import live.agor.app.auth.BiometricCredentialStore
 import live.agor.app.auth.SecureTokenStore
 import live.agor.app.auth.ServerProfileManager
 import live.agor.app.data.ChatCache
+import live.agor.app.data.FavoriteSessionsStore
 import live.agor.app.data.HermesImageStore
 import live.agor.app.data.HermesSessionStore
 import live.agor.app.data.SidebarCache
@@ -41,6 +42,7 @@ class AppContainer(context: Context) {
     val socket: SocketService = SocketService(client, logger)
     val streaming: StreamingService = StreamingService(socket, logger)
     val sidebarCache: SidebarCache = SidebarCache(appContext)
+    val favoriteSessions: FavoriteSessionsStore = FavoriteSessionsStore(appContext)
     val chatCache: ChatCache = ChatCache(appContext, tokenStore)
     val hermesSessions: HermesSessionStore = HermesSessionStore(appContext, tokenStore)
     val hermesImages: HermesImageStore = HermesImageStore(appContext)
