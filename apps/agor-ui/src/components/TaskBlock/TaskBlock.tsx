@@ -425,6 +425,26 @@ export const TaskBlock = React.memo<TaskBlockProps>(
       return -1;
     }, [blocks]);
 
+    const firstPendingPermissionIndex = useMemo(() => {
+      return blocks.findIndex((b) => {
+        if (b.type === 'message' && b.message.type === 'permission_request') {
+          const c = b.message.content as PermissionRequestContent;
+          return c.status === PermissionStatus.PENDING;
+        }
+        return false;
+      });
+    }, [blocks]);
+
+    const firstPendingInputIndex = useMemo(() => {
+      return blocks.findIndex((b) => {
+        if (b.type === 'message' && b.message.type === 'input_request') {
+          const c = b.message.content as InputRequestContent;
+          return c.status === InputRequestStatus.PENDING;
+        }
+        return false;
+      });
+    }, [blocks]);
+
     // Calculate message count from task message_range
     const messageCount = task.message_range.end_index - task.message_range.start_index + 1;
 
@@ -621,13 +641,7 @@ export const TaskBlock = React.memo<TaskBlockProps>(
                         const content = block.message.content as PermissionRequestContent;
                         if (content.status === PermissionStatus.PENDING) {
                           // Check if this is the first pending permission request
-                          isFirstPending = !blocks.slice(0, blockIndex).some((b) => {
-                            if (b.type === 'message' && b.message.type === 'permission_request') {
-                              const c = b.message.content as PermissionRequestContent;
-                              return c.status === PermissionStatus.PENDING;
-                            }
-                            return false;
-                          });
+                          isFirstPending = blockIndex === firstPendingPermissionIndex;
                         }
                       }
 
@@ -638,13 +652,7 @@ export const TaskBlock = React.memo<TaskBlockProps>(
                       if (isInputRequest) {
                         const content = block.message.content as InputRequestContent;
                         if (content.status === InputRequestStatus.PENDING) {
-                          isFirstPendingInput = !blocks.slice(0, blockIndex).some((b) => {
-                            if (b.type === 'message' && b.message.type === 'input_request') {
-                              const c = b.message.content as InputRequestContent;
-                              return c.status === InputRequestStatus.PENDING;
-                            }
-                            return false;
-                          });
+                          isFirstPendingInput = blockIndex === firstPendingInputIndex;
                         }
                       }
 
