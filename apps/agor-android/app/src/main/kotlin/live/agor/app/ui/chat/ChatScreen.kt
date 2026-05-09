@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Stop
@@ -29,6 +30,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
@@ -103,6 +105,8 @@ fun ChatScreen(
     var showFiles by remember { mutableStateOf(false) }
     var showAttachDialog by remember { mutableStateOf(false) }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var renameDraft by remember(sessionId) { mutableStateOf("") }
     var initialScrollDone by remember(sessionId) { mutableStateOf(false) }
     var lastScrollDirection by remember { mutableStateOf(ChatScrollDirection.TowardBottom) }
 
@@ -230,6 +234,38 @@ fun ChatScreen(
         )
     }
 
+    if (showRenameDialog) {
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Rename session") },
+            text = {
+                OutlinedTextField(
+                    value = renameDraft,
+                    onValueChange = { renameDraft = it },
+                    singleLine = true,
+                    modifier = Modifier.testTag("chat-rename-input"),
+                    placeholder = { Text("Session title") },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        vm.renameSession(renameDraft)
+                        showRenameDialog = false
+                    },
+                    enabled = renameDraft.trim().isNotEmpty(),
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
     if (showAttachDialog) {
         AttachmentPickerDialog(
             onDismiss = { showAttachDialog = false },
@@ -287,6 +323,15 @@ fun ChatScreen(
                     ui.session?.let { s ->
                         StatusBadge(s.status)
                         Spacer(Modifier.width(4.dp))
+                        IconButton(
+                            onClick = {
+                                renameDraft = s.title?.takeIf { it.isNotBlank() } ?: s.displayTitle
+                                showRenameDialog = true
+                            },
+                            modifier = Modifier.testTag("chat-rename"),
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = "Rename session")
+                        }
                         if (s.status.isActive) {
                             IconButton(onClick = vm::stop, modifier = Modifier.testTag("chat-stop")) {
                                 Icon(Icons.Default.Stop, contentDescription = "Stop")

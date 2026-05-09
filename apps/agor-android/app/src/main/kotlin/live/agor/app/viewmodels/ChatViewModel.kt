@@ -371,6 +371,25 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         }
     }
 
+    fun renameSession(title: String) {
+        val trimmed = title.trim()
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch {
+            runCatching {
+                container.client.patchSession(
+                    sessionId,
+                    JsonObject(mapOf("title" to JsonPrimitive(trimmed))),
+                )
+            }.onSuccess { updated ->
+                _uiState.update { it.copy(session = updated, errorMessage = null) }
+                scheduleCacheSave()
+            }.onFailure { error ->
+                AppLogger.log("Rename failed: ${error.message}", LogLevel.ERROR, "Chat")
+                _uiState.update { it.copy(errorMessage = error.message) }
+            }
+        }
+    }
+
     override fun onCleared() {
         promptVoice.release()
         super.onCleared()
