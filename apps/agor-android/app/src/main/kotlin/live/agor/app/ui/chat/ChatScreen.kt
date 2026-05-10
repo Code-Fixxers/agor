@@ -100,49 +100,16 @@ fun ChatScreen(
     val ui by vm.uiState.collectAsState()
     val promptVoice by vm.promptVoiceState.collectAsState()
     val attachments by vm.attachments.collectAsState()
-    val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
     var showFiles by remember { mutableStateOf(false) }
     var showAttachDialog by remember { mutableStateOf(false) }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var renameDraft by remember(sessionId) { mutableStateOf("") }
-    var initialScrollDone by remember(sessionId) { mutableStateOf(false) }
-    var lastScrollDirection by remember { mutableStateOf(ChatScrollDirection.TowardBottom) }
 
     val promptVoiceActive = promptVoice.phase == PromptVoicePhase.LoadingModels ||
         promptVoice.phase == PromptVoicePhase.Listening ||
         promptVoice.phase == PromptVoicePhase.Recording ||
         promptVoice.phase == PromptVoicePhase.Transcribing
-
-    val lastMessageIndex = remember(rows) {
-        rows.indexOfLast { it !is ChatRow.BottomSpacer }
-    }
-    val isNearTop by remember {
-        derivedStateOf {
-            listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
-        }
-    }
-    val isNearBottom by remember(lastMessageIndex) {
-        derivedStateOf {
-            if (lastMessageIndex < 0) return@derivedStateOf true
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-            lastVisible >= lastMessageIndex - 1
-        }
-    }
-    val fastScrollTarget by remember(isNearTop, isNearBottom, lastScrollDirection) {
-        derivedStateOf {
-            when {
-                !isNearBottom && lastScrollDirection == ChatScrollDirection.TowardTop ->
-                    ChatScrollDirection.TowardBottom
-                !isNearTop && lastScrollDirection == ChatScrollDirection.TowardBottom ->
-                    ChatScrollDirection.TowardTop
-                !isNearBottom -> ChatScrollDirection.TowardBottom
-                !isNearTop -> ChatScrollDirection.TowardTop
-                else -> null
-            }
-        }
-    }
 
     LaunchedEffect(sessionId) { vm.load() }
 
@@ -169,46 +136,6 @@ fun ChatScreen(
             cameraUri = uri
             takePictureLauncher.launch(uri)
         }
-    }
-
-    // On first open, land on the latest real message rather than the top of a
-    // potentially long session. After that, preserve user position.
-    LaunchedEffect(lastMessageIndex, messageCount, initialScrollDone) {
-        if (initialScrollDone || messageCount == 0 || lastMessageIndex < 0) return@LaunchedEffect
-        listState.scrollToItem(lastMessageIndex)
-        initialScrollDone = true
-    }
-
-    // Only auto-scroll when the user is already near the bottom — yanking them
-    // out of mid-scroll-up reading is what makes chats feel janky on long sessions.
-    LaunchedEffect(lastMessageIndex, messageCount, initialScrollDone) {
-        if (!initialScrollDone || messageCount == 0 || lastMessageIndex < 0) return@LaunchedEffect
-        if (isNearBottom) {
-            listState.animateScrollToItem(lastMessageIndex)
-        }
-    }
-    LaunchedEffect(listState) {
-        var previousIndex = 0
-        var previousOffset = 0
-        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
-            .map { (index, offset) ->
-                when {
-                    index > previousIndex || (index == previousIndex && offset > previousOffset) ->
-                        ChatScrollDirection.TowardBottom
-                    index < previousIndex || (index == previousIndex && offset < previousOffset) ->
-                        ChatScrollDirection.TowardTop
-                    else -> null
-                }.also {
-                    previousIndex = index
-                    previousOffset = offset
-                }
-            }
-            .filter { it != null }
-            .map { it!! }
-            .distinctUntilChanged()
-            .collectLatest { direction ->
-                lastScrollDirection = direction
-            }
     }
 
     if (promptVoice.needsWhisperDownload) {
@@ -373,95 +300,18 @@ fun ChatScreen(
         },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (ui.isLoading && messageCount == 0) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Loading…")
-                }
-            } else if (ui.errorMessage != null && messageCount == 0) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(ui.errorMessage!!, color = MaterialTheme.colorScheme.error)
-                }
-            } else {
-                // `rows` is pre-flattened on Dispatchers.Default in the ViewModel.
-                // Heavy strings (JSON, joined tool-result text, merged streaming
-                // text) are precomputed and cached in @Immutable row records, so
-                // recomposition during scroll reads them as plain Strings.
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize().testTag("chat-list"),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(8.dp),
-                ) {
-                    items(
-                        rows,
-                        key = { it.key },
-                        // Distinct contentType per row variant lets LazyColumn
-                        // pool composition slots across messages — a tool-use row
-                        // scrolling into view reuses the slot of an earlier
-                        // tool-use row that just left.
-                        contentType = { it::class },
-                    ) { row ->
-                        when (row) {
-                            is ChatRow.LoadEarlier -> {
-                                TextButton(onClick = vm::loadEarlier) { Text("Load earlier messages") }
-                            }
-                            is ChatRow.TaskHeaderRow -> TaskHeader(row.task)
-                            is ChatRow.TextBubbleRow -> TextBubble(row, onSessionClick = onOpenSession)
-                            is ChatRow.ToolUseRow -> ToolUseBlockView(row)
-                            is ChatRow.ToolResultRow -> ToolResultBlockView(row)
-                            is ChatRow.ThinkingRow -> ThinkingBlockView(row)
-                            is ChatRow.ImageRow -> ImageBlockView(ContentBlock.Image(row.source))
-                            is ChatRow.PermissionRow -> PermissionCardView(
-                                request = row.request,
-                                onApprove = { vm.decidePermission(row.request.permissionId, true) },
-                                onDeny = { vm.decidePermission(row.request.permissionId, false) },
-                            )
-                            is ChatRow.InputRequestRow -> InputRequestCardView(
-                                request = row.request,
-                                onAnswer = { answers ->
-                                    vm.answerInputRequest(row.request.inputRequestId, answers)
-                                },
-                            )
-                            is ChatRow.LiveOrphanRow -> LiveOrphanBubble(row)
-                            is ChatRow.BottomSpacer -> Spacer(Modifier.height(60.dp))
-                        }
-                    }
-                }
-
-                fastScrollTarget?.let { target ->
-                    SmallFloatingActionButton(
-                        onClick = {
-                            scope.launch {
-                                when (target) {
-                                    ChatScrollDirection.TowardTop -> listState.animateScrollToItem(0)
-                                    ChatScrollDirection.TowardBottom -> {
-                                        if (lastMessageIndex >= 0) {
-                                            listState.animateScrollToItem(lastMessageIndex)
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(16.dp)
-                            .testTag("chat-fast-scroll"),
-                    ) {
-                        Icon(
-                            imageVector = if (target == ChatScrollDirection.TowardTop) {
-                                Icons.Default.ArrowUpward
-                            } else {
-                                Icons.Default.ArrowDownward
-                            },
-                            contentDescription = if (target == ChatScrollDirection.TowardTop) {
-                                "Scroll to top"
-                            } else {
-                                "Scroll to latest message"
-                            },
-                        )
-                    }
-                }
-            }
+            ChatMessagesPane(
+                sessionId = sessionId,
+                rows = rows,
+                messageCount = messageCount,
+                isLoading = ui.isLoading,
+                errorMessage = ui.errorMessage,
+                onLoadEarlier = vm::loadEarlier,
+                onOpenSession = onOpenSession,
+                onApprovePermission = { vm.decidePermission(it, true) },
+                onDenyPermission = { vm.decidePermission(it, false) },
+                onAnswerInputRequest = vm::answerInputRequest,
+            )
         }
 
         if (showFiles) {
@@ -469,6 +319,176 @@ fun ChatScreen(
                 FileBrowserSheet(
                     worktreeId = it.worktreeId,
                     onDismiss = { showFiles = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatMessagesPane(
+    sessionId: String,
+    rows: List<ChatRow>,
+    messageCount: Int,
+    isLoading: Boolean,
+    errorMessage: String?,
+    onLoadEarlier: () -> Unit,
+    onOpenSession: (String) -> Unit,
+    onApprovePermission: (String) -> Unit,
+    onDenyPermission: (String) -> Unit,
+    onAnswerInputRequest: (String, List<String>) -> Unit,
+) {
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    var initialScrollDone by remember(sessionId) { mutableStateOf(false) }
+    var lastScrollDirection by remember { mutableStateOf(ChatScrollDirection.TowardBottom) }
+
+    val lastMessageIndex = remember(rows) {
+        rows.indexOfLast { it !is ChatRow.BottomSpacer }
+    }
+    val isNearTop by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
+        }
+    }
+    val isNearBottom by remember(lastMessageIndex) {
+        derivedStateOf {
+            if (lastMessageIndex < 0) return@derivedStateOf true
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            lastVisible >= lastMessageIndex - 1
+        }
+    }
+    val fastScrollTarget by remember(isNearTop, isNearBottom, lastScrollDirection) {
+        derivedStateOf {
+            when {
+                !isNearBottom && lastScrollDirection == ChatScrollDirection.TowardTop ->
+                    ChatScrollDirection.TowardBottom
+                !isNearTop && lastScrollDirection == ChatScrollDirection.TowardBottom ->
+                    ChatScrollDirection.TowardTop
+                !isNearBottom -> ChatScrollDirection.TowardBottom
+                !isNearTop -> ChatScrollDirection.TowardTop
+                else -> null
+            }
+        }
+    }
+
+    LaunchedEffect(lastMessageIndex, messageCount, initialScrollDone) {
+        if (initialScrollDone || messageCount == 0 || lastMessageIndex < 0) return@LaunchedEffect
+        listState.scrollToItem(lastMessageIndex)
+        initialScrollDone = true
+    }
+    LaunchedEffect(lastMessageIndex, messageCount, initialScrollDone) {
+        if (!initialScrollDone || messageCount == 0 || lastMessageIndex < 0) return@LaunchedEffect
+        if (isNearBottom) {
+            listState.animateScrollToItem(lastMessageIndex)
+        }
+    }
+    LaunchedEffect(listState) {
+        var previousIndex = 0
+        var previousOffset = 0
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            .map { (index, offset) ->
+                when {
+                    index > previousIndex || (index == previousIndex && offset > previousOffset) ->
+                        ChatScrollDirection.TowardBottom
+                    index < previousIndex || (index == previousIndex && offset < previousOffset) ->
+                        ChatScrollDirection.TowardTop
+                    else -> null
+                }.also {
+                    previousIndex = index
+                    previousOffset = offset
+                }
+            }
+            .filter { it != null }
+            .map { it!! }
+            .distinctUntilChanged()
+            .collectLatest { direction ->
+                lastScrollDirection = direction
+            }
+    }
+
+    if (isLoading && messageCount == 0) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("Loading…")
+        }
+        return
+    }
+    if (errorMessage != null && messageCount == 0) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(errorMessage, color = MaterialTheme.colorScheme.error)
+        }
+        return
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize().testTag("chat-list"),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(8.dp),
+        ) {
+            items(
+                rows,
+                key = { it.key },
+                contentType = { it::class },
+            ) { row ->
+                when (row) {
+                    is ChatRow.LoadEarlier -> {
+                        TextButton(onClick = onLoadEarlier) { Text("Load earlier messages") }
+                    }
+                    is ChatRow.TaskHeaderRow -> TaskHeader(row.task)
+                    is ChatRow.TextBubbleRow -> TextBubble(row, onSessionClick = onOpenSession)
+                    is ChatRow.ToolUseRow -> ToolUseBlockView(row)
+                    is ChatRow.ToolResultRow -> ToolResultBlockView(row)
+                    is ChatRow.ThinkingRow -> ThinkingBlockView(row)
+                    is ChatRow.ImageRow -> ImageBlockView(ContentBlock.Image(row.source))
+                    is ChatRow.PermissionRow -> PermissionCardView(
+                        request = row.request,
+                        onApprove = { onApprovePermission(row.request.permissionId) },
+                        onDeny = { onDenyPermission(row.request.permissionId) },
+                    )
+                    is ChatRow.InputRequestRow -> InputRequestCardView(
+                        request = row.request,
+                        onAnswer = { answers ->
+                            onAnswerInputRequest(row.request.inputRequestId, answers)
+                        },
+                    )
+                    is ChatRow.LiveOrphanRow -> LiveOrphanBubble(row)
+                    is ChatRow.BottomSpacer -> Spacer(Modifier.height(60.dp))
+                }
+            }
+        }
+
+        fastScrollTarget?.let { target ->
+            SmallFloatingActionButton(
+                onClick = {
+                    scope.launch {
+                        when (target) {
+                            ChatScrollDirection.TowardTop -> listState.animateScrollToItem(0)
+                            ChatScrollDirection.TowardBottom -> {
+                                if (lastMessageIndex >= 0) {
+                                    listState.animateScrollToItem(lastMessageIndex)
+                                }
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp)
+                    .testTag("chat-fast-scroll"),
+            ) {
+                Icon(
+                    imageVector = if (target == ChatScrollDirection.TowardTop) {
+                        Icons.Default.ArrowUpward
+                    } else {
+                        Icons.Default.ArrowDownward
+                    },
+                    contentDescription = if (target == ChatScrollDirection.TowardTop) {
+                        "Scroll to top"
+                    } else {
+                        "Scroll to latest message"
+                    },
                 )
             }
         }
