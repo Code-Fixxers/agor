@@ -4,6 +4,7 @@ import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
@@ -38,14 +39,19 @@ fun MarkdownText(
     onSessionClick: ((String) -> Unit)? = null,
 ) {
     if (markdown.isEmpty()) return
-    if (!markdown.hasMarkdownStructure()) {
+    val hasMarkdownStructure = remember(markdown) { markdown.hasMarkdownStructure() }
+    if (!hasMarkdownStructure) {
         SessionLinkedText(text = markdown, modifier = modifier, onSessionClick = onSessionClick)
         return
     }
     val uriHandler = LocalUriHandler.current
-    CompositionLocalProvider(LocalUriHandler provides sessionUriHandler(uriHandler, onSessionClick)) {
+    val sessionLinkedMarkdown = remember(markdown) { markdown.withSessionLinks() }
+    val linkedUriHandler = remember(uriHandler, onSessionClick) {
+        sessionUriHandler(uriHandler, onSessionClick)
+    }
+    CompositionLocalProvider(LocalUriHandler provides linkedUriHandler) {
         Markdown(
-            content = markdown.withSessionLinks(),
+            content = sessionLinkedMarkdown,
             colors = markdownColor(),
             typography = markdownTypography(),
             modifier = modifier,
@@ -59,26 +65,28 @@ fun SessionLinkedText(
     modifier: Modifier = Modifier,
     onSessionClick: ((String) -> Unit)? = null,
 ) {
-    val matches = sessionIdRegex.findAll(text).toList()
+    val matches = remember(text) { sessionIdRegex.findAll(text).toList() }
     if (matches.isEmpty() || onSessionClick == null) {
         Text(text = text, modifier = modifier)
         return
     }
 
     val linkColor = Color(0xFF2F80ED)
-    val annotated = buildAnnotatedString {
-        var cursor = 0
-        for (match in matches) {
-            val sessionId = match.value
-            append(text.substring(cursor, match.range.first))
-            pushStringAnnotation(TAG_SESSION, sessionId)
-            pushStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline))
-            append(sessionId)
-            pop()
-            pop()
-            cursor = match.range.last + 1
+    val annotated = remember(text, matches) {
+        buildAnnotatedString {
+            var cursor = 0
+            for (match in matches) {
+                val sessionId = match.value
+                append(text.substring(cursor, match.range.first))
+                pushStringAnnotation(TAG_SESSION, sessionId)
+                pushStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline))
+                append(sessionId)
+                pop()
+                pop()
+                cursor = match.range.last + 1
+            }
+            append(text.substring(cursor))
         }
-        append(text.substring(cursor))
     }
 
     ClickableText(
