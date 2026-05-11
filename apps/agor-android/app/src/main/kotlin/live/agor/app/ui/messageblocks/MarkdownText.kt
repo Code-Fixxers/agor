@@ -41,6 +41,10 @@ fun MarkdownText(
     if (markdown.isEmpty()) return
     val hasMarkdownStructure = remember(markdown) { markdown.hasMarkdownStructure() }
     if (!hasMarkdownStructure) {
+        if (markdown.length > MAX_PLAIN_TEXT_LINKIFY_LENGTH) {
+            Text(text = markdown, modifier = modifier)
+            return
+        }
         SessionLinkedText(text = markdown, modifier = modifier, onSessionClick = onSessionClick)
         return
     }
@@ -125,6 +129,7 @@ private fun String.hasMarkdownStructure(): Boolean = markdownStructuralRegex.con
 
 private const val TAG_SESSION = "agor-session"
 private const val SESSION_URI_PREFIX = "agor-session://"
+private const val MAX_PLAIN_TEXT_LINKIFY_LENGTH = 4_096
 
 private val sessionIdRegex = Regex(
     "(?<![A-Za-z0-9_-])" +
