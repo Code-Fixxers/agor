@@ -1,0 +1,3 @@
+## 2025-05-11 - [Drizzle ORM Batched Fetching]
+**Learning:** Avoid N+1 queries in Drizzle ORM when retrieving related aggregated records (like the latest message per session). Instead of running a loop of separate queries with `limit(1)`, use a batched query. A subquery fetching the max index grouped by the relation identifier followed by fetching all matching rows in one go using `or` and `and` conditions drastically improves performance, especially for long lists of relations, while avoiding the overhead of fetching all messages.
+**Action:** When enriching entities with a single aggregated child record, always construct a batched Drizzle query utilizing a subquery or a single bulk query to retrieve only the necessary records, eliminating N+1 loop calls.

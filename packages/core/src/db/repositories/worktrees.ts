@@ -6,7 +6,7 @@
 
 import type { AgenticToolName, SessionStatus, UUID, Worktree, WorktreeID } from '@agor/core/types';
 import { WORKTREE_PERMISSION_LEVELS } from '@agor/core/types';
-import { and, desc, eq, getTableColumns, inArray, isNotNull, like, or, sql } from 'drizzle-orm';
+import { and, eq, getTableColumns, inArray, isNotNull, like, or, sql } from 'drizzle-orm';
 import { formatShortId, generateId } from '../../lib/ids';
 import type { Database } from '../client';
 import { deleteFrom, insert, lockRowForUpdate, select, txAsDb, update } from '../database-wrapper';
@@ -749,23 +749,41 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
         return worktrees.map((wt) => ({ ...wt, sessions: [] }));
       }
 
-      // Get last assistant message for each session using N+1 queries
-      // This is acceptable since we typically have 1-5 sessions per worktree
-      // Much better than fetching all messages which could be huge for long-running sessions
+      // Get last assistant message for each session using a single batched query
+      // This avoids N+1 queries by fetching the max index per session
       const lastMessageBySession = new Map<string, string>();
 
-      for (const sessionId of sessionIds) {
-        const query = select(this.db, {
+      // Subquery to find max index per session for assistant messages
+      const maxIndicesQuery = select(this.db, {
+        session_id: messagesTable.session_id,
+        max_index: sql`max(${messagesTable.index})`.as('max_index'),
+      })
+        .from(messagesTable)
+        .where(
+          and(inArray(messagesTable.session_id, sessionIds), eq(messagesTable.role, 'assistant'))
+        )
+        .groupBy(messagesTable.session_id);
+
+      const maxIndices = await maxIndicesQuery.all();
+
+      if (maxIndices.length > 0) {
+        // Build OR conditions to match exactly the (session_id, index) pairs
+        const conditions = maxIndices.map((row: { session_id: unknown; max_index: unknown }) =>
+          and(
+            eq(messagesTable.session_id, row.session_id as string),
+            eq(messagesTable.index, row.max_index as number)
+          )
+        );
+
+        const lastMessages = await select(this.db, {
+          session_id: messagesTable.session_id,
           data: messagesTable.data,
         })
           .from(messagesTable)
-          .where(and(eq(messagesTable.session_id, sessionId), eq(messagesTable.role, 'assistant')));
+          .where(or(...conditions))
+          .all();
 
-        // Chain orderBy and limit, then execute with one()
-        // The spread operator in the wrapper passes through these methods
-        const lastMessage = await query.orderBy(desc(messagesTable.index)).limit(1).one();
-
-        if (lastMessage) {
+        for (const lastMessage of lastMessages) {
           // Extract text content from message data and truncate to requested length
           const messageData = lastMessage.data as {
             content?: Array<{ type: string; text?: string }>;
@@ -785,7 +803,7 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
             fullText = `${fullText.substring(0, truncationLength)}...`;
           }
 
-          lastMessageBySession.set(sessionId, fullText);
+          lastMessageBySession.set(lastMessage.session_id as string, fullText);
         }
       }
 
