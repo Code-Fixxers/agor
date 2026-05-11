@@ -100,7 +100,7 @@ class HermesViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun send(prompt: String, images: List<HermesImageInput> = emptyList()) {
-        if ((prompt.isBlank() && images.isEmpty()) || _state.value.isSending) return
+        if (prompt.isBlank() && images.isEmpty()) return
         viewModelScope.launch {
             val selected = _state.value.selectedSessionId
             val session = selected?.let { container.hermesSessions.getSession(it) }

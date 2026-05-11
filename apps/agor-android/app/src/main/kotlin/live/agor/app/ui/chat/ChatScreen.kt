@@ -280,7 +280,7 @@ fun ChatScreen(
                 draft = ui.draft,
                 onDraftChange = vm::updateDraft,
                 onSend = vm::sendPrompt,
-                enabled = ui.session?.isPromptable == true,
+                enabled = ui.session?.canQueuePrompt == true,
                 attachments = attachments,
                 onAttachClick = { showAttachDialog = true },
                 onRemoveAttachment = vm::removeAttachment,

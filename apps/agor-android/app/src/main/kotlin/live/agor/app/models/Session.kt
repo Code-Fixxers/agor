@@ -155,6 +155,9 @@ data class Session(
     val isPromptable: Boolean
         get() = status == SessionStatus.IDLE || readyForPrompt == true
 
+    val canQueuePrompt: Boolean
+        get() = archived != true && status != SessionStatus.STOPPING
+
     val isScheduled: Boolean
         get() = scheduledFromWorktree == true || title?.startsWith("[Scheduled ") == true
 }

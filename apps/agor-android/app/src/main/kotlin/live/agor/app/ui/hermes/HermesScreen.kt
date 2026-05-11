@@ -324,7 +324,7 @@ fun HermesScreen(
                     pendingImages = emptyList()
                     vm.send(text, images)
                 },
-                enabled = !state.isSending,
+                enabled = true,
                 onAttachClick = { showAttachDialog = true },
                 voiceState = voiceState,
                 onToggleVoice = {
