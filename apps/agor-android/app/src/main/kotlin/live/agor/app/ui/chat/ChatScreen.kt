@@ -343,9 +343,7 @@ private fun ChatMessagesPane(
     var initialScrollDone by remember(sessionId) { mutableStateOf(false) }
     var lastScrollDirection by remember { mutableStateOf(ChatScrollDirection.TowardBottom) }
 
-    val lastMessageIndex = remember(rows) {
-        rows.indexOfLast { it !is ChatRow.BottomSpacer }
-    }
+    val lastMessageIndex = rows.lastIndex
     val isNearTop by remember {
         derivedStateOf {
             listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
@@ -425,7 +423,7 @@ private fun ChatMessagesPane(
             state = listState,
             modifier = Modifier.fillMaxSize().testTag("chat-list"),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(8.dp),
+            contentPadding = PaddingValues(start = 8.dp, top = 8.dp, end = 8.dp, bottom = 16.dp),
         ) {
             items(
                 rows,
@@ -454,7 +452,6 @@ private fun ChatMessagesPane(
                         },
                     )
                     is ChatRow.LiveOrphanRow -> LiveOrphanBubble(row)
-                    is ChatRow.BottomSpacer -> Spacer(Modifier.height(60.dp))
                 }
             }
         }

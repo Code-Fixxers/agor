@@ -95,11 +95,6 @@ sealed interface ChatRow {
         val text: String,
         val thinking: String,
     ) : ChatRow
-
-    @Immutable
-    data object BottomSpacer : ChatRow {
-        override val key: String = "bottom-spacer"
-    }
 }
 
 /**
@@ -218,7 +213,6 @@ class ChatRowFlattener {
         messageRows.keys.removeAll { it !in seen }
         orphanRows.keys.removeAll { it !in live.keys || it in seen }
 
-        out += ChatRow.BottomSpacer
         return out
     }
 
