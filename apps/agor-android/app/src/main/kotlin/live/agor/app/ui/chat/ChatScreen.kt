@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
@@ -82,6 +84,8 @@ private enum class ChatScrollDirection {
     TowardTop,
     TowardBottom,
 }
+
+private const val END_ALIGNMENT_SCROLL_OFFSET = 100_000
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -375,13 +379,13 @@ private fun ChatMessagesPane(
 
     LaunchedEffect(lastMessageIndex, messageCount, initialScrollDone) {
         if (initialScrollDone || messageCount == 0 || lastMessageIndex < 0) return@LaunchedEffect
-        listState.scrollToItem(lastMessageIndex)
+        listState.snapToHistoryEnd(lastMessageIndex)
         initialScrollDone = true
     }
     LaunchedEffect(lastMessageIndex, messageCount, initialScrollDone) {
         if (!initialScrollDone || messageCount == 0 || lastMessageIndex < 0) return@LaunchedEffect
         if (isNearBottom) {
-            listState.animateScrollToItem(lastMessageIndex)
+            listState.snapToHistoryEnd(lastMessageIndex)
         }
     }
     LaunchedEffect(lastMessageIndex, initialScrollDone) {
@@ -390,7 +394,7 @@ private fun ChatMessagesPane(
             return@LaunchedEffect
         }
         if (lastMessageIndex < previousLastMessageIndex && listState.firstVisibleItemIndex >= lastMessageIndex) {
-            listState.scrollToItem(lastMessageIndex)
+            listState.snapToHistoryEnd(lastMessageIndex)
         }
         previousLastMessageIndex = lastMessageIndex
     }
@@ -478,7 +482,7 @@ private fun ChatMessagesPane(
                             ChatScrollDirection.TowardTop -> listState.animateScrollToItem(0)
                             ChatScrollDirection.TowardBottom -> {
                                 if (lastMessageIndex >= 0) {
-                                    listState.animateScrollToItem(lastMessageIndex)
+                                    listState.snapToHistoryEnd(lastMessageIndex)
                                 }
                             }
                         }
@@ -514,4 +518,9 @@ private fun createChatCameraUri(context: android.content.Context): Uri {
         "${context.packageName}.update.fileprovider",
         file,
     )
+}
+
+private suspend fun LazyListState.snapToHistoryEnd(lastMessageIndex: Int) {
+    if (lastMessageIndex < 0) return
+    scrollToItem(lastMessageIndex, END_ALIGNMENT_SCROLL_OFFSET)
 }
