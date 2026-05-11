@@ -115,7 +115,9 @@ fun flattenChatRows(
     live: Map<String, StreamingService.StreamSnapshot>,
     showLoadEarlier: Boolean,
 ): List<ChatRow> {
-    return ChatRowFlattener().flatten(messages, tasks, live, showLoadEarlier)
+    val flattener = ChatRowFlattener()
+    val structure = flattener.buildStructure(messages, tasks, showLoadEarlier)
+    return flattener.render(structure, live)
 }
 
 /**
@@ -129,6 +131,19 @@ fun flattenChatRows(
  * snapshot did not change, making Compose's skip checks effectively O(1).
  */
 class ChatRowFlattener {
+    @Immutable
+    data class MessageLayout(
+        val messageId: String,
+        val message: Message,
+        val prefixRows: List<ChatRow>,
+    )
+
+    @Immutable
+    data class Structure(
+        val showLoadEarlier: Boolean,
+        val messageLayouts: List<MessageLayout>,
+    )
+
     private data class MessageCacheEntry(
         val message: Message,
         val snapshot: StreamingService.StreamSnapshot?,
@@ -142,27 +157,56 @@ class ChatRowFlattener {
 
     private val messageRows = HashMap<String, MessageCacheEntry>()
     private val orphanRows = HashMap<String, OrphanCacheEntry>()
+    private var cachedTasks: List<AgorTask> = emptyList()
+    private var cachedTasksById: Map<String, AgorTask> = emptyMap()
 
-    fun flatten(
+    fun buildStructure(
         messages: List<Message>,
         tasks: List<AgorTask>,
-        live: Map<String, StreamingService.StreamSnapshot>,
         showLoadEarlier: Boolean,
-    ): List<ChatRow> {
-        val out = ArrayList<ChatRow>(messages.size * 2 + live.size + 8)
-        if (showLoadEarlier) out += ChatRow.LoadEarlier
+    ): Structure {
+        if (cachedTasks != tasks) {
+            cachedTasks = tasks
+            cachedTasksById = tasks.associateByTo(HashMap(tasks.size)) { it.taskId }
+        }
 
-        val tasksById = tasks.associateByTo(HashMap(tasks.size)) { it.taskId }
-        val seen = HashSet<String>(messages.size)
+        val layouts = ArrayList<MessageLayout>(messages.size)
         var lastTask: String? = SENTINEL_NO_TASK
 
         for (msg in messages) {
-            seen += msg.messageId
-            if (msg.taskId != lastTask) {
-                msg.taskId?.let { tasksById[it] }?.let { out += ChatRow.TaskHeaderRow(it) }
-                lastTask = msg.taskId
+            val prefixRows = if (msg.taskId != lastTask) {
+                msg.taskId?.let { cachedTasksById[it] }?.let { listOf(ChatRow.TaskHeaderRow(it)) }
+                    ?: emptyList()
+            } else {
+                emptyList()
             }
-            out += rowsForMessage(msg, live[msg.messageId])
+            lastTask = msg.taskId
+            layouts += MessageLayout(
+                messageId = msg.messageId,
+                message = msg,
+                prefixRows = prefixRows,
+            )
+        }
+
+        return Structure(
+            showLoadEarlier = showLoadEarlier,
+            messageLayouts = layouts,
+        )
+    }
+
+    fun render(
+        structure: Structure,
+        live: Map<String, StreamingService.StreamSnapshot>,
+    ): List<ChatRow> {
+        val layouts = structure.messageLayouts
+        val out = ArrayList<ChatRow>(layouts.size * 2 + live.size + 8)
+        if (structure.showLoadEarlier) out += ChatRow.LoadEarlier
+
+        val seen = HashSet<String>(layouts.size)
+        for (layout in layouts) {
+            seen += layout.messageId
+            if (layout.prefixRows.isNotEmpty()) out.addAll(layout.prefixRows)
+            out += rowsForMessage(layout.message, live[layout.messageId])
         }
 
         if (live.isNotEmpty()) {

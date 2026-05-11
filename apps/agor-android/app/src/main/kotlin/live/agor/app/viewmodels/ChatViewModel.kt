@@ -129,11 +129,21 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
      * (drawer toggle, file browser sheet) so re-entry doesn't trigger a cold
      * recomputation.
      */
-    val rows: StateFlow<List<ChatRow>> = combine(
+    private val rowStructure: StateFlow<ChatRowFlattener.Structure> = combine(
         _messages,
         _tasks,
+    ) { m, t -> rowFlattener.buildStructure(m, t, m.size >= 100) }
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            ChatRowFlattener.Structure(showLoadEarlier = false, messageLayouts = emptyList()),
+        )
+
+    val rows: StateFlow<List<ChatRow>> = combine(
+        rowStructure,
         live,
-    ) { m, t, l -> rowFlattener.flatten(m, t, l, m.size >= 100) }
+    ) { structure, l -> rowFlattener.render(structure, l) }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
