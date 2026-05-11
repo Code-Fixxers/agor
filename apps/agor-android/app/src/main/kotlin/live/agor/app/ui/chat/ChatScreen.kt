@@ -85,8 +85,6 @@ private enum class ChatScrollDirection {
     TowardBottom,
 }
 
-private const val END_ALIGNMENT_SCROLL_OFFSET = 100_000
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
@@ -522,5 +520,10 @@ private fun createChatCameraUri(context: android.content.Context): Uri {
 
 private suspend fun LazyListState.snapToHistoryEnd(lastMessageIndex: Int) {
     if (lastMessageIndex < 0) return
-    scrollToItem(lastMessageIndex, END_ALIGNMENT_SCROLL_OFFSET)
+    scrollToItem(lastMessageIndex)
+    val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull { it.index == lastMessageIndex } ?: return
+    val gapBelow = layoutInfo.viewportEndOffset - layoutInfo.afterContentPadding - (lastVisibleItem.offset + lastVisibleItem.size)
+    if (gapBelow > 0) {
+        scrollBy(-gapBelow.toFloat())
+    }
 }
