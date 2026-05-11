@@ -27,11 +27,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import live.agor.app.ui.chat.ChatRow
 
 private val ToolBlockShape = RoundedCornerShape(8.dp)
-private const val MAX_INLINE_TOOL_BODY_CHARS = 2_000
+private const val MAX_INLINE_TOOL_PREVIEW_CHARS = 480
+private const val MAX_INLINE_TOOL_PREVIEW_LINES = 6
 
 /**
  * Renders a precomputed [ChatRow.ToolUseRow]. Crucial: the input JSON string is
@@ -43,11 +45,17 @@ fun ToolUseBlockView(row: ChatRow.ToolUseRow) {
     var expanded by remember(row.key) { mutableStateOf(false) }
     var showFullBody by remember(row.key) { mutableStateOf(false) }
     val container = MaterialTheme.colorScheme.surfaceVariant
-    val inlineBody = remember(row.inputJson) {
-        if (row.inputJson.length <= MAX_INLINE_TOOL_BODY_CHARS) row.inputJson
-        else row.inputJson.take(MAX_INLINE_TOOL_BODY_CHARS) + "\n…"
+    val inlinePreview = remember(row.inputJson) {
+        row.inputJson
+            .lineSequence()
+            .take(MAX_INLINE_TOOL_PREVIEW_LINES)
+            .joinToString("\n")
+            .let { preview ->
+                if (preview.length <= MAX_INLINE_TOOL_PREVIEW_CHARS) preview
+                else preview.take(MAX_INLINE_TOOL_PREVIEW_CHARS) + "…"
+            }
     }
-    val bodyTruncated = row.inputJson.length > MAX_INLINE_TOOL_BODY_CHARS
+    val bodyTruncated = row.inputJson.length > inlinePreview.length
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -76,13 +84,18 @@ fun ToolUseBlockView(row: ChatRow.ToolUseRow) {
         if (expanded) {
             Spacer(Modifier.height(6.dp))
             Text(
-                inlineBody,
+                inlinePreview,
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                maxLines = MAX_INLINE_TOOL_PREVIEW_LINES,
+                overflow = TextOverflow.Ellipsis,
             )
-            if (bodyTruncated) {
-                TextButton(onClick = { showFullBody = true }) {
-                    Text("View full payload")
-                }
+            Text(
+                "${row.inputJson.length} chars",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = { showFullBody = true }) {
+                Text(if (bodyTruncated) "View full payload" else "Open payload")
             }
         }
     }
