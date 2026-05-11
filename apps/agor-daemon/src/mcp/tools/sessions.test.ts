@@ -654,10 +654,9 @@ describe('inputSchema → JSON Schema conversion (MCP discovery)', () => {
 describe('attached_mcp_servers in session-info tools', () => {
   it('agor_sessions_get_current fails clearly when API-key callers omit session context', async () => {
     const app = makeFakeApp({});
-    const tools = await registerAndCaptureTools(
-      { app, userId: 'user-1', sessionId: undefined },
-      ['agor_sessions_get_current']
-    );
+    const tools = await registerAndCaptureTools({ app, userId: 'user-1', sessionId: undefined }, [
+      'agor_sessions_get_current',
+    ]);
 
     await expect(tools.agor_sessions_get_current.cb({})).rejects.toThrow(
       /X-Agor-Session-Id|sessionId/

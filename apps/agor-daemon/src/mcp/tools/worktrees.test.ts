@@ -41,10 +41,9 @@ describe('agor_worktrees_update', () => {
       },
     };
 
-    const tools = await registerAndCaptureTools(
-      { app, userId: 'user-1', sessionId: undefined },
-      ['agor_worktrees_update']
-    );
+    const tools = await registerAndCaptureTools({ app, userId: 'user-1', sessionId: undefined }, [
+      'agor_worktrees_update',
+    ]);
 
     await expect(tools.agor_worktrees_update({ notes: 'hello' })).rejects.toThrow(
       /X-Agor-Session-Id|sessionId/

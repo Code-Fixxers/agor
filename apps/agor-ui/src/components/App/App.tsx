@@ -843,7 +843,12 @@ export const App: React.FC<AppProps> = ({
             <Content style={{ position: 'relative', overflow: 'hidden', display: 'flex' }}>
               {isCompact ? (
                 <div
-                  style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}
+                  style={{
+                    flex: 1,
+                    position: 'relative',
+                    display: 'flex',
+                    flexDirection: 'column',
+                  }}
                 >
                   <MobileBoardView
                     board={currentBoard || null}
@@ -943,210 +948,209 @@ export const App: React.FC<AppProps> = ({
                   </Drawer>
                 </div>
               ) : (
- 
-              <PanelGroup
-                id="main-layout"
-                direction="horizontal"
-                style={{ flex: 1 }}
-                onLayout={(sizes) => {
-                  // Save left panel size when user resizes (only when panel is open)
-                  if (!commentsPanelCollapsed && sizes.length >= 2) {
-                    // Comments panel is the first panel (index 0)
-                    setCommentsPanelSize(sizes[0]);
-                  }
-                }}
-              >
-                <Panel
-                  id="comments-panel"
-                  order={1}
-                  ref={commentsPanelRef}
-                  collapsible
-                  defaultSize={commentsPanelCollapsed ? 0 : commentsPanelSize}
-                  collapsedSize={0}
-                  minSize={commentsPanelCollapsed ? 0 : 15}
-                  maxSize={40}
-                >
-                  {!commentsPanelCollapsed && (
-                    <CommentsPanel
-                      client={client}
-                      boardId={currentBoardId || ''}
-                      comments={mapToArray(commentById).filter(
-                        (c: BoardComment) => c.board_id === currentBoardId
-                      )}
-                      userById={userById}
-                      currentUserId={user?.user_id || 'unknown'}
-                      boardObjects={currentBoard?.objects}
-                      worktreeById={worktreeById}
-                      collapsed={commentsPanelCollapsed}
-                      onToggleCollapse={() => setCommentsPanelCollapsed(!commentsPanelCollapsed)}
-                      onSendComment={(content) => onSendComment?.(currentBoardId || '', content)}
-                      onReplyComment={onReplyComment}
-                      onResolveComment={onResolveComment}
-                      onToggleReaction={onToggleReaction}
-                      onDeleteComment={onDeleteComment}
-                      hoveredCommentId={hoveredCommentId}
-                      selectedCommentId={selectedCommentId}
-                    />
-                  )}
-                </Panel>
-                <PanelResizeHandle
-                  style={{
-                    width: commentsPanelCollapsed ? '0px' : '4px',
-                    background: 'var(--ant-color-border-secondary)',
-                    cursor: commentsPanelCollapsed ? 'default' : 'col-resize',
-                    transition: 'background 0.2s',
-                    pointerEvents: commentsPanelCollapsed ? 'none' : 'auto',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!commentsPanelCollapsed) {
-                      (e.currentTarget as unknown as HTMLDivElement).style.background =
-                        'var(--ant-color-primary)';
+                <PanelGroup
+                  id="main-layout"
+                  direction="horizontal"
+                  style={{ flex: 1 }}
+                  onLayout={(sizes) => {
+                    // Save left panel size when user resizes (only when panel is open)
+                    if (!commentsPanelCollapsed && sizes.length >= 2) {
+                      // Comments panel is the first panel (index 0)
+                      setCommentsPanelSize(sizes[0]);
                     }
                   }}
-                  onMouseLeave={(e) => {
-                    if (!commentsPanelCollapsed) {
-                      (e.currentTarget as unknown as HTMLDivElement).style.background =
-                        'var(--ant-color-border-secondary)';
-                    }
-                  }}
-                />
-                <Panel
-                  id="content-panel"
-                  order={2}
-                  defaultSize={commentsPanelCollapsed ? 100 : 100 - commentsPanelSize}
-                  minSize={40}
                 >
-                  <PanelGroup
-                    id="canvas-session"
-                    direction="horizontal"
-                    style={{ flex: 1 }}
-                    onLayout={(sizes) => {
-                      // Save right panel size when user resizes (only when panel is open)
-                      if (effectiveSelectedSessionId && sizes.length === 2) {
-                        setSessionPanelSize(sizes[1]);
+                  <Panel
+                    id="comments-panel"
+                    order={1}
+                    ref={commentsPanelRef}
+                    collapsible
+                    defaultSize={commentsPanelCollapsed ? 0 : commentsPanelSize}
+                    collapsedSize={0}
+                    minSize={commentsPanelCollapsed ? 0 : 15}
+                    maxSize={40}
+                  >
+                    {!commentsPanelCollapsed && (
+                      <CommentsPanel
+                        client={client}
+                        boardId={currentBoardId || ''}
+                        comments={mapToArray(commentById).filter(
+                          (c: BoardComment) => c.board_id === currentBoardId
+                        )}
+                        userById={userById}
+                        currentUserId={user?.user_id || 'unknown'}
+                        boardObjects={currentBoard?.objects}
+                        worktreeById={worktreeById}
+                        collapsed={commentsPanelCollapsed}
+                        onToggleCollapse={() => setCommentsPanelCollapsed(!commentsPanelCollapsed)}
+                        onSendComment={(content) => onSendComment?.(currentBoardId || '', content)}
+                        onReplyComment={onReplyComment}
+                        onResolveComment={onResolveComment}
+                        onToggleReaction={onToggleReaction}
+                        onDeleteComment={onDeleteComment}
+                        hoveredCommentId={hoveredCommentId}
+                        selectedCommentId={selectedCommentId}
+                      />
+                    )}
+                  </Panel>
+                  <PanelResizeHandle
+                    style={{
+                      width: commentsPanelCollapsed ? '0px' : '4px',
+                      background: 'var(--ant-color-border-secondary)',
+                      cursor: commentsPanelCollapsed ? 'default' : 'col-resize',
+                      transition: 'background 0.2s',
+                      pointerEvents: commentsPanelCollapsed ? 'none' : 'auto',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!commentsPanelCollapsed) {
+                        (e.currentTarget as unknown as HTMLDivElement).style.background =
+                          'var(--ant-color-primary)';
                       }
                     }}
+                    onMouseLeave={(e) => {
+                      if (!commentsPanelCollapsed) {
+                        (e.currentTarget as unknown as HTMLDivElement).style.background =
+                          'var(--ant-color-border-secondary)';
+                      }
+                    }}
+                  />
+                  <Panel
+                    id="content-panel"
+                    order={2}
+                    defaultSize={commentsPanelCollapsed ? 100 : 100 - commentsPanelSize}
+                    minSize={40}
                   >
-                    <Panel
-                      id="canvas-panel"
-                      order={1}
-                      defaultSize={effectiveSelectedSessionId ? 100 - sessionPanelSize : 100}
-                      minSize={20}
+                    <PanelGroup
+                      id="canvas-session"
+                      direction="horizontal"
+                      style={{ flex: 1 }}
+                      onLayout={(sizes) => {
+                        // Save right panel size when user resizes (only when panel is open)
+                        if (effectiveSelectedSessionId && sizes.length === 2) {
+                          setSessionPanelSize(sizes[1]);
+                        }
+                      }}
                     >
-                      <div style={{ position: 'relative', overflow: 'hidden', height: '100%' }}>
-                        <SessionCanvas
-                          ref={sessionCanvasRef}
-                          board={currentBoard || null}
-                          client={client}
-                          sessionById={sessionById}
-                          sessionsByWorktree={sessionsByWorktree}
-                          userById={userById}
-                          repoById={repoById}
-                          worktrees={boardWorktrees}
-                          worktreeById={worktreeById}
-                          boardObjectById={boardObjectById}
-                          commentById={commentById}
-                          cardById={cardById}
-                          currentUserId={user?.user_id}
-                          selectedSessionId={effectiveSelectedSessionId}
-                          availableAgents={availableAgents}
-                          mcpServerById={mcpServerById}
-                          sessionMcpServerIds={sessionMcpServerIds}
-                          onSessionClick={handleSessionClick}
-                          onSessionUpdate={onUpdateSession}
-                          onSessionDelete={onDeleteSession}
-                          onForkSession={onForkSession}
-                          onSpawnSession={onSpawnSession}
-                          onUpdateSessionMcpServers={onUpdateSessionMcpServers}
-                          onOpenSettings={setSessionSettingsId}
-                          onCreateSessionForWorktree={setNewSessionWorktreeId}
-                          onOpenWorktree={setWorktreeModalWorktreeId}
-                          onArchiveOrDeleteWorktree={onArchiveOrDeleteWorktree}
-                          onOpenTerminal={canOpenTerminal ? handleOpenTerminal : undefined}
-                          onStartEnvironment={onStartEnvironment}
-                          onStopEnvironment={onStopEnvironment}
-                          onViewLogs={setLogsModalWorktreeId}
-                          onNukeEnvironment={onNukeEnvironment}
-                          onOpenCommentsPanel={handleOpenCommentsPanel}
-                          onCommentHover={setHoveredCommentId}
-                          onCommentSelect={handleCommentSelect}
-                        />
-                        <NewSessionButton
-                          onClick={() => {
-                            const center = sessionCanvasRef.current?.getViewportCenter();
-                            setNewWorktreeDefaultPosition(center || null);
-                            setCreateDialogOpen(true);
-                          }}
-                        />
-                      </div>
-                    </Panel>
-                    {(effectiveSelectedSessionId || !eventStreamPanelCollapsed) && (
-                      <>
-                        <PanelResizeHandle
-                          style={{
-                            width: '4px',
-                            background: 'var(--ant-color-border-secondary)',
-                            cursor: 'col-resize',
-                            transition: 'background 0.2s',
-                          }}
-                          onMouseEnter={(e) => {
-                            (e.currentTarget as unknown as HTMLDivElement).style.background =
-                              'var(--ant-color-primary)';
-                          }}
-                          onMouseLeave={(e) => {
-                            (e.currentTarget as unknown as HTMLDivElement).style.background =
-                              'var(--ant-color-border-secondary)';
-                          }}
-                        />
-                        <Panel
-                          id="session-panel"
-                          order={2}
-                          defaultSize={sessionPanelSize}
-                          minSize={15}
-                          maxSize={75}
-                        >
-                          {effectiveSelectedSessionId ? (
-                            <SessionPanel
-                              client={client}
-                              session={selectedSession}
-                              worktree={selectedSessionWorktree}
-                              currentUserId={user?.user_id}
-                              sessionMcpServerIds={
-                                sessionMcpServerIds.get(effectiveSelectedSessionId) ??
-                                EMPTY_STRING_ARRAY
-                              }
-                              open={!!effectiveSelectedSessionId}
-                              onClose={handleCloseSessionPanel}
-                            />
-                          ) : (
-                            <EventStreamPanel
-                              collapsed={false}
-                              onToggleCollapse={() => setEventStreamPanelCollapsed(true)}
-                              events={events}
-                              onClear={clearEvents}
-                              currentUserId={user?.user_id}
-                              selectedSessionId={effectiveSelectedSessionId}
-                              currentBoard={currentBoard}
-                              client={client}
-                              worktreeActions={{
-                                onSessionClick: handleSessionClick,
-                                onCreateSession: (worktreeId) =>
-                                  setNewSessionWorktreeId(worktreeId),
-                                onOpenSettings: (worktreeId) =>
-                                  setWorktreeModalWorktreeId(worktreeId),
-                                onNukeEnvironment,
-                              }}
-                            />
-                          )}
-                        </Panel>
-                      </>
-                    )}
-                  </PanelGroup>
-                </Panel>
-              </PanelGroup>
-            )}
-          </Content>
-          {/* Invisible mount of antd Upload so its CSS-in-JS styles stay
+                      <Panel
+                        id="canvas-panel"
+                        order={1}
+                        defaultSize={effectiveSelectedSessionId ? 100 - sessionPanelSize : 100}
+                        minSize={20}
+                      >
+                        <div style={{ position: 'relative', overflow: 'hidden', height: '100%' }}>
+                          <SessionCanvas
+                            ref={sessionCanvasRef}
+                            board={currentBoard || null}
+                            client={client}
+                            sessionById={sessionById}
+                            sessionsByWorktree={sessionsByWorktree}
+                            userById={userById}
+                            repoById={repoById}
+                            worktrees={boardWorktrees}
+                            worktreeById={worktreeById}
+                            boardObjectById={boardObjectById}
+                            commentById={commentById}
+                            cardById={cardById}
+                            currentUserId={user?.user_id}
+                            selectedSessionId={effectiveSelectedSessionId}
+                            availableAgents={availableAgents}
+                            mcpServerById={mcpServerById}
+                            sessionMcpServerIds={sessionMcpServerIds}
+                            onSessionClick={handleSessionClick}
+                            onSessionUpdate={onUpdateSession}
+                            onSessionDelete={onDeleteSession}
+                            onForkSession={onForkSession}
+                            onSpawnSession={onSpawnSession}
+                            onUpdateSessionMcpServers={onUpdateSessionMcpServers}
+                            onOpenSettings={setSessionSettingsId}
+                            onCreateSessionForWorktree={setNewSessionWorktreeId}
+                            onOpenWorktree={setWorktreeModalWorktreeId}
+                            onArchiveOrDeleteWorktree={onArchiveOrDeleteWorktree}
+                            onOpenTerminal={canOpenTerminal ? handleOpenTerminal : undefined}
+                            onStartEnvironment={onStartEnvironment}
+                            onStopEnvironment={onStopEnvironment}
+                            onViewLogs={setLogsModalWorktreeId}
+                            onNukeEnvironment={onNukeEnvironment}
+                            onOpenCommentsPanel={handleOpenCommentsPanel}
+                            onCommentHover={setHoveredCommentId}
+                            onCommentSelect={handleCommentSelect}
+                          />
+                          <NewSessionButton
+                            onClick={() => {
+                              const center = sessionCanvasRef.current?.getViewportCenter();
+                              setNewWorktreeDefaultPosition(center || null);
+                              setCreateDialogOpen(true);
+                            }}
+                          />
+                        </div>
+                      </Panel>
+                      {(effectiveSelectedSessionId || !eventStreamPanelCollapsed) && (
+                        <>
+                          <PanelResizeHandle
+                            style={{
+                              width: '4px',
+                              background: 'var(--ant-color-border-secondary)',
+                              cursor: 'col-resize',
+                              transition: 'background 0.2s',
+                            }}
+                            onMouseEnter={(e) => {
+                              (e.currentTarget as unknown as HTMLDivElement).style.background =
+                                'var(--ant-color-primary)';
+                            }}
+                            onMouseLeave={(e) => {
+                              (e.currentTarget as unknown as HTMLDivElement).style.background =
+                                'var(--ant-color-border-secondary)';
+                            }}
+                          />
+                          <Panel
+                            id="session-panel"
+                            order={2}
+                            defaultSize={sessionPanelSize}
+                            minSize={15}
+                            maxSize={75}
+                          >
+                            {effectiveSelectedSessionId ? (
+                              <SessionPanel
+                                client={client}
+                                session={selectedSession}
+                                worktree={selectedSessionWorktree}
+                                currentUserId={user?.user_id}
+                                sessionMcpServerIds={
+                                  sessionMcpServerIds.get(effectiveSelectedSessionId) ??
+                                  EMPTY_STRING_ARRAY
+                                }
+                                open={!!effectiveSelectedSessionId}
+                                onClose={handleCloseSessionPanel}
+                              />
+                            ) : (
+                              <EventStreamPanel
+                                collapsed={false}
+                                onToggleCollapse={() => setEventStreamPanelCollapsed(true)}
+                                events={events}
+                                onClear={clearEvents}
+                                currentUserId={user?.user_id}
+                                selectedSessionId={effectiveSelectedSessionId}
+                                currentBoard={currentBoard}
+                                client={client}
+                                worktreeActions={{
+                                  onSessionClick: handleSessionClick,
+                                  onCreateSession: (worktreeId) =>
+                                    setNewSessionWorktreeId(worktreeId),
+                                  onOpenSettings: (worktreeId) =>
+                                    setWorktreeModalWorktreeId(worktreeId),
+                                  onNukeEnvironment,
+                                }}
+                              />
+                            )}
+                          </Panel>
+                        </>
+                      )}
+                    </PanelGroup>
+                  </Panel>
+                </PanelGroup>
+              )}
+            </Content>
+            {/* Invisible mount of antd Upload so its CSS-in-JS styles stay
  
               registered even after the SessionPanel (which contains FileUpload)
               unmounts. Without this, antd GC's the Upload CSS on panel close. */}

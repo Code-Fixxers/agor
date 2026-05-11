@@ -71,7 +71,12 @@ export interface CorsConfigResult {
 
 /** Matches hosted Sandpack bundler origins like https://2-19-8-sandpack.codesandbox.io */
 const SANDPACK_ORIGIN_PATTERN = /^https:\/\/[\w.-]+\.codesandbox\.io$/;
-const MCP_REQUIRED_REQUEST_HEADERS = ['Authorization', 'X-API-Key', 'X-Agor-Session-Id', 'mcp-session-id'];
+const MCP_REQUIRED_REQUEST_HEADERS = [
+  'Authorization',
+  'X-API-Key',
+  'X-Agor-Session-Id',
+  'mcp-session-id',
+];
 const MCP_EXPOSED_RESPONSE_HEADERS = ['mcp-session-id'];
 
 /**
@@ -126,7 +131,10 @@ export function buildCorsConfig(options: CorsConfigOptions): CorsConfigResult {
     `http://localhost:${uiPort + 3}`,
   ];
 
-  const extraOptions: Pick<CorsOptions, 'methods' | 'allowedHeaders' | 'exposedHeaders' | 'maxAge'> = {};
+  const extraOptions: Pick<
+    CorsOptions,
+    'methods' | 'allowedHeaders' | 'exposedHeaders' | 'maxAge'
+  > = {};
   if (resolved.methods) extraOptions.methods = resolved.methods;
   if (resolved.allowedHeaders) {
     const merged = new Map<string, string>();
