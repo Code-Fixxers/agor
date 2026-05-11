@@ -51,7 +51,7 @@ export interface McpContext {
   app: Application;
   db: Database;
   userId: UserID;
-  sessionId: SessionID;
+  sessionId?: SessionID;
   authenticatedUser: AuthenticatedUser;
   baseServiceParams: Pick<AuthenticatedParams, 'user' | 'authenticated' | 'provider'>;
 }
@@ -88,6 +88,16 @@ export function textResult(data: unknown) {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(data) }],
   };
+}
+
+/**
+ * Helper: require current-session context for tools invoked with personal API keys.
+ */
+export function requireCurrentSession(ctx: McpContext, toolName: string): SessionID {
+  if (ctx.sessionId) return ctx.sessionId;
+  throw new Error(
+    `${toolName} requires session context when using a personal API key. Send X-Agor-Session-Id: <session-id> or ?sessionId=<session-id>.`
+  );
 }
 
 /** Server instructions shown to agents when tool search is enabled. */

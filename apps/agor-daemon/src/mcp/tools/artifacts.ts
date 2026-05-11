@@ -86,32 +86,8 @@ export function registerArtifactTools(server: McpServer, ctx: McpContext): void 
   server.registerTool(
     'agor_artifacts_publish',
     {
-      description: `Publish a folder as a live Sandpack artifact on a board. Reads files from the given folder, serializes them to the database, and places (or updates) the artifact on the board.
-
-If artifactId is omitted, creates a new artifact.
-If artifactId is provided, updates the existing artifact (must be owned by you).
-
-The folder should contain ordinary source files (no \`sandpack.json\`, no \`agor.config.js\`). The agent decides where to create the folder — inside the worktree, a temp directory, etc. The folder is only read at publish time; after that, the artifact lives in the database.
-
-Recommended: create the folder inside your worktree so files can be version-controlled.
-
-DECLARATIVE CONFIG:
-- \`requiredEnvVars\`: array of env var NAMES the artifact needs (e.g. ["OPENAI_KEY", "STRIPE_KEY"]). The daemon synthesizes a per-viewer \`.env\` at render time using values from the viewer's stored env vars (Settings → Environment Variables). Names are stored without prefix; the daemon prefixes per template (Vite → \`VITE_\`, CRA → \`REACT_APP_\`, etc.). Reference these in your code via \`import.meta.env.VITE_X\` (Vite) or \`process.env.X\` (Node).
-- \`agorGrants\`: declarative daemon capabilities. Each grant maps to a fixed env var:
-    \`agor_token: true\`     → mints a 15-min daemon JWT for the viewer; injected as \`AGOR_TOKEN\`. ARTIFACT-SCOPED CONSENT ONLY — author/instance grants don't auto-cover this.
-    \`agor_api_url: true\`   → injects the daemon URL as \`AGOR_API_URL\`.
-    \`agor_user_email: true\` → injects viewer's email as \`AGOR_USER_EMAIL\`.
-    \`agor_artifact_id: true\` → \`AGOR_ARTIFACT_ID\` (informational, no consent).
-    \`agor_board_id: true\`   → \`AGOR_BOARD_ID\` (informational, no consent).
-    \`agor_proxies: ["openai", ...]\` → injects \`AGOR_PROXY_OPENAI\` etc. for HTTP proxy URLs.
-- \`sandpackConfig\`: author-controlled SandpackProvider config (template, customSetup, theme, options). Sanitized on write — UI-affecting / private-account props are stripped.
-
-CONSENT MODEL (TOFU): when the viewer is NOT the artifact author, the daemon does NOT inject env vars or grants without an explicit trust grant. Untrusted artifacts render with empty env values and a "Trust to render with secrets" badge.
-
-IMPORTANT:
-- Secret VALUES are never sent to the LLM as-is — they're only injected into the served \`.env\` at view time. CAVEAT: if your artifact renders a secret-derived value into the DOM (e.g. \`<div>API: {key}</div>\`), an agent calling \`agor_artifacts_query_dom\` against your own running render WILL see the rendered text. Treat any \`agor_artifacts_query_*\` reply as potentially carrying secret-derived output if the artifact renders one.
-- Missing user env vars render as "" — your app should detect that and surface a "configure SOMETHING in Settings" message rather than calling APIs with empty creds.
-- For node.js / static templates without a dotenv path, env vars are NOT injected; the daemon emits a warning if you declared any.`,
+      description:
+        'Publish or update a live Sandpack artifact from a folder. Use artifactId to update; omit it to create. Supports declarative env requirements, agorGrants, and sandpackConfig. Artifact secrets are injected per viewer at render time, not sent to the LLM.',
       inputSchema: z.object({
         folderPath: z.string().describe('Absolute path to folder containing artifact files'),
         boardId: z
@@ -233,18 +209,8 @@ IMPORTANT:
   server.registerTool(
     'agor_artifacts_status',
     {
-      description: `Get artifact build status, Sandpack bundler errors, and recent console logs from the browser runtime. Use this to debug rendering issues.
-
-build_status reflects both file validation AND Sandpack runtime state. If the Sandpack bundler reports an error (e.g. "Could not find module './data'"), build_status will be 'error' even if files were accepted.
-
-Fields:
-- build_status: 'success' | 'error' | 'unknown' — reflects the worst of file validation and Sandpack runtime
-- build_errors: array of error messages (includes Sandpack errors prefixed with [Sandpack])
-- sandpack_error: the raw Sandpack bundler/runtime error object (null if no error)
-- sandpack_status: Sandpack bundler status ('idle', 'running', 'timeout', etc.)
-- console_logs: console.log/warn/error output from the running app
-
-NOTE: sandpack_error and console_logs require a browser to be viewing the artifact. They are scoped to the calling user's render — you only see your own console output, never another viewer's.`,
+      description:
+        'Get artifact build state, Sandpack errors, and recent console logs. Live Sandpack/runtime fields require a browser to be actively viewing the artifact.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         artifactId: z.string().describe('Artifact ID'),
@@ -293,7 +259,7 @@ NOTE: sandpack_error and console_logs require a browser to be viewing the artifa
     'agor_artifacts_get',
     {
       description:
-        'Get a single artifact by ID, including its full file map (path → content) and declarative metadata (sandpack_config, required_env_vars, agor_grants). Use this to read artifact source code from another worktree without filesystem access. Respects visibility: public artifacts are readable by anyone; private artifacts are only readable by their creator.',
+        'Get an artifact by ID, including its file map and declarative metadata. Respects visibility: public artifacts are readable by anyone; private artifacts only by their creator.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         artifactId: z.string().describe('Artifact ID (full UUID or short prefix)'),
@@ -329,13 +295,8 @@ NOTE: sandpack_error and console_logs require a browser to be viewing the artifa
   server.registerTool(
     'agor_artifacts_update',
     {
-      description: `Update artifact metadata without re-reading files from disk. Use this to move an artifact to a different board, rename it, toggle visibility, archive it, reposition its board placement, or update its declarative config (requiredEnvVars / agorGrants / sandpackConfig).
-
-For file/content changes, use agor_artifacts_publish (which re-reads a folder and updates the stored files).
-
-Placement (x, y, width, height) is preserved across board moves unless you explicitly override it.
-
-Caller must own the artifact (or be an admin).`,
+      description:
+        'Update artifact metadata without re-reading files from disk. Use this for board moves, renames, visibility, placement, archive state, or declarative config changes. For file changes, use agor_artifacts_publish.',
       inputSchema: z.object({
         artifactId: z.string().describe('Artifact ID to update (full UUID or short prefix)'),
         boardId: z.string().optional().describe('Move the artifact to a different board'),
@@ -403,19 +364,8 @@ Caller must own the artifact (or be an admin).`,
   server.registerTool(
     'agor_artifacts_land',
     {
-      description: `Materialize an artifact's stored files to disk inside a worktree. Inverse of agor_artifacts_publish.
-
-Use this when you want to tweak an artifact's code: land it into a worktree, edit the files locally, then call agor_artifacts_publish with the same artifactId to push the changes back.
-
-Writes a small \`agor.artifact.json\` sidecar alongside the source files. The sidecar carries metadata that doesn't fit in the file map (template, sandpack_config, required_env_vars, agor_grants) so a round-trip publish() can preserve it. **Do not delete \`agor.artifact.json\`** — without it, a republish will reset \`required_env_vars\` and \`agor_grants\` to empty. Build tools (Vite/CRA/etc.) ignore the sidecar.
-
-Safety:
-- Destination must be inside the target worktree (cannot escape via ".." or absolute paths).
-- Default subpath is \`.agor/artifacts/<slug>-<short-id>\` derived from the artifact's name (kebab-cased, ASCII-only). Pass a custom subpath if you want a different location.
-- Refuses to write to an existing destination unless overwrite=true is passed.
-- overwrite=true removes the destination directory first (symlinks are unlinked, not followed).
-
-Visibility: public artifacts are readable by anyone; private artifacts are only landable by their owner.`,
+      description:
+        "Materialize an artifact's stored files into a worktree. Use this to edit artifact code locally, then republish with the same artifactId. Writes an agor.artifact.json sidecar so metadata survives round trips.",
       inputSchema: z.object({
         artifactId: z.string().describe('Artifact ID to materialize (full UUID or short prefix)'),
         worktreeId: z.string().describe('Destination worktree ID (full UUID or short prefix)'),

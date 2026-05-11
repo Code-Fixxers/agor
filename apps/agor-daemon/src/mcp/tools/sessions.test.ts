@@ -60,7 +60,7 @@ async function registerAndCaptureTools(
   ctx: {
     app: unknown;
     userId: string;
-    sessionId: string;
+    sessionId?: string;
   },
   toolNames: string[]
 ): Promise<Record<string, CapturedTool>> {
@@ -90,7 +90,7 @@ async function registerAndCaptureTools(
 }
 
 async function registerAndCaptureHandlers(
-  ctx: { app: unknown; userId: string; sessionId: string },
+  ctx: { app: unknown; userId: string; sessionId?: string },
   toolNames: string[]
 ): Promise<Record<string, ToolHandler>> {
   const tools = await registerAndCaptureTools(ctx, toolNames);
@@ -652,6 +652,18 @@ describe('inputSchema → JSON Schema conversion (MCP discovery)', () => {
 });
 
 describe('attached_mcp_servers in session-info tools', () => {
+  it('agor_sessions_get_current fails clearly when API-key callers omit session context', async () => {
+    const app = makeFakeApp({});
+    const tools = await registerAndCaptureTools(
+      { app, userId: 'user-1', sessionId: undefined },
+      ['agor_sessions_get_current']
+    );
+
+    await expect(tools.agor_sessions_get_current.cb({})).rejects.toThrow(
+      /X-Agor-Session-Id|sessionId/
+    );
+  });
+
   // The catalog (`agor_mcp_servers_list`) and the per-session attachment view
   // are now distinct: catalog = "what could I attach", attached = "what IS
   // attached to this session". This test pins the attachment view onto

@@ -27,7 +27,6 @@ import { LoginPage } from './components/LoginPage';
 import { MobileLegacyRedirect } from './components/mobile/MobileLegacyRedirect';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { PWAShell } from './components/PWAShell';
-import { SandboxBanner } from './components/SandboxBanner';
 import type { WorktreeUpdate } from './components/WorktreeModal/tabs/GeneralTab';
 import { ConnectionProvider } from './contexts/ConnectionContext';
 import { ServicesConfigContext } from './contexts/ServicesConfigContext';
@@ -457,13 +456,8 @@ function AppContent() {
   // find their prompt in the new session's compose box.
   const handleForkSession = async (sessionId: string, prompt: string) => {
     try {
-      const session = await forkSession(sessionId as SessionID, prompt);
+      await forkSession(sessionId as SessionID, prompt);
       showSuccess('Session forked successfully!');
-      // Seed a per-session draft on the new fork so the prompt is recoverable
-      // even if the background executor fails after the REST call returned.
-      handleUpdateDraft(session.session_id, prompt);
-      // Clear the parent's draft after a successful fork
-      handleClearDraft(sessionId);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fork session';
       showError(`Failed to fork session: ${message}`);
@@ -474,10 +468,8 @@ function AppContent() {
   // Handle btw fork session (ephemeral fork for side questions)
   const handleBtwForkSession = async (sessionId: string, prompt: string) => {
     try {
-      const session = await btwForkSession(sessionId as SessionID, prompt);
+      await btwForkSession(sessionId as SessionID, prompt);
       showSuccess('Side question sent via btw fork');
-      handleUpdateDraft(session.session_id, prompt);
-      handleClearDraft(sessionId);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create btw fork';
       showError(`Failed to create btw fork: ${message}`);
@@ -490,13 +482,8 @@ function AppContent() {
     // Handle both string prompt and full SpawnConfig
     const spawnConfig = typeof config === 'string' ? { prompt: config } : config;
     try {
-      const session = await spawnSession(sessionId as SessionID, spawnConfig);
+      await spawnSession(sessionId as SessionID, spawnConfig);
       showSuccess('Subsession session spawned successfully!');
-      if (spawnConfig.prompt?.trim()) {
-        handleUpdateDraft(session.session_id, spawnConfig.prompt);
-      }
-      // Clear the draft after spawning subsession
-      handleClearDraft(sessionId);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to spawn session';
       showError(`Failed to spawn session: ${message}`);
@@ -1206,7 +1193,6 @@ function AppContent() {
   // render the full UI everywhere and let CSS/responsive components adapt.
   const agorAppElement = (
     <>
-      <SandboxBanner />
       <AgorApp
         client={client}
         user={currentUser}
@@ -1256,11 +1242,11 @@ function AppContent() {
         onStartEnvironment={handleStartEnvironment}
         onStopEnvironment={handleStopEnvironment}
         onNukeEnvironment={handleNukeEnvironment}
+        onExecuteScheduleNow={handleExecuteScheduleNow}
         onCreateUser={handleCreateUser}
         onUpdateUser={handleUpdateUser}
         onDeleteUser={handleDeleteUser}
         onCreateMCPServer={handleCreateMCPServer}
-        onUpdateMCPServer={handleUpdateMCPServer}
         onDeleteMCPServer={handleDeleteMCPServer}
         gatewayChannelById={gatewayChannelById}
         onCreateGatewayChannel={handleCreateGatewayChannel}

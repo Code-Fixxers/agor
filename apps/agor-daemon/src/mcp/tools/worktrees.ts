@@ -24,7 +24,7 @@ import {
   resolveWorktreeId,
 } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../server.js';
+import { coerceString, requireCurrentSession, textResult } from '../server.js';
 import { assertValidVariant } from './_environment-helpers.js';
 
 const WORKTREE_NAME_PATTERN = /^[a-z0-9-]+$/;
@@ -407,7 +407,8 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
       if (coerceString(args.worktreeId)) {
         resolvedWorktreeId = await resolveWorktreeId(ctx, coerceString(args.worktreeId)!);
       } else {
-        const currentSession = await ctx.app.service('sessions').get(ctx.sessionId);
+        const currentSessionId = requireCurrentSession(ctx, 'agor_worktrees_update');
+        const currentSession = await ctx.app.service('sessions').get(currentSessionId);
         const sessionWorktreeId = currentSession.worktree_id;
         if (!sessionWorktreeId)
           throw new Error('worktreeId is required when current session is not bound to a worktree');

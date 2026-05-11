@@ -65,12 +65,14 @@ export interface CorsConfigResult {
    * trusted origins instead of echoing it for everyone.
    */
   isAllowedOrigin: (origin: string) => boolean;
-  /** Additional options (methods, allowedHeaders, maxAge) to pass to cors(). */
-  extraOptions: Pick<CorsOptions, 'methods' | 'allowedHeaders' | 'maxAge'>;
+  /** Additional options (methods, allowedHeaders, exposedHeaders, maxAge) to pass to cors(). */
+  extraOptions: Pick<CorsOptions, 'methods' | 'allowedHeaders' | 'exposedHeaders' | 'maxAge'>;
 }
 
 /** Matches hosted Sandpack bundler origins like https://2-19-8-sandpack.codesandbox.io */
 const SANDPACK_ORIGIN_PATTERN = /^https:\/\/[\w.-]+\.codesandbox\.io$/;
+const MCP_REQUIRED_REQUEST_HEADERS = ['Authorization', 'X-API-Key', 'X-Agor-Session-Id', 'mcp-session-id'];
+const MCP_EXPOSED_RESPONSE_HEADERS = ['mcp-session-id'];
 
 /**
  * True when `origin` is a Sandpack/CodeSandbox bundler origin. Exported so
@@ -124,9 +126,15 @@ export function buildCorsConfig(options: CorsConfigOptions): CorsConfigResult {
     `http://localhost:${uiPort + 3}`,
   ];
 
-  const extraOptions: Pick<CorsOptions, 'methods' | 'allowedHeaders' | 'maxAge'> = {};
+  const extraOptions: Pick<CorsOptions, 'methods' | 'allowedHeaders' | 'exposedHeaders' | 'maxAge'> = {};
   if (resolved.methods) extraOptions.methods = resolved.methods;
-  if (resolved.allowedHeaders) extraOptions.allowedHeaders = resolved.allowedHeaders;
+  if (resolved.allowedHeaders) {
+    const merged = new Map<string, string>();
+    for (const header of resolved.allowedHeaders) merged.set(header.toLowerCase(), header);
+    for (const header of MCP_REQUIRED_REQUEST_HEADERS) merged.set(header.toLowerCase(), header);
+    extraOptions.allowedHeaders = Array.from(merged.values());
+  }
+  extraOptions.exposedHeaders = MCP_EXPOSED_RESPONSE_HEADERS;
   if (resolved.maxAgeSeconds !== undefined) extraOptions.maxAge = resolved.maxAgeSeconds;
 
   // --- Wildcard / reflect: accept any origin, credentials are forced off. ---
