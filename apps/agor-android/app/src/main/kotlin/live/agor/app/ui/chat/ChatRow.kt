@@ -70,6 +70,27 @@ sealed interface ChatRow {
     ) : ChatRow
 
     @Immutable
+    data class ToolTraceRow(
+        override val key: String,
+        val items: List<ToolTraceItem>,
+        val hasError: Boolean,
+    ) : ChatRow
+
+    @Immutable
+    data class ToolTraceItem(
+        val kind: ToolTraceKind,
+        val title: String,
+        val summary: String,
+        val body: String,
+        val isError: Boolean = false,
+    )
+
+    enum class ToolTraceKind {
+        Use,
+        Result,
+    }
+
+    @Immutable
     data class ThinkingRow(override val key: String, val text: String) : ChatRow
 
     @Immutable
@@ -259,7 +280,9 @@ private fun buildMessageRows(
 
         is MessageContent.Blocks -> {
             val blocks = c.blocks
-            blocks.forEachIndexed { i, block ->
+            var i = 0
+            while (i < blocks.size) {
+                val block = blocks[i]
                 when (block) {
                     is ContentBlock.Text -> {
                         val isLastTextBlock = (i == blocks.size - 1)
@@ -277,14 +300,46 @@ private fun buildMessageRows(
                     }
 
                     is ContentBlock.ToolUse -> {
-                        // JSON serialization happens once here, not per-recompose.
-                        val inputJson = AgorJson.encodeToString(JsonObject.serializer(), block.input)
-                        out += ChatRow.ToolUseRow(
-                            key = "tool-$mid-$i",
-                            name = block.name,
-                            inputSummary = block.inputSummary,
-                            inputJson = inputJson,
+                        val toolItems = ArrayList<ChatRow.ToolTraceItem>()
+                        var j = i
+                        while (j < blocks.size) {
+                            when (val toolBlock = blocks[j]) {
+                                is ContentBlock.ToolUse -> {
+                                    val inputJson = AgorJson.encodeToString(JsonObject.serializer(), toolBlock.input)
+                                    toolItems += ChatRow.ToolTraceItem(
+                                        kind = ChatRow.ToolTraceKind.Use,
+                                        title = toolBlock.name,
+                                        summary = toolBlock.inputSummary,
+                                        body = inputJson,
+                                    )
+                                }
+
+                                is ContentBlock.ToolResult -> {
+                                    val full = when (val v = toolBlock.content) {
+                                        is ToolResultValue.Str -> v.text
+                                        is ToolResultValue.Blocks ->
+                                            v.blocks.asSequence().mapNotNull { it.text }.joinToString("\n")
+                                        null -> ""
+                                    }
+                                    toolItems += ChatRow.ToolTraceItem(
+                                        kind = ChatRow.ToolTraceKind.Result,
+                                        title = if (toolBlock.isError == true) "Tool error" else "Tool result",
+                                        summary = toolBlock.content?.textPreview.orEmpty(),
+                                        body = full,
+                                        isError = toolBlock.isError == true,
+                                    )
+                                }
+
+                                else -> break
+                            }
+                            j += 1
+                        }
+                        out += ChatRow.ToolTraceRow(
+                            key = "tooltrace-$mid-$i",
+                            items = toolItems,
+                            hasError = toolItems.any { it.isError },
                         )
+                        i = j - 1
                     }
 
                     is ContentBlock.ToolResult -> {
@@ -294,11 +349,18 @@ private fun buildMessageRows(
                                 v.blocks.asSequence().mapNotNull { it.text }.joinToString("\n")
                             null -> ""
                         }
-                        out += ChatRow.ToolResultRow(
-                            key = "result-$mid-$i",
-                            isError = block.isError == true,
-                            preview = block.content?.textPreview.orEmpty(),
-                            full = full,
+                        out += ChatRow.ToolTraceRow(
+                            key = "tooltrace-$mid-$i",
+                            items = listOf(
+                                ChatRow.ToolTraceItem(
+                                    kind = ChatRow.ToolTraceKind.Result,
+                                    title = if (block.isError == true) "Tool error" else "Tool result",
+                                    summary = block.content?.textPreview.orEmpty(),
+                                    body = full,
+                                    isError = block.isError == true,
+                                ),
+                            ),
+                            hasError = block.isError == true,
                         )
                     }
 
@@ -317,6 +379,7 @@ private fun buildMessageRows(
 
                     is ContentBlock.Unknown -> Unit
                 }
+                i += 1
             }
         }
 

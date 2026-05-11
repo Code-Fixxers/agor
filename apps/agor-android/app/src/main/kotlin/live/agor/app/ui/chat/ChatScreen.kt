@@ -70,6 +70,7 @@ import live.agor.app.ui.messageblocks.InputRequestCardView
 import live.agor.app.ui.messageblocks.PermissionCardView
 import live.agor.app.ui.messageblocks.ThinkingBlockView
 import live.agor.app.ui.messageblocks.ToolResultBlockView
+import live.agor.app.ui.messageblocks.ToolTraceBlockView
 import live.agor.app.ui.messageblocks.ToolUseBlockView
 import live.agor.app.ui.simpleViewModelFactory
 import live.agor.app.viewmodels.ChatViewModel
@@ -438,6 +439,7 @@ private fun ChatMessagesPane(
                     is ChatRow.TextBubbleRow -> TextBubble(row, onSessionClick = onOpenSession)
                     is ChatRow.ToolUseRow -> ToolUseBlockView(row)
                     is ChatRow.ToolResultRow -> ToolResultBlockView(row)
+                    is ChatRow.ToolTraceRow -> ToolTraceBlockView(row)
                     is ChatRow.ThinkingRow -> ThinkingBlockView(row)
                     is ChatRow.ImageRow -> ImageBlockView(ContentBlock.Image(row.source))
                     is ChatRow.PermissionRow -> PermissionCardView(
