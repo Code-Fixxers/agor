@@ -18,6 +18,7 @@ import { type QuerySetupDeps, setupQuery } from './query-builder.js';
 describe('setupQuery - Local Settings Support', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.CLAUDE_CODE_PATH = process.execPath;
     vi.mocked(Claude.query).mockReturnValue({
       [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true }) }),
       interrupt: () => Promise.resolve(),
@@ -58,6 +59,7 @@ describe('setupQuery - Local Settings Support', () => {
 describe('setupQuery - canUseTool registration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.CLAUDE_CODE_PATH = process.execPath;
     vi.mocked(Claude.query).mockReturnValue({
       [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true }) }),
       interrupt: () => Promise.resolve(),

@@ -86,6 +86,28 @@ export class OpenCodeTool implements ITool {
   private sessionMCPRepo?: SessionMCPServerRepository;
   private mcpServerRepo?: MCPServerRepository;
 
+  /**
+   * Extract user-facing response text from OpenCode parts.
+   * Prefers explicit text parts and falls back to reasoning text when no text parts exist.
+   */
+  private extractDisplayTextFromParts(parts: Array<{ type: string; text?: string }>): string {
+    const textParts = parts
+      .filter((part) => part.type === 'text' && typeof part.text === 'string' && part.text.trim())
+      .map((part) => part.text as string);
+
+    if (textParts.length > 0) {
+      return textParts.join('\n');
+    }
+
+    const reasoningParts = parts
+      .filter(
+        (part) => part.type === 'reasoning' && typeof part.text === 'string' && part.text.trim()
+      )
+      .map((part) => part.text as string);
+
+    return reasoningParts.join('\n');
+  }
+
   constructor(
     config: OpenCodeConfig,
     messagesService?: MessagesService,
@@ -276,6 +298,81 @@ export class OpenCodeTool implements ITool {
     }
 
     this.injectedMcpHash.set(sessionId, configHash);
+  }
+
+  /**
+   * Build canonical Agor message content blocks from OpenCode parts.
+   *
+   * Behavior:
+   * - If OpenCode emitted regular text parts, keep reasoning as `thinking`.
+   * - If OpenCode emitted only reasoning text (no text parts), treat reasoning as user-visible `text`
+   *   to avoid rendering a "thought-only" assistant response.
+   */
+  private buildContentBlocksFromParts(
+    parts: Array<{
+      type: string;
+      text?: string;
+      tool?: string;
+      callID?: string;
+      id?: string;
+      state?: { input?: Record<string, unknown>; status?: string; output?: unknown };
+    }>
+  ): {
+    contentBlocks: Array<{
+      type: 'text' | 'thinking' | 'tool_use' | 'tool_result';
+      [key: string]: unknown;
+    }>;
+    toolUses: Array<{ id: string; name: string; input: Record<string, unknown> }>;
+  } {
+    const contentBlocks: Array<{
+      type: 'text' | 'thinking' | 'tool_use' | 'tool_result';
+      [key: string]: unknown;
+    }> = [];
+    const toolUses: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
+    const hasRenderableText = parts.some(
+      (part) => part.type === 'text' && typeof part.text === 'string' && part.text.trim()
+    );
+
+    for (const part of parts) {
+      if (part.type === 'reasoning' && part.text) {
+        contentBlocks.push({
+          type: hasRenderableText ? 'thinking' : 'text',
+          text: part.text,
+        });
+      } else if (part.type === 'text' && part.text) {
+        contentBlocks.push({
+          type: 'text',
+          text: part.text,
+        });
+      } else if (part.type === 'tool') {
+        const toolName = part.tool || 'unknown';
+        const toolInput = part.state?.input || {};
+        const toolCallId = part.callID || part.id || generateId();
+
+        contentBlocks.push({
+          type: 'tool_use',
+          id: toolCallId,
+          name: toolName,
+          input: toolInput,
+        });
+
+        toolUses.push({
+          id: toolCallId,
+          name: toolName,
+          input: toolInput,
+        });
+
+        if (part.state?.status === 'completed' && part.state.output) {
+          contentBlocks.push({
+            type: 'tool_result',
+            tool_use_id: toolCallId,
+            content: part.state.output,
+          });
+        }
+      }
+    }
+
+    return { contentBlocks, toolUses };
   }
 
   /**
@@ -700,20 +797,13 @@ export class OpenCodeTool implements ITool {
 
       // Extract final text from parts (or use error message if error occurred)
       let responseText = '';
-      const textParts: string[] = [];
 
       if (hasError) {
         // Use the error message as the response text
         responseText = `❌ **OpenCode Error**\n\n${errorMessage}`;
       } else {
-        // Only extract text from parts if no error occurred
+        // Extract metadata from parts
         for (const part of response.data.parts || []) {
-          // Collect text from reasoning and text parts
-          // TextPart and ReasoningPart both have a .text property
-          if (part.type === 'reasoning' || part.type === 'text') {
-            textParts.push(part.text);
-          }
-
           // Extract metadata from step-finish part
           if (part.type === 'step-finish') {
             metadata.cost = part.cost;
@@ -729,7 +819,9 @@ export class OpenCodeTool implements ITool {
           }
         }
 
-        responseText = textParts.join('\n');
+        responseText = this.extractDisplayTextFromParts(
+          (response.data.parts || []) as Array<{ type: string; text?: string }>
+        );
         console.log('[OpenCodeTool] Final text length:', responseText.length);
 
         // Fallback: if no text found, return message
@@ -747,13 +839,6 @@ export class OpenCodeTool implements ITool {
       // Handler should create user message first with index N, then pass N+1 here
       const assistantIndex = messageIndex ?? 0;
 
-      // Build content blocks from all parts
-      const contentBlocks: Array<{
-        type: 'text' | 'thinking' | 'tool_use' | 'tool_result';
-        [key: string]: unknown;
-      }> = [];
-      const toolUses: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
-
       // Process parts from final response (not from streaming cache)
       // The final response contains ALL parts, including ones that weren't streamed
       const finalParts = response.data.parts || [];
@@ -763,59 +848,16 @@ export class OpenCodeTool implements ITool {
         'parts in final response'
       );
       console.log('[OpenCodeTool] Part types:', finalParts.map((p) => p.type).join(', '));
-      for (const part of finalParts) {
-        console.log('[OpenCodeTool] Processing part type:', part.type);
-
-        if (part.type === 'reasoning' && part.text) {
-          console.log('[OpenCodeTool] Adding reasoning block, text length:', part.text.length);
-          contentBlocks.push({
-            type: 'thinking',
-            text: part.text,
-          });
-        } else if (part.type === 'reasoning') {
-          console.log('[OpenCodeTool] Skipping reasoning part - no text field or empty text');
-        }
-
-        if (part.type === 'text' && part.text) {
-          contentBlocks.push({
-            type: 'text',
-            text: part.text,
-          });
-        } else if (part.type === 'tool') {
-          // Tool use block - extract tool info
-          // OpenCode structure: { tool: string, callID: string, state: { input: {...}, output: "..." } }
-          console.log('[OpenCodeTool] Processing tool part:', JSON.stringify(part, null, 2));
-
-          const toolName = part.tool || 'unknown';
-          const toolInput = (part.state as { input?: Record<string, unknown> })?.input || {};
-          const toolCallId = part.callID || part.id;
-
-          // Add tool_use block
-          contentBlocks.push({
-            type: 'tool_use',
-            id: toolCallId,
-            name: toolName,
-            input: toolInput,
-          });
-
-          // Add to tool_uses array
-          toolUses.push({
-            id: toolCallId,
-            name: toolName,
-            input: toolInput,
-          });
-
-          // If tool has completed with output, add tool_result block
-          const toolState = part.state as { status?: string; output?: unknown } | undefined;
-          if (toolState?.status === 'completed' && toolState.output) {
-            contentBlocks.push({
-              type: 'tool_result',
-              tool_use_id: toolCallId,
-              content: toolState.output,
-            });
-          }
-        }
-      }
+      const { contentBlocks, toolUses } = this.buildContentBlocksFromParts(
+        finalParts as Array<{
+          type: string;
+          text?: string;
+          tool?: string;
+          callID?: string;
+          id?: string;
+          state?: { input?: Record<string, unknown>; status?: string; output?: unknown };
+        }>
+      );
 
       // If no content blocks were created (error case), add the error text
       if (contentBlocks.length === 0 && responseText) {
@@ -933,16 +975,10 @@ export class OpenCodeTool implements ITool {
 
     // Extract text and token/cost metadata from 'parts' array
     if (response.data.parts && Array.isArray(response.data.parts)) {
-      // Extract text from all parts that have text content (text, reasoning, etc.)
-      const textParts: string[] = [];
-      for (const part of response.data.parts) {
-        // TextPart and ReasoningPart both have a .text property
-        if (part.type === 'text' || part.type === 'reasoning') {
-          textParts.push(part.text);
-        }
-      }
-      responseText = textParts.join('\n');
-      console.log('[OpenCodeTool] Extracted', textParts.length, 'text parts');
+      responseText = this.extractDisplayTextFromParts(
+        response.data.parts as Array<{ type: string; text?: string }>
+      );
+      console.log('[OpenCodeTool] Extracted display text length:', responseText.length);
 
       // Extract metadata from step-finish part
       const stepFinish = response.data.parts.find((part) => part.type === 'step-finish');

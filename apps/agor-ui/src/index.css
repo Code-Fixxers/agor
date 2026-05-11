@@ -372,3 +372,67 @@ html.dark .dark\:block {
 html.dark .dark\:hidden {
   display: none;
 }
+
+/* ----------------------------------------------------------------- */
+/* Mobile / PWA responsive overrides                                 */
+/* ----------------------------------------------------------------- */
+
+/* Compact layout: phones in portrait + coarse-pointer tablets */
+@media (max-width: 767.5px), (pointer: coarse) and (max-width: 1023.5px) {
+  /* Tighten Ant Design header on phones — defaults to 64px which steals too
+     much vertical room. !important is needed to override antd's CSS-in-JS
+     which is injected with very high specificity. */
+  .ant-layout-header {
+    height: 52px !important;
+    padding-inline: 12px !important;
+    line-height: 52px !important;
+  }
+
+  /* Modals get full-width and rounded edges only on top */
+  .ant-modal {
+    max-width: calc(100vw - 16px);
+    margin: 0 auto;
+    top: 8px;
+  }
+  .ant-modal-content {
+    border-radius: 12px;
+  }
+
+  /* Drawer header padding: snug for phones */
+  .ant-drawer .ant-drawer-header {
+    padding: 12px 16px;
+  }
+
+  /* Hide pixel-resize handles between Panels (phones use full-screen drawers).
+     `!important` overrides inline styles set by react-resizable-panels. */
+  .react-resizable-panels-handle {
+    display: none !important;
+  }
+
+  /* Make code/terminal blocks scroll horizontally instead of breaking layout */
+  pre,
+  code {
+    max-width: 100%;
+  }
+
+  /* Buttons feel more tappable */
+  .ant-btn {
+    min-height: 36px;
+  }
+  .ant-btn-sm {
+    min-height: 30px;
+  }
+
+  /* Settings tabs become scrollable */
+  .ant-tabs-nav {
+    overflow-x: auto;
+  }
+}
+
+/* Standalone PWA: account for the iOS notch / home indicator */
+@media all and (display-mode: standalone) {
+  body {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+}

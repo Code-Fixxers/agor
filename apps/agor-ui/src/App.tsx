@@ -25,8 +25,9 @@ import { AVAILABLE_AGENTS } from './components/AgentSelectionGrid';
 import { App as AgorApp } from './components/App';
 import { ForcePasswordChangeModal } from './components/ForcePasswordChangeModal';
 import { LoginPage } from './components/LoginPage';
-import { MobileApp } from './components/mobile/MobileApp';
+import { MobileLegacyRedirect } from './components/mobile/MobileLegacyRedirect';
 import { OnboardingWizard } from './components/OnboardingWizard';
+import { PWAShell } from './components/PWAShell';
 import { SandboxBanner } from './components/SandboxBanner';
 import type { WorktreeUpdate } from './components/WorktreeModal/tabs/GeneralTab';
 import { ConnectionProvider } from './contexts/ConnectionContext';
@@ -42,52 +43,28 @@ import {
   useSessionActions,
 } from './hooks';
 import { StreamdownDemoPage } from './pages/StreamdownDemoPage';
-import { isMobileDevice } from './utils/deviceDetection';
 import { useThemedMessage } from './utils/message';
 
-/**
- * DeviceRouter - Redirects users to mobile or desktop site based on device detection
- * Responds to window resize events for responsive switching
- */
-function DeviceRouter() {
-  const location = useLocation();
-  const navigate = useNavigate();
+const DRAFT_KEY_PREFIX = 'agor-draft-';
 
-  useEffect(() => {
-    const checkAndRoute = () => {
-      const isMobile = isMobileDevice();
-      const isOnMobilePath = location.pathname.startsWith('/m');
+function saveSessionDraft(sessionId: string, value: string) {
+  try {
+    if (value.trim()) {
+      localStorage.setItem(`${DRAFT_KEY_PREFIX}${sessionId}`, value);
+    } else {
+      localStorage.removeItem(`${DRAFT_KEY_PREFIX}${sessionId}`);
+    }
+  } catch {
+    // localStorage may be unavailable or full.
+  }
+}
 
-      // Redirect mobile devices to mobile site
-      if (isMobile && !isOnMobilePath) {
-        navigate('/m', { replace: true });
-      }
-      // Redirect desktop devices away from mobile site
-      else if (!isMobile && isOnMobilePath) {
-        navigate('/', { replace: true });
-      }
-    };
-
-    // Check on mount and route change
-    checkAndRoute();
-
-    // Debounced resize handler to avoid excessive redirects
-    let resizeTimeout: NodeJS.Timeout;
-    const handleResize = () => {
-      clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(checkAndRoute, 200);
-    };
-
-    // Listen for window resize events for responsive switching
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      clearTimeout(resizeTimeout);
-    };
-  }, [location.pathname, navigate]);
-
-  return null;
+function clearSessionDraft(sessionId: string) {
+  try {
+    localStorage.removeItem(`${DRAFT_KEY_PREFIX}${sessionId}`);
+  } catch {
+    // Ignore localStorage failures.
+  }
 }
 
 function AppContent() {
@@ -167,6 +144,9 @@ function AppContent() {
   const { createSession, forkSession, btwForkSession, spawnSession, updateSession, deleteSession } =
     useSessionActions(client);
 
+  const handleUpdateDraft = saveSessionDraft;
+  const handleClearDraft = clearSessionDraft;
+
   // Board actions
   const { createBoard, updateBoard, deleteBoard, archiveBoard, unarchiveBoard } =
     useBoardActions(client);
@@ -186,9 +166,6 @@ function AppContent() {
       setSettingsTabToOpen('gateway');
     }
   }, [location.pathname, location.search]);
-
-  // Per-session prompt drafts (persists across session switches)
-  const [promptDrafts, setPromptDrafts] = useState<Map<string, string>>(new Map());
 
   // Track if we've successfully loaded data at least once
   // This prevents UI from unmounting during reconnections
@@ -498,28 +475,6 @@ function AppContent() {
     }
   };
 
-  // Update draft for a specific session
-  const handleUpdateDraft = (sessionId: string, draft: string) => {
-    setPromptDrafts((prev) => {
-      const next = new Map(prev);
-      if (draft.trim()) {
-        next.set(sessionId, draft);
-      } else {
-        next.delete(sessionId); // Clean up empty drafts
-      }
-      return next;
-    });
-  };
-
-  // Clear draft for a specific session
-  const handleClearDraft = (sessionId: string) => {
-    setPromptDrafts((prev) => {
-      const next = new Map(prev);
-      next.delete(sessionId);
-      return next;
-    });
-  };
-
   // Handle fork session
   //
   // On failure we RETHROW the error so upstream modals (ForkSpawnModal) can
@@ -591,9 +546,6 @@ function AppContent() {
         permissionMode,
         messageSource: 'agor',
       });
-
-      // Clear the draft after sending
-      handleClearDraft(sessionId);
     } catch (error) {
       showError(`Failed to send prompt: ${error instanceof Error ? error.message : String(error)}`);
       console.error('Prompt error:', error);
@@ -1254,6 +1206,91 @@ function AppContent() {
     setOpenNewWorktree(false);
   };
 
+  // Single instance of AgorApp shared across all desktop/mobile routes.
+  // Mobile devices used to be redirected to a trimmed-down `/m` shell; we now
+  // render the full UI everywhere and let CSS/responsive components adapt.
+  const agorAppElement = (
+    <>
+      <SandboxBanner />
+      <AgorApp
+        client={client}
+        user={currentUser}
+        connected={connected}
+        connecting={connecting}
+        sessionById={sessionById}
+        sessionsByWorktree={sessionsByWorktree}
+        availableAgents={AVAILABLE_AGENTS}
+        boardById={boardById}
+        boardObjectById={boardObjectById}
+        commentById={commentById}
+        cardById={cardById}
+        cardTypeById={cardTypeById}
+        repoById={repoById}
+        worktreeById={worktreeById}
+        userById={userById}
+        mcpServerById={mcpServerById}
+        sessionMcpServerIds={sessionMcpServerIds}
+        userAuthenticatedMcpServerIds={userAuthenticatedMcpServerIds}
+        initialBoardId={Array.from(boardById.values())[0]?.board_id}
+        openSettingsTab={settingsTabToOpen}
+        onSettingsClose={handleSettingsClose}
+        openUserSettings={openUserSettings}
+        onUserSettingsClose={handleUserSettingsClose}
+        openNewWorktreeModal={openNewWorktree}
+        onNewWorktreeModalClose={handleNewWorktreeModalClose}
+        onCreateSession={handleCreateSession}
+        onForkSession={handleForkSession}
+        onBtwForkSession={handleBtwForkSession}
+        onSpawnSession={handleSpawnSession}
+        onSendPrompt={handleSendPrompt}
+        onUpdateSession={handleUpdateSession}
+        onDeleteSession={handleDeleteSession}
+        onCreateBoard={handleCreateBoard}
+        onUpdateBoard={handleUpdateBoard}
+        onDeleteBoard={handleDeleteBoard}
+        onArchiveBoard={handleArchiveBoard}
+        onUnarchiveBoard={handleUnarchiveBoard}
+        onCreateRepo={handleCreateRepo}
+        onCreateLocalRepo={handleCreateLocalRepo}
+        onUpdateRepo={handleUpdateRepo}
+        onDeleteRepo={handleDeleteRepo}
+        onArchiveOrDeleteWorktree={handleArchiveOrDeleteWorktree}
+        onUnarchiveWorktree={handleUnarchiveWorktree}
+        onUpdateWorktree={handleUpdateWorktree}
+        onCreateWorktree={handleCreateWorktree}
+        onStartEnvironment={handleStartEnvironment}
+        onStopEnvironment={handleStopEnvironment}
+        onNukeEnvironment={handleNukeEnvironment}
+        onExecuteScheduleNow={handleExecuteScheduleNow}
+        onCreateUser={handleCreateUser}
+        onUpdateUser={handleUpdateUser}
+        onDeleteUser={handleDeleteUser}
+        onCreateMCPServer={handleCreateMCPServer}
+        onUpdateMCPServer={handleUpdateMCPServer}
+        onDeleteMCPServer={handleDeleteMCPServer}
+        gatewayChannelById={gatewayChannelById}
+        onCreateGatewayChannel={handleCreateGatewayChannel}
+        onUpdateGatewayChannel={handleUpdateGatewayChannel}
+        onDeleteGatewayChannel={handleDeleteGatewayChannel}
+        artifactById={artifactById}
+        onUpdateArtifact={handleUpdateArtifact}
+        onDeleteArtifact={handleDeleteArtifact}
+        onUpdateSessionMcpServers={handleUpdateSessionMcpServers}
+        onUpdateSessionEnvSelections={handleUpdateSessionEnvSelections}
+        onSendComment={handleSendComment}
+        onReplyComment={handleReplyComment}
+        onResolveComment={handleResolveComment}
+        onToggleReaction={handleToggleReaction}
+        onDeleteComment={handleDeleteComment}
+        onLogout={logout}
+        onRetryConnection={retryConnection}
+        instanceLabel={instanceConfig?.label}
+        instanceDescription={instanceConfig?.description}
+        webTerminalEnabled={featuresConfig?.webTerminal === true}
+      />
+    </>
+  );
+
   // Render main app
   return (
     <ServicesConfigContext.Provider value={servicesConfig}>
@@ -1288,295 +1325,26 @@ function AppContent() {
           systemCredentials={onboardingConfig?.systemCredentials}
         />
 
-        <DeviceRouter />
+        <PWAShell />
         <Routes>
           {/* Demo route */}
           <Route path="/demo/streamdown" element={<StreamdownDemoPage />} />
 
-          {/* Mobile routes */}
+          {/* Legacy mobile shell URLs — redirect to canonical board/session URLs.
+              Anything not matched falls through to the catch-all `/*` below. */}
           <Route
             path="/m/*"
-            element={
-              <MobileApp
-                client={client}
-                user={user}
-                sessionById={sessionById}
-                sessionsByWorktree={sessionsByWorktree}
-                boardById={boardById}
-                commentById={commentById}
-                repoById={repoById}
-                worktreeById={worktreeById}
-                userById={userById}
-                onSendPrompt={handleSendPrompt}
-                onSendComment={handleSendComment}
-                onReplyComment={handleReplyComment}
-                onResolveComment={handleResolveComment}
-                onToggleReaction={handleToggleReaction}
-                onDeleteComment={handleDeleteComment}
-                onLogout={logout}
-                promptDrafts={promptDrafts}
-                onUpdateDraft={handleUpdateDraft}
-              />
-            }
+            element={<MobileLegacyRedirect sessionById={sessionById} worktreeById={worktreeById} />}
           />
 
-          {/* Desktop routes - board with session (Django-style trailing slash) */}
-          <Route
-            path="/b/:boardParam/:sessionParam/"
-            element={
-              <>
-                <SandboxBanner />
-                <AgorApp
-                  client={client}
-                  user={currentUser}
-                  connected={connected}
-                  connecting={connecting}
-                  sessionById={sessionById}
-                  sessionsByWorktree={sessionsByWorktree}
-                  availableAgents={AVAILABLE_AGENTS}
-                  boardById={boardById}
-                  boardObjectById={boardObjectById}
-                  commentById={commentById}
-                  cardById={cardById}
-                  cardTypeById={cardTypeById}
-                  repoById={repoById}
-                  worktreeById={worktreeById}
-                  userById={userById}
-                  mcpServerById={mcpServerById}
-                  sessionMcpServerIds={sessionMcpServerIds}
-                  userAuthenticatedMcpServerIds={userAuthenticatedMcpServerIds}
-                  initialBoardId={Array.from(boardById.values())[0]?.board_id}
-                  openSettingsTab={settingsTabToOpen}
-                  onSettingsClose={handleSettingsClose}
-                  openUserSettings={openUserSettings}
-                  onUserSettingsClose={handleUserSettingsClose}
-                  openNewWorktreeModal={openNewWorktree}
-                  onNewWorktreeModalClose={handleNewWorktreeModalClose}
-                  onCreateSession={handleCreateSession}
-                  onForkSession={handleForkSession}
-                  onBtwForkSession={handleBtwForkSession}
-                  onSpawnSession={handleSpawnSession}
-                  onSendPrompt={handleSendPrompt}
-                  onUpdateSession={handleUpdateSession}
-                  onDeleteSession={handleDeleteSession}
-                  onCreateBoard={handleCreateBoard}
-                  onUpdateBoard={handleUpdateBoard}
-                  onDeleteBoard={handleDeleteBoard}
-                  onArchiveBoard={handleArchiveBoard}
-                  onUnarchiveBoard={handleUnarchiveBoard}
-                  onCreateRepo={handleCreateRepo}
-                  onCreateLocalRepo={handleCreateLocalRepo}
-                  onUpdateRepo={handleUpdateRepo}
-                  onDeleteRepo={handleDeleteRepo}
-                  onArchiveOrDeleteWorktree={handleArchiveOrDeleteWorktree}
-                  onUnarchiveWorktree={handleUnarchiveWorktree}
-                  onUpdateWorktree={handleUpdateWorktree}
-                  onCreateWorktree={handleCreateWorktree}
-                  onStartEnvironment={handleStartEnvironment}
-                  onStopEnvironment={handleStopEnvironment}
-                  onNukeEnvironment={handleNukeEnvironment}
-                  onExecuteScheduleNow={handleExecuteScheduleNow}
-                  onCreateUser={handleCreateUser}
-                  onUpdateUser={handleUpdateUser}
-                  onDeleteUser={handleDeleteUser}
-                  onCreateMCPServer={handleCreateMCPServer}
-                  onUpdateMCPServer={handleUpdateMCPServer}
-                  onDeleteMCPServer={handleDeleteMCPServer}
-                  gatewayChannelById={gatewayChannelById}
-                  onCreateGatewayChannel={handleCreateGatewayChannel}
-                  onUpdateGatewayChannel={handleUpdateGatewayChannel}
-                  onDeleteGatewayChannel={handleDeleteGatewayChannel}
-                  artifactById={artifactById}
-                  onUpdateArtifact={handleUpdateArtifact}
-                  onDeleteArtifact={handleDeleteArtifact}
-                  onUpdateSessionMcpServers={handleUpdateSessionMcpServers}
-                  onUpdateSessionEnvSelections={handleUpdateSessionEnvSelections}
-                  onSendComment={handleSendComment}
-                  onReplyComment={handleReplyComment}
-                  onResolveComment={handleResolveComment}
-                  onToggleReaction={handleToggleReaction}
-                  onDeleteComment={handleDeleteComment}
-                  onLogout={logout}
-                  onRetryConnection={retryConnection}
-                  instanceLabel={instanceConfig?.label}
-                  instanceDescription={instanceConfig?.description}
-                  webTerminalEnabled={featuresConfig?.webTerminal === true}
-                />
-              </>
-            }
-          />
+          {/* Board + session deep link */}
+          <Route path="/b/:boardParam/:sessionParam/" element={agorAppElement} />
 
-          {/* Desktop routes - board only (Django-style trailing slash) */}
-          <Route
-            path="/b/:boardParam/"
-            element={
-              <>
-                <SandboxBanner />
-                <AgorApp
-                  client={client}
-                  user={currentUser}
-                  connected={connected}
-                  connecting={connecting}
-                  sessionById={sessionById}
-                  sessionsByWorktree={sessionsByWorktree}
-                  availableAgents={AVAILABLE_AGENTS}
-                  boardById={boardById}
-                  boardObjectById={boardObjectById}
-                  commentById={commentById}
-                  cardById={cardById}
-                  cardTypeById={cardTypeById}
-                  repoById={repoById}
-                  worktreeById={worktreeById}
-                  userById={userById}
-                  mcpServerById={mcpServerById}
-                  sessionMcpServerIds={sessionMcpServerIds}
-                  userAuthenticatedMcpServerIds={userAuthenticatedMcpServerIds}
-                  initialBoardId={Array.from(boardById.values())[0]?.board_id}
-                  openSettingsTab={settingsTabToOpen}
-                  onSettingsClose={handleSettingsClose}
-                  openUserSettings={openUserSettings}
-                  onUserSettingsClose={handleUserSettingsClose}
-                  openNewWorktreeModal={openNewWorktree}
-                  onNewWorktreeModalClose={handleNewWorktreeModalClose}
-                  onCreateSession={handleCreateSession}
-                  onForkSession={handleForkSession}
-                  onBtwForkSession={handleBtwForkSession}
-                  onSpawnSession={handleSpawnSession}
-                  onSendPrompt={handleSendPrompt}
-                  onUpdateSession={handleUpdateSession}
-                  onDeleteSession={handleDeleteSession}
-                  onCreateBoard={handleCreateBoard}
-                  onUpdateBoard={handleUpdateBoard}
-                  onDeleteBoard={handleDeleteBoard}
-                  onArchiveBoard={handleArchiveBoard}
-                  onUnarchiveBoard={handleUnarchiveBoard}
-                  onCreateRepo={handleCreateRepo}
-                  onCreateLocalRepo={handleCreateLocalRepo}
-                  onUpdateRepo={handleUpdateRepo}
-                  onDeleteRepo={handleDeleteRepo}
-                  onArchiveOrDeleteWorktree={handleArchiveOrDeleteWorktree}
-                  onUnarchiveWorktree={handleUnarchiveWorktree}
-                  onUpdateWorktree={handleUpdateWorktree}
-                  onCreateWorktree={handleCreateWorktree}
-                  onStartEnvironment={handleStartEnvironment}
-                  onStopEnvironment={handleStopEnvironment}
-                  onNukeEnvironment={handleNukeEnvironment}
-                  onExecuteScheduleNow={handleExecuteScheduleNow}
-                  onCreateUser={handleCreateUser}
-                  onUpdateUser={handleUpdateUser}
-                  onDeleteUser={handleDeleteUser}
-                  onCreateMCPServer={handleCreateMCPServer}
-                  onUpdateMCPServer={handleUpdateMCPServer}
-                  onDeleteMCPServer={handleDeleteMCPServer}
-                  gatewayChannelById={gatewayChannelById}
-                  onCreateGatewayChannel={handleCreateGatewayChannel}
-                  onUpdateGatewayChannel={handleUpdateGatewayChannel}
-                  onDeleteGatewayChannel={handleDeleteGatewayChannel}
-                  artifactById={artifactById}
-                  onUpdateArtifact={handleUpdateArtifact}
-                  onDeleteArtifact={handleDeleteArtifact}
-                  onUpdateSessionMcpServers={handleUpdateSessionMcpServers}
-                  onUpdateSessionEnvSelections={handleUpdateSessionEnvSelections}
-                  onSendComment={handleSendComment}
-                  onReplyComment={handleReplyComment}
-                  onResolveComment={handleResolveComment}
-                  onToggleReaction={handleToggleReaction}
-                  onDeleteComment={handleDeleteComment}
-                  onLogout={logout}
-                  onRetryConnection={retryConnection}
-                  instanceLabel={instanceConfig?.label}
-                  instanceDescription={instanceConfig?.description}
-                  webTerminalEnabled={featuresConfig?.webTerminal === true}
-                />
-              </>
-            }
-          />
+          {/* Board only */}
+          <Route path="/b/:boardParam/" element={agorAppElement} />
 
-          {/* Desktop routes - fallback for root path */}
-          <Route
-            path="/*"
-            element={
-              <>
-                <SandboxBanner />
-                <AgorApp
-                  client={client}
-                  user={currentUser}
-                  connected={connected}
-                  connecting={connecting}
-                  sessionById={sessionById}
-                  sessionsByWorktree={sessionsByWorktree}
-                  availableAgents={AVAILABLE_AGENTS}
-                  boardById={boardById}
-                  boardObjectById={boardObjectById}
-                  commentById={commentById}
-                  cardById={cardById}
-                  cardTypeById={cardTypeById}
-                  repoById={repoById}
-                  worktreeById={worktreeById}
-                  userById={userById}
-                  mcpServerById={mcpServerById}
-                  sessionMcpServerIds={sessionMcpServerIds}
-                  userAuthenticatedMcpServerIds={userAuthenticatedMcpServerIds}
-                  initialBoardId={Array.from(boardById.values())[0]?.board_id}
-                  openSettingsTab={settingsTabToOpen}
-                  onSettingsClose={handleSettingsClose}
-                  openUserSettings={openUserSettings}
-                  onUserSettingsClose={handleUserSettingsClose}
-                  openNewWorktreeModal={openNewWorktree}
-                  onNewWorktreeModalClose={handleNewWorktreeModalClose}
-                  onCreateSession={handleCreateSession}
-                  onForkSession={handleForkSession}
-                  onBtwForkSession={handleBtwForkSession}
-                  onSpawnSession={handleSpawnSession}
-                  onSendPrompt={handleSendPrompt}
-                  onUpdateSession={handleUpdateSession}
-                  onDeleteSession={handleDeleteSession}
-                  onCreateBoard={handleCreateBoard}
-                  onUpdateBoard={handleUpdateBoard}
-                  onDeleteBoard={handleDeleteBoard}
-                  onArchiveBoard={handleArchiveBoard}
-                  onUnarchiveBoard={handleUnarchiveBoard}
-                  onCreateRepo={handleCreateRepo}
-                  onCreateLocalRepo={handleCreateLocalRepo}
-                  onUpdateRepo={handleUpdateRepo}
-                  onDeleteRepo={handleDeleteRepo}
-                  onArchiveOrDeleteWorktree={handleArchiveOrDeleteWorktree}
-                  onUnarchiveWorktree={handleUnarchiveWorktree}
-                  onUpdateWorktree={handleUpdateWorktree}
-                  onCreateWorktree={handleCreateWorktree}
-                  onStartEnvironment={handleStartEnvironment}
-                  onStopEnvironment={handleStopEnvironment}
-                  onNukeEnvironment={handleNukeEnvironment}
-                  onExecuteScheduleNow={handleExecuteScheduleNow}
-                  onCreateUser={handleCreateUser}
-                  onUpdateUser={handleUpdateUser}
-                  onDeleteUser={handleDeleteUser}
-                  onCreateMCPServer={handleCreateMCPServer}
-                  onUpdateMCPServer={handleUpdateMCPServer}
-                  onDeleteMCPServer={handleDeleteMCPServer}
-                  gatewayChannelById={gatewayChannelById}
-                  onCreateGatewayChannel={handleCreateGatewayChannel}
-                  onUpdateGatewayChannel={handleUpdateGatewayChannel}
-                  onDeleteGatewayChannel={handleDeleteGatewayChannel}
-                  artifactById={artifactById}
-                  onUpdateArtifact={handleUpdateArtifact}
-                  onDeleteArtifact={handleDeleteArtifact}
-                  onUpdateSessionMcpServers={handleUpdateSessionMcpServers}
-                  onUpdateSessionEnvSelections={handleUpdateSessionEnvSelections}
-                  onSendComment={handleSendComment}
-                  onReplyComment={handleReplyComment}
-                  onResolveComment={handleResolveComment}
-                  onToggleReaction={handleToggleReaction}
-                  onDeleteComment={handleDeleteComment}
-                  onLogout={logout}
-                  onRetryConnection={retryConnection}
-                  instanceLabel={instanceConfig?.label}
-                  instanceDescription={instanceConfig?.description}
-                  webTerminalEnabled={featuresConfig?.webTerminal === true}
-                />
-              </>
-            }
-          />
+          {/* Catch-all (root, etc.) */}
+          <Route path="/*" element={agorAppElement} />
         </Routes>
       </ConnectionProvider>
     </ServicesConfigContext.Provider>

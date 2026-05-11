@@ -36,10 +36,11 @@ pnpm dev
 
 **IMPORTANT FOR AGENTS:**
 
-- User runs dev environment in watch mode (daemon + UI)
-- **DO NOT run `pnpm build`** or compilation commands unless explicitly asked
-- **DO NOT start background processes** - user manages these
-- Focus on code edits; watch mode handles recompilation automatically
+- **ALWAYS run a build and test before finishing any code or project-rule change.**
+- **Do not report work as done until both build and test pass.**
+- **If build or test fails, fix the failure before finishing.**
+- **After build and test pass, commit and push the verified changes.**
+- Do not start long-running background dev/watch processes unless explicitly asked.
 
 ---
 
@@ -192,8 +193,26 @@ Agor is built on 5 primitives:
 
 ### Important Rules
 
+**Verification, Commit, and Push:**
+
+- Every code or project-rule change must be verified before the final response.
+- Run the project build and project tests after edits.
+- A passing watch-mode/dev-server reload is not enough; run explicit build and test commands.
+- Do not commit or push unverified changes.
+- After build and test both pass, commit normally and push the branch.
+- If verification fails, fix the failure and rerun build and test before committing.
+
+**Android App and iOS Reference:**
+
+- For `apps/agor-android`, the Android app is the sole implementation target.
+- The maroun2 iOS app or `apps/agor-ios` branch is reference material only.
+- When a task mentions the iOS app in Android work, inspect it only for feature inspiration, expected behavior, or design comparison; do not edit, commit, or push iOS files unless the user explicitly asks for iOS changes.
+
 **Git Commits:**
 
+- ✅ **ALWAYS commit and push completed work** before ending a turn that changed files
+- If verification fails, fix the failures and then commit/push; do not leave verified changes uncommitted
+- If a user asks for a change and does not explicitly say "do not commit" or "hold locally", assume commit and push are required
 - ❌ **NEVER use `git commit --no-verify`** without explicit user permission
 - Pre-commit hooks (typecheck, lint) exist for a reason
 - If hooks fail, fix the issues - don't bypass them
@@ -204,12 +223,6 @@ Agor is built on 5 primitives:
 - ✅ Use `simple-git` for ALL git operations
 - ❌ NEVER use `execSync`, `spawn`, or bash for git commands
 - Location: `packages/core/src/git/index.ts`
-
-**Watch Mode:**
-
-- User runs `pnpm dev` in daemon (watches core + daemon)
-- **DO NOT** run builds unless explicitly asked or you see compilation errors
-- **DO NOT** start background processes
 
 **Type Reuse:**
 
@@ -241,6 +254,10 @@ Agor is built on 5 primitives:
 ### Testing
 
 ```bash
+# Full verification before finishing
+pnpm build
+pnpm test
+
 # Database operations
 sqlite3 ~/.agor/agor.db "SELECT COUNT(*) FROM messages"
 
@@ -598,7 +615,7 @@ cd apps/agor-daemon && pnpm dev
 🔍 **Start with `context/README.md`** - complete index of all concepts
 ⚠️ **Read `worktrees.md` before touching boards** - fundamental architecture shift
 🚫 **Never use subprocess for git** - always use `simple-git`
-✨ **Watch mode is running** - don't build unless explicitly asked
+✅ **Always verify before finishing** - run build and test, then commit and push after both pass
 
 ---
 

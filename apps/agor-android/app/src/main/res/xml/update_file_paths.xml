@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Where UpdateInstaller writes the downloaded APK before handing it off to
+         the system installer. cacheDir is auto-cleaned by Android under storage
+         pressure, so we don't need to delete the file ourselves. -->
+    <cache-path
+        name="update_apks"
+        path="updates/" />
+    <cache-path
+        name="hermes_camera"
+        path="hermes_camera/" />
+    <cache-path
+        name="agor_logs"
+        path="logs/" />
+</paths>

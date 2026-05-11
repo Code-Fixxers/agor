@@ -1,0 +1,1 @@
+export { PWAShell } from './PWAShell';

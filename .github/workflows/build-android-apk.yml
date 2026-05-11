@@ -1,0 +1,229 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - 'cfx/**'
+    paths:
+      - apps/agor-android/**
+      - .github/workflows/build-android-apk.yml
+  workflow_dispatch:
+    inputs:
+      with_whisper:
+        description: Vendor whisper.cpp and build on-device transcription support
+        type: boolean
+        default: true
+
+# `contents: write` is required so the rolling `android-latest` Release can be
+# updated with the freshly-built APK. The in-app updater reads that release.
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      WITH_WHISPER: ${{ github.event_name == 'workflow_dispatch' && inputs.with_whisper || 'true' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need full history so `git rev-list --count HEAD` produces a real
+          # versionCode. Default depth=1 always returns 1.
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # The action's `packages` input mangles a multiline value into a single
+          # quoted package argument (sdkmanager fails with "Failed to find package
+          # 'platform-tools\nplatforms;android-35\n…'"). Pass an empty value here
+          # and install via sdkmanager directly in the next step.
+          packages: ''
+
+      - name: Install required SDK packages
+        run: |
+          set -euo pipefail
+          # `yes | sdkmanager --licenses` trips pipefail because `yes` keeps writing
+          # after sdkmanager exits and gets SIGPIPE. Run the licenses step in its
+          # own subshell with pipefail off, then re-enable.
+          ( set +o pipefail; yes | sdkmanager --licenses >/dev/null )
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;27.1.12297006" \
+            "cmake;3.22.1"
+
+      - name: Cache Gradle caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('apps/agor-android/**/*.gradle*', 'apps/agor-android/gradle/libs.versions.toml', 'apps/agor-android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Cache vendored whisper.cpp checkout
+        if: env.WITH_WHISPER == 'true'
+        uses: actions/cache@v4
+        with:
+          path: apps/agor-android/app/src/main/cpp/whisper.cpp
+          key: whisper-cpp-v1.7.1
+
+      - name: Vendor whisper.cpp
+        if: env.WITH_WHISPER == 'true'
+        working-directory: apps/agor-android
+        run: bash scripts/sync-whisper.sh
+
+      - name: Cache native CMake build (.cxx)
+        uses: actions/cache@v4
+        with:
+          path: apps/agor-android/app/.cxx
+          key: cxx-${{ runner.os }}-${{ env.WITH_WHISPER }}-${{ hashFiles('apps/agor-android/app/src/main/cpp/**', 'apps/agor-android/app/build.gradle.kts') }}
+          restore-keys: |
+            cxx-${{ runner.os }}-${{ env.WITH_WHISPER }}-
+
+      - name: Make gradlew executable
+        working-directory: apps/agor-android
+        run: chmod +x gradlew
+
+      - name: Compute version
+        id: version
+        run: |
+          set -euo pipefail
+          # versionCode = monotonic integer the OS uses to detect updates.
+          # Commit count is stable across rebuilds and grows monotonically.
+          VERSION_CODE=$(git rev-list --count HEAD)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          VERSION_NAME="$SHORT_SHA"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA"      >> "$GITHUB_OUTPUT"
+
+      - name: Build debug APK
+        working-directory: apps/agor-android
+        env:
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+        # `--no-configuration-cache` mirrors the Nix flake script: the build.gradle.kts
+        # `gitShortSha()` helper shells out to `git` at configuration time, which the
+        # configuration cache forbids. The Nix path has the same flag — keep them aligned.
+        run: |
+          ./gradlew :app:assembleDebug \
+            --no-daemon --stacktrace --no-configuration-cache \
+            -PversionCode="$VERSION_CODE" \
+            -PversionName="$VERSION_NAME"
+
+      - name: Rename APK with commit SHA
+        id: rename
+        working-directory: apps/agor-android
+        env:
+          SHORT_SHA: ${{ steps.version.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+          SRC=app/build/outputs/apk/debug/app-debug.apk
+          DEST="agor-android-debug-${SHORT_SHA}.apk"
+          cp "$SRC" "$DEST"
+          ls -la "$DEST"
+          echo "apk_path=apps/agor-android/$DEST" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agor-android-debug-${{ steps.version.outputs.short_sha }}
+          path: ${{ steps.rename.outputs.apk_path }}
+          if-no-files-found: error
+          retention-days: 7
+
+      # Push to a rolling release the in-app updater reads. Tag is moved on every
+      # successful build so the asset URL stays stable, but the underlying commit
+      # advances. We delete + recreate the asset because release assets can't be
+      # overwritten in place.
+      - name: Publish rolling android-latest release
+        if: github.ref == 'refs/heads/cfx/android-hermes-client' || github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHORT_SHA: ${{ steps.version.outputs.short_sha }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          APK_PATH: ${{ steps.rename.outputs.apk_path }}
+        run: |
+          set -euo pipefail
+          TAG="android-latest"
+          NOTES=$(cat <<EOF
+          Rolling debug build — overwritten on every push.
+
+          - commit: \`${SHORT_SHA}\`
+          - versionCode: \`${VERSION_CODE}\`
+          - versionName: \`${VERSION_NAME}\`
+
+          The in-app updater reads this tag; the underlying commit advances on every push.
+          EOF
+          )
+
+          # Move the tag to HEAD so release-creation in the next step references the
+          # newest commit. `git push --force` only touches refs/tags/$TAG.
+          git tag -f "$TAG"
+          git push origin "refs/tags/$TAG" --force
+
+          # Delete the old release (if present) so we get a clean asset slot.
+          gh release delete "$TAG" --yes --cleanup-tag=false 2>/dev/null || true
+          # Rename to a stable filename for the asset URL. The `#display-label`
+          # syntax on `gh release create` only changes the asset's display label,
+          # not the actual filename used in the download URL — so we rename the
+          # file on disk first.
+          STABLE_APK="$(dirname "$APK_PATH")/agor-android-debug.apk"
+          cp "$APK_PATH" "$STABLE_APK"
+          APK_SIZE=$(stat -c%s "$STABLE_APK")
+          MANIFEST="$(dirname "$APK_PATH")/agor-android-latest.json"
+          cat > "$MANIFEST" <<EOF
+          {
+            "versionCode": ${VERSION_CODE},
+            "versionName": "${VERSION_NAME}",
+            "commit": "${SHORT_SHA}",
+            "apkUrl": "https://github.com/Code-Fixxers/agor/releases/download/android-latest/agor-android-debug.apk",
+            "sizeBytes": ${APK_SIZE}
+          }
+          EOF
+          gh release create "$TAG" \
+            --title "Android debug — $SHORT_SHA" \
+            --notes "$NOTES" \
+            --prerelease \
+            "$STABLE_APK" \
+            "$MANIFEST"
+
+      - name: Summary
+        env:
+          SHORT_SHA: ${{ steps.version.outputs.short_sha }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+        run: |
+          {
+            echo "### Agor Android debug APK"
+            echo ""
+            echo "- Commit: \`${SHORT_SHA}\`"
+            echo "- versionCode: \`${VERSION_CODE}\`"
+            echo "- versionName: \`${VERSION_NAME}\`"
+            echo "- Whisper.cpp on-device transcription: \`${WITH_WHISPER}\`"
+            echo ""
+            echo "Direct download (rolling): https://github.com/Code-Fixxers/agor/releases/download/android-latest/agor-android-debug.apk"
+            echo ""
+            echo "Or in-app: open Settings → **Check for updates**."
+          } >> "$GITHUB_STEP_SUMMARY"

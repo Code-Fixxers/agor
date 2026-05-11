@@ -43,3 +43,8 @@ yarn-error.log*
 # Agor specific
 .agor/
 apps/agor-desktop/out/
+/.codex
+.direnv/
+.envrc
+agor-android-debug-*.apk
+/apps/agor-android/app/src/main/cpp/whisper.cpp/

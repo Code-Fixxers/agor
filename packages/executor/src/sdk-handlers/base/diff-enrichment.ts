@@ -185,7 +185,8 @@ export function registerToolInvocationStart(
         ...(workingDirectory ? { cwd: workingDirectory } : {}),
       }).trim();
     } catch {
-      return;
+      if (!workingDirectory) return;
+      gitRoot = workingDirectory;
     }
 
     const snapshots: EditFilesSnapshot[] = [];

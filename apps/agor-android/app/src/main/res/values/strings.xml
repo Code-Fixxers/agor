@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Agor</string>
+    <string name="voice_channel_name">Agor Voice</string>
+    <string name="voice_channel_description">Continuous voice mode notifications</string>
+    <string name="voice_notification_title">Agor voice mode</string>
+    <string name="voice_notification_text">Listening for your prompts</string>
+    <string name="session_channel_name">Session events</string>
+    <string name="session_channel_description">Notifications when favorited sessions complete or need attention</string>
+    <string name="hermes_channel_name">Hermes</string>
+    <string name="hermes_channel_description">Hermes background run notifications</string>
+    <string name="hermes_notification_title">Hermes is working</string>
+    <string name="hermes_notification_text">Keeping active Hermes sessions connected</string>
+</resources>

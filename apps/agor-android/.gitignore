@@ -1,0 +1,26 @@
+# Gradle
+.gradle/
+build/
+.kotlin/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+.cxx/
+captures/
+local.properties
+
+# APK / AAB output
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Native build cache
+.cxx/
+
+# Whisper model artifacts
+app/src/main/assets/whisper/
+
+# Generated
+GeneratedBuildConfig.kt

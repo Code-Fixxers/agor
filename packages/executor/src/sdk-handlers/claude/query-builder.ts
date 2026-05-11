@@ -57,6 +57,10 @@ function summarizeMcpConfig(
  * Uses `which claude` to find it in PATH
  */
 function getClaudeCodePath(): string {
+  if (process.env.CLAUDE_CODE_PATH) {
+    return process.env.CLAUDE_CODE_PATH;
+  }
+
   try {
     const path = execSync('which claude', { encoding: 'utf-8' }).trim();
     if (path) return path;

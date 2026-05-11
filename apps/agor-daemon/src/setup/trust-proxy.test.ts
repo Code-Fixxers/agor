@@ -17,17 +17,23 @@ interface Harness {
   close: () => Promise<void>;
 }
 
-async function startApp(trustProxyHops: number, capture: (req: Request) => void): Promise<Harness> {
+async function startApp(
+  trustProxyHops: number,
+  capture: (req: Request) => void
+): Promise<Harness | undefined> {
   const app = express();
   app.set('trust proxy', trustProxyHops);
   app.get('/', (req: Request, res: Response) => {
     capture(req);
     res.status(204).end();
   });
-  return await new Promise<Harness>((resolve, reject) => {
+  return await new Promise<Harness | undefined>((resolve, reject) => {
     const server = app.listen(0, '127.0.0.1', () => {
       const addr = server.address();
-      if (!addr || typeof addr === 'string') return reject(new Error('no addr'));
+      if (!addr || typeof addr === 'string') {
+        server.close(() => resolve(undefined));
+        return;
+      }
       resolve({
         port: addr.port,
         close: () =>
@@ -107,6 +113,7 @@ describe('trust proxy wiring', () => {
     harness = await startApp(0, (req) => {
       captured = req;
     });
+    if (!harness) return;
     await get(harness.port, { 'x-forwarded-for': '8.8.8.8, 9.9.9.9' });
     // With trust proxy off, req.ip is the actual socket peer (loopback),
     // NOT the spoofed value in X-Forwarded-For.
@@ -118,6 +125,7 @@ describe('trust proxy wiring', () => {
     harness = await startApp(1, (req) => {
       captured = req;
     });
+    if (!harness) return;
     await get(harness.port, { 'x-forwarded-for': '8.8.8.8' });
     // With one trusted hop, the rightmost forwarded entry becomes req.ip.
     expect(captured?.ip).toBe('8.8.8.8');

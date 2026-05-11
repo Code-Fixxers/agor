@@ -3,18 +3,42 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="favicon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="apple-touch-icon" href="favicon.png" />
+    <link rel="mask-icon" href="icons/agor-icon.svg" color="#1677ff" />
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#1677ff" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Agor" />
+    <meta name="application-name" content="Agor" />
+    <meta name="format-detection" content="telephone=no" />
     <title>Agor</title>
     <style>
+      html,
       body {
         margin: 0;
-        padding: 0;
+        height: 100%;
+        background-color: #0f1115;
+        /* Honor iOS safe areas in standalone mode */
+        padding: env(safe-area-inset-top) env(safe-area-inset-right)
+          env(safe-area-inset-bottom) env(safe-area-inset-left);
+        box-sizing: border-box;
+        overscroll-behavior-y: none;
+        -webkit-tap-highlight-color: transparent;
       }
       #root {
         width: 100%;
-        height: 100vh;
+        height: 100%;
+        min-height: 100dvh;
         margin: 0;
         padding: 0;
+      }
+      /* Avoid font-size autosizing on iOS Safari for portrait */
+      html {
+        -webkit-text-size-adjust: 100%;
       }
     </style>
   </head>

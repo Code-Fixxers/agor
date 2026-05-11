@@ -1,0 +1,608 @@
+package live.agor.app.network
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import live.agor.app.auth.SecureTokenStore
+import live.agor.app.models.AgorTask
+import live.agor.app.models.Board
+import live.agor.app.models.FileDetail
+import live.agor.app.models.FileListItem
+import live.agor.app.models.MCPServer
+import live.agor.app.models.Message
+import live.agor.app.models.Repo
+import live.agor.app.models.Session
+import live.agor.app.models.User
+import live.agor.app.models.Worktree
+import live.agor.app.util.AppLogger
+import live.agor.app.util.LogLevel
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+
+/**
+ * REST client for Agor's FeathersJS API.
+ *
+ * Handles:
+ * - Smart URL resolution (auto-add :3030, https/http fallback) via probeBaseUrl()
+ * - JWT bearer auth + automatic refresh on 401
+ * - Pagination + filter encoding ($limit, $skip, $sort)
+ *
+ * Mirrors apps/agor-ios/AgorApp/Services/AgorClient.swift.
+ */
+class AgorClient(private val tokens: SecureTokenStore) {
+
+    val tokensRef: SecureTokenStore get() = tokens
+
+    private val _baseUrl = MutableStateFlow(tokens.serverUrl ?: "")
+    val baseUrlState: StateFlow<String> = _baseUrl.asStateFlow()
+
+    val baseUrl: String get() = _baseUrl.value
+
+    private val http: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .build()
+
+    private val jsonMedia = "application/json; charset=utf-8".toMediaType()
+
+    fun setBaseUrl(url: String) {
+        val canon = canonicalUrl(url)
+        _baseUrl.value = canon
+        tokens.serverUrl = canon
+    }
+
+    /**
+     * Try several URL candidates ([asGiven, https://...:3030, http://...:3030]) and return
+     * the first one whose /health endpoint responds. Mirrors AuthService's probe in iOS.
+     */
+    suspend fun probeBaseUrl(input: String): String? = withContext(Dispatchers.IO) {
+        val trimmed = input.trim().trimEnd('/')
+        if (trimmed.isEmpty()) return@withContext null
+        for (candidate in candidatesFor(trimmed)) {
+            if (healthOk(candidate)) return@withContext candidate
+        }
+        null
+    }
+
+    private fun candidatesFor(input: String): List<String> {
+        val out = mutableListOf<String>()
+        val hasScheme = input.startsWith("http://") || input.startsWith("https://")
+        val hasPort = input.substringAfterLast('/').contains(':')
+        if (hasScheme) {
+            out += input
+            if (!hasPort) out += "$input:3030"
+        } else {
+            out += "https://$input"
+            out += "https://$input:3030"
+            out += "http://$input"
+            out += "http://$input:3030"
+        }
+        return out.distinct()
+    }
+
+    private fun healthOk(url: String): Boolean {
+        val u = "$url/health".toHttpUrlOrNull() ?: return false
+        val started = System.nanoTime()
+        return runCatching {
+            http.newCall(Request.Builder().url(u).get().build()).execute().use {
+                AppLogger.log(
+                    "Probe ${u.host}:${u.port} /health -> ${it.code} in ${elapsedMs(started)}ms",
+                    if (it.isSuccessful) LogLevel.DEBUG else LogLevel.WARNING,
+                    "Network",
+                )
+                it.isSuccessful
+            }
+        }.onFailure {
+            AppLogger.log(
+                "Probe ${u.host}:${u.port} /health failed in ${elapsedMs(started)}ms: ${it.message}",
+                LogLevel.WARNING,
+                "Network",
+            )
+        }.getOrDefault(false)
+    }
+
+    private fun canonicalUrl(url: String): String = url.trim().trimEnd('/')
+
+    // ---- Auth ----
+
+    suspend fun login(email: String, password: String): LoginResult = withContext(Dispatchers.IO) {
+        AppLogger.log("Agor login requested for ${redactEmail(email)}", LogLevel.INFO, "Network")
+        val body = JsonObject(
+            mapOf(
+                "strategy" to JsonPrimitive("local"),
+                "email" to JsonPrimitive(email),
+                "password" to JsonPrimitive(password),
+            ),
+        )
+        val resp = unauthenticatedRequest("POST", "/authentication", body)
+        val payload = resp as? JsonObject ?: throw IOException("Login response malformed")
+        val accessToken = payload["accessToken"]?.jsonPrimitive?.contentOrNull
+        val refreshToken = payload["refreshToken"]?.jsonPrimitive?.contentOrNull
+        val userEl = payload["user"]
+        val user = userEl?.let { AgorJson.decodeFromJsonElement(User.serializer(), it) }
+        if (accessToken.isNullOrEmpty() || user == null) {
+            throw IOException("Login response missing accessToken or user")
+        }
+        tokens.accessToken = accessToken
+        tokens.refreshToken = refreshToken
+        tokens.lastEmail = email
+        AppLogger.log("Agor login succeeded for ${redactEmail(email)}", LogLevel.INFO, "Network")
+        LoginResult(accessToken, refreshToken, user)
+    }
+
+    suspend fun loginWithApiKey(apiKey: String): LoginResult = withContext(Dispatchers.IO) {
+        AppLogger.log("Agor API-key login requested", LogLevel.INFO, "Network")
+        val body = JsonObject(
+            mapOf(
+                "strategy" to JsonPrimitive("api-key"),
+                "apiKey" to JsonPrimitive(apiKey),
+            ),
+        )
+        val resp = unauthenticatedRequest("POST", "/authentication", body)
+        val payload = resp as? JsonObject ?: throw IOException("Login response malformed")
+        val accessToken = payload["accessToken"]?.jsonPrimitive?.contentOrNull
+        val refreshToken = payload["refreshToken"]?.jsonPrimitive?.contentOrNull
+        val userEl = payload["user"]
+        val user = userEl?.let { AgorJson.decodeFromJsonElement(User.serializer(), it) }
+        if (accessToken.isNullOrEmpty() || user == null) {
+            throw IOException("Login response missing accessToken or user")
+        }
+        tokens.accessToken = accessToken
+        tokens.refreshToken = refreshToken
+        AppLogger.log("Agor API-key login succeeded", LogLevel.INFO, "Network")
+        LoginResult(accessToken, refreshToken, user)
+    }
+
+    suspend fun refresh(): Boolean = withContext(Dispatchers.IO) {
+        val refresh = tokens.refreshToken ?: return@withContext false
+        val body = JsonObject(
+            mapOf(
+                "strategy" to JsonPrimitive("local"),
+                "refreshToken" to JsonPrimitive(refresh),
+            ),
+        )
+        val resp = runCatching { unauthenticatedRequest("POST", "/authentication-refresh", body) }
+            .getOrNull() ?: return@withContext false
+        val payload = resp as? JsonObject ?: return@withContext false
+        val accessToken = payload["accessToken"]?.jsonPrimitive?.contentOrNull
+        val newRefresh = payload["refreshToken"]?.jsonPrimitive?.contentOrNull
+        if (accessToken.isNullOrEmpty()) return@withContext false
+        tokens.accessToken = accessToken
+        if (!newRefresh.isNullOrEmpty()) tokens.refreshToken = newRefresh
+        true
+    }
+
+    // ---- Service calls ----
+
+    suspend fun me(): User = getOne("/users/me", User.serializer())
+
+    suspend fun listBoards(): List<Board> = listAll("/boards", Board.serializer())
+
+    suspend fun listWorktrees(
+        boardId: String? = null,
+        includeArchived: Boolean = false,
+    ): List<Worktree> {
+        val q = buildMap {
+            if (boardId != null) put("board_id", boardId)
+            if (!includeArchived) put("archived", "false")
+        }
+        return listAll("/worktrees", Worktree.serializer(), q)
+    }
+
+    suspend fun listSessions(
+        worktreeId: String? = null,
+        includeArchived: Boolean = false,
+        compact: Boolean = true,
+    ): List<Session> {
+        val q = buildMap {
+            if (worktreeId != null) put("worktree_id", worktreeId)
+            if (!includeArchived) put("archived", "false")
+            if (compact) putAll(COMPACT_SESSION_SELECT)
+        }
+        return listAll("/sessions", Session.serializer(), q)
+    }
+
+    suspend fun getSession(id: String): Session = getOne("/sessions/$id", Session.serializer())
+
+    suspend fun listTasks(sessionId: String): List<AgorTask> =
+        listAll("/tasks", AgorTask.serializer(), mapOf("session_id" to sessionId))
+
+    suspend fun listMessages(
+        sessionId: String,
+        limit: Int = 100,
+        skip: Int = 0,
+    ): List<Message> {
+        val q = mapOf(
+            "session_id" to sessionId,
+            "\$limit" to limit.toString(),
+            "\$skip" to skip.toString(),
+            "\$sort[index]" to "-1",
+        )
+        return listPage("/messages", Message.serializer(), q).sortedBy { it.index }
+    }
+
+    suspend fun listRepos(): List<Repo> = listAll("/repos", Repo.serializer())
+
+    suspend fun listMcpServers(): List<MCPServer> =
+        listAll("/mcp-servers", MCPServer.serializer())
+
+    suspend fun listFiles(worktreeId: String): List<FileListItem> =
+        listAll("/file", FileListItem.serializer(), mapOf("worktree_id" to worktreeId))
+
+    suspend fun getFile(worktreeId: String, path: String): FileDetail {
+        val q = mapOf("worktree_id" to worktreeId)
+        return getOne(buildUrl("/file/${encodePath(path)}", q), FileDetail.serializer())
+    }
+
+    suspend fun sendPrompt(sessionId: String, prompt: String, taskId: String? = null) {
+        AppLogger.log(
+            "Sending session prompt session=${sessionId.take(8)} chars=${prompt.length} task=${taskId?.take(8) ?: "none"}",
+            LogLevel.INFO,
+            "Chat",
+        )
+        val body = buildJsonObject {
+            put("prompt", JsonPrimitive(prompt))
+            put("stream", JsonPrimitive(true))
+            taskId?.let { put("task_id", JsonPrimitive(it)) }
+        }
+        authenticatedRequest("POST", "/sessions/$sessionId/prompt", body)
+    }
+
+    suspend fun uploadSessionFiles(
+        sessionId: String,
+        files: List<UploadFileInput>,
+        notifyAgent: Boolean,
+        message: String,
+    ): UploadFilesResult {
+        if (files.isEmpty()) throw IOException("No files selected")
+        val totalBytes = files.sumOf { it.bytes.size.toLong() }
+        AppLogger.log(
+            "Uploading ${files.size} attachment(s) to session=${sessionId.take(8)} bytes=$totalBytes notify=$notifyAgent",
+            LogLevel.INFO,
+            "Chat",
+        )
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("notifyAgent", notifyAgent.toString())
+            .addFormDataPart("message", message)
+            .apply {
+                files.forEach { file ->
+                    val mediaType = file.mimeType?.toMediaTypeOrNull()
+                        ?: "application/octet-stream".toMediaType()
+                    addFormDataPart(
+                        "files",
+                        file.filename,
+                        file.bytes.toRequestBody(mediaType),
+                    )
+                }
+            }
+            .build()
+        val resp = authenticatedMultipartUpload(
+            buildUrl("/sessions/$sessionId/upload", mapOf("destination" to "worktree")),
+            body,
+        )
+        return AgorJson.decodeFromJsonElement(UploadFilesResult.serializer(), resp).also { result ->
+            AppLogger.log(
+                "Uploaded ${result.files.size} attachment(s) to session=${sessionId.take(8)} warning=${result.warning != null}",
+                if (result.warning == null) LogLevel.INFO else LogLevel.WARNING,
+                "Chat",
+            )
+        }
+    }
+
+    suspend fun stopSession(sessionId: String) {
+        authenticatedRequest("POST", "/sessions/$sessionId/stop", JsonObject(emptyMap()))
+    }
+
+    suspend fun decidePermission(
+        sessionId: String,
+        permissionId: String,
+        approve: Boolean,
+        note: String? = null,
+    ) {
+        val body = buildJsonObject {
+            put("permission_id", JsonPrimitive(permissionId))
+            put("decision", JsonPrimitive(if (approve) "approved" else "denied"))
+            note?.let { put("decision_note", JsonPrimitive(it)) }
+        }
+        authenticatedRequest("POST", "/sessions/$sessionId/permission-decision", body)
+    }
+
+    suspend fun answerInputRequest(
+        sessionId: String,
+        inputRequestId: String,
+        answers: List<String>,
+    ) {
+        val body = buildJsonObject {
+            put("input_request_id", JsonPrimitive(inputRequestId))
+            put(
+                "answers",
+                AgorJson.encodeToJsonElement(ListSerializer(String.serializer()), answers),
+            )
+        }
+        authenticatedRequest("POST", "/sessions/$sessionId/input-response", body)
+    }
+
+    suspend fun patchSession(sessionId: String, fields: JsonObject): Session = withContext(Dispatchers.IO) {
+        val resp = authenticatedRequest("PATCH", "/sessions/$sessionId", fields)
+        AgorJson.decodeFromJsonElement(Session.serializer(), resp)
+    }
+
+    // ---- Internals ----
+
+    private suspend fun <T> getOne(
+        pathOrUrl: String,
+        serializer: kotlinx.serialization.KSerializer<T>,
+    ): T = withContext(Dispatchers.IO) {
+        val resp = authenticatedRequest("GET", pathOrUrl, body = null)
+        AgorJson.decodeFromJsonElement(serializer, resp)
+    }
+
+    private suspend fun <T> listAll(
+        path: String,
+        serializer: kotlinx.serialization.KSerializer<T>,
+        query: Map<String, String> = emptyMap(),
+    ): List<T> = withContext(Dispatchers.IO) {
+        val out = mutableListOf<T>()
+        var skip = 0
+        val limit = 100
+        while (true) {
+            val q = query + mapOf(
+                "\$limit" to limit.toString(),
+                "\$skip" to skip.toString(),
+            )
+            val element = authenticatedRequest("GET", buildUrl(path, q), body = null)
+            val data: List<JsonElement> = when {
+                element is JsonObject && element["data"] is kotlinx.serialization.json.JsonArray ->
+                    (element["data"] as kotlinx.serialization.json.JsonArray).toList()
+                element is kotlinx.serialization.json.JsonArray -> element.toList()
+                else -> emptyList()
+            }
+            data.forEach { out += AgorJson.decodeFromJsonElement(serializer, it) }
+            if (data.size < limit) break
+            skip += limit
+            if (skip > 5000) break // safety
+        }
+        out
+    }
+
+    private suspend fun <T> listPage(
+        path: String,
+        serializer: kotlinx.serialization.KSerializer<T>,
+        query: Map<String, String>,
+    ): List<T> = withContext(Dispatchers.IO) {
+        val element = authenticatedRequest("GET", buildUrl(path, query), body = null)
+        val data: List<JsonElement> = when {
+            element is JsonObject && element["data"] is kotlinx.serialization.json.JsonArray ->
+                (element["data"] as kotlinx.serialization.json.JsonArray).toList()
+            element is kotlinx.serialization.json.JsonArray -> element.toList()
+            else -> emptyList()
+        }
+        data.map { AgorJson.decodeFromJsonElement(serializer, it) }
+    }
+
+    private fun buildUrl(path: String, query: Map<String, String>): String {
+        if (query.isEmpty()) return path
+        val qs = query.entries.joinToString("&") {
+            "${java.net.URLEncoder.encode(it.key, "UTF-8")}=${java.net.URLEncoder.encode(it.value, "UTF-8")}"
+        }
+        return if (path.contains("?")) "$path&$qs" else "$path?$qs"
+    }
+
+    private fun encodePath(path: String): String =
+        path.split('/').joinToString("/") { java.net.URLEncoder.encode(it, "UTF-8") }
+
+    private suspend fun authenticatedRequest(
+        method: String,
+        pathOrUrl: String,
+        body: JsonElement?,
+    ): JsonElement = withContext(Dispatchers.IO) {
+        val firstResp = doRequest(method, pathOrUrl, body, useAuth = true)
+        if (firstResp.code == 401) {
+            firstResp.close()
+            val refreshed = refresh()
+            if (refreshed) {
+                val retry = doRequest(method, pathOrUrl, body, useAuth = true)
+                return@withContext readJson(retry)
+            }
+            throw AuthException("Unauthenticated")
+        }
+        readJson(firstResp)
+    }
+
+    private suspend fun unauthenticatedRequest(
+        method: String,
+        pathOrUrl: String,
+        body: JsonElement?,
+    ): JsonElement = withContext(Dispatchers.IO) {
+        readJson(doRequest(method, pathOrUrl, body, useAuth = false))
+    }
+
+    private suspend fun authenticatedMultipartUpload(
+        pathOrUrl: String,
+        body: MultipartBody,
+    ): JsonElement = withContext(Dispatchers.IO) {
+        val firstResp = doMultipartUpload(pathOrUrl, body, useAuth = true)
+        if (firstResp.code == 401) {
+            firstResp.close()
+            val refreshed = refresh()
+            if (refreshed) {
+                val retry = doMultipartUpload(pathOrUrl, body, useAuth = true)
+                return@withContext readJson(retry)
+            }
+            throw AuthException("Unauthenticated")
+        }
+        readJson(firstResp)
+    }
+
+    private fun doRequest(
+        method: String,
+        pathOrUrl: String,
+        body: JsonElement?,
+        useAuth: Boolean,
+    ): okhttp3.Response {
+        if (baseUrl.isEmpty()) throw IOException("Server URL not configured")
+        val url = if (pathOrUrl.startsWith("http")) pathOrUrl else "$baseUrl$pathOrUrl"
+        val started = System.nanoTime()
+        val builder = Request.Builder().url(url)
+        if (useAuth) {
+            tokens.accessToken?.let { builder.header("Authorization", "Bearer $it") }
+        }
+        builder.header("Accept", "application/json")
+        val rb = body?.let { AgorJson.encodeToString(JsonElement.serializer(), it).toRequestBody(jsonMedia) }
+        builder.method(method, rb ?: if (method != "GET") "".toRequestBody(jsonMedia) else null)
+        return runCatching {
+            http.newCall(builder.build()).execute()
+        }.onSuccess {
+            AppLogger.log(
+                "Agor $method ${redactUrl(url)} -> ${it.code} in ${elapsedMs(started)}ms",
+                if (it.isSuccessful) LogLevel.DEBUG else LogLevel.WARNING,
+                "Network",
+            )
+        }.onFailure {
+            AppLogger.log(
+                "Agor $method ${redactUrl(url)} failed in ${elapsedMs(started)}ms: ${it.message}",
+                LogLevel.ERROR,
+                "Network",
+            )
+        }.getOrThrow()
+    }
+
+    private fun doMultipartUpload(
+        pathOrUrl: String,
+        body: MultipartBody,
+        useAuth: Boolean,
+    ): okhttp3.Response {
+        if (baseUrl.isEmpty()) throw IOException("Server URL not configured")
+        val url = if (pathOrUrl.startsWith("http")) pathOrUrl else "$baseUrl$pathOrUrl"
+        val started = System.nanoTime()
+        val builder = Request.Builder()
+            .url(url)
+            .header("Accept", "application/json")
+            .post(body)
+        if (useAuth) {
+            tokens.accessToken?.let { builder.header("Authorization", "Bearer $it") }
+        }
+        return runCatching {
+            http.newCall(builder.build()).execute()
+        }.onSuccess {
+            AppLogger.log(
+                "Agor upload ${redactUrl(url)} -> ${it.code} in ${elapsedMs(started)}ms",
+                if (it.isSuccessful) LogLevel.INFO else LogLevel.WARNING,
+                "Network",
+            )
+        }.onFailure {
+            AppLogger.log(
+                "Agor upload ${redactUrl(url)} failed in ${elapsedMs(started)}ms: ${it.message}",
+                LogLevel.ERROR,
+                "Network",
+            )
+        }.getOrThrow()
+    }
+
+    private fun readJson(resp: okhttp3.Response): JsonElement = resp.use { r ->
+        val text = r.body?.string().orEmpty()
+        if (!r.isSuccessful) {
+            val message = runCatching {
+                AgorJson.parseToJsonElement(text).jsonObject["message"]?.jsonPrimitive?.contentOrNull
+            }.getOrNull() ?: "HTTP ${r.code}"
+            AppLogger.log("Agor HTTP ${r.code}: $message", LogLevel.WARNING, "Network")
+            throw HttpException(r.code, message, text)
+        }
+        return runCatching {
+            if (text.isBlank()) JsonObject(emptyMap()) else AgorJson.parseToJsonElement(text)
+        }.getOrElse {
+            AppLogger.log("Agor JSON parse failed for HTTP ${r.code}: ${it.message}", LogLevel.ERROR, "Network")
+            throw it
+        }
+    }
+
+    data class LoginResult(val accessToken: String, val refreshToken: String?, val user: User)
+
+    class AuthException(message: String) : IOException(message)
+    class HttpException(val statusCode: Int, message: String, val body: String) : IOException(message)
+}
+
+data class UploadFileInput(
+    val filename: String,
+    val mimeType: String?,
+    val bytes: ByteArray,
+)
+
+@Serializable
+data class UploadedSessionFile(
+    val filename: String,
+    val path: String,
+    val size: Long,
+    val mimeType: String,
+)
+
+@Serializable
+data class UploadFilesResult(
+    val success: Boolean,
+    val files: List<UploadedSessionFile>,
+    val warning: String? = null,
+)
+
+private inline fun buildJsonObject(block: MutableMap<String, JsonElement>.() -> Unit): JsonObject {
+    val map = mutableMapOf<String, JsonElement>()
+    map.block()
+    return JsonObject(map)
+}
+
+private fun elapsedMs(startedNanos: Long): Long =
+    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos)
+
+private fun redactUrl(url: String): String {
+    val parsed = url.toHttpUrlOrNull() ?: return url.substringBefore('?')
+    return buildString {
+        append(parsed.encodedPath)
+        if (parsed.querySize > 0) append("?...")
+    }
+}
+
+private fun redactEmail(email: String): String {
+    val at = email.indexOf('@')
+    if (at <= 1) return "***"
+    return email.take(1) + "***" + email.substring(at)
+}
+
+private val COMPACT_SESSION_FIELDS = listOf(
+    "session_id",
+    "agentic_tool",
+    "status",
+    "created_at",
+    "last_updated",
+    "created_by",
+    "worktree_id",
+    "worktree_board_id",
+    "url",
+    "message_count",
+    "title",
+    "description",
+    "ready_for_prompt",
+    "scheduled_from_worktree",
+    "archived",
+)
+
+private val COMPACT_SESSION_SELECT: Map<String, String> =
+    COMPACT_SESSION_FIELDS.mapIndexed { i, field -> "\$select[$i]" to field }.toMap()

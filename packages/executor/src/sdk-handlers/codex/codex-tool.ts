@@ -558,8 +558,8 @@ export class CodexTool implements ITool {
 
   /**
    * Capture and store Codex thread ID for conversation continuity.
-   * Throws if the Codex CLI returned a different thread than the one we asked to resume,
-   * which means the original thread file was lost (e.g. container rebuild wiped /tmp).
+   * If Codex silently rolled over to a new thread, update the stored session id
+   * and continue the run.
    * @private
    */
   private async captureThreadId(sessionId: SessionID, threadId: string): Promise<void> {
@@ -569,13 +569,21 @@ export class CodexTool implements ITool {
       const existingSession = await this.sessionsRepo.findById(sessionId);
       if (existingSession?.sdk_session_id) {
         if (existingSession.sdk_session_id !== threadId) {
-          const msg =
-            `Codex thread lost: asked to resume ${existingSession.sdk_session_id.substring(0, 8)} ` +
-            `but Codex started a new thread ${threadId.substring(0, 8)}. ` +
-            `The previous conversation history is no longer available (the thread file was likely deleted when the environment was rebuilt). ` +
-            `Please start a new session to continue.`;
-          console.error(`❌ ${msg}`);
-          throw new Error(msg);
+          console.warn(
+            `⚠️  [Codex] Thread rollover detected for session ${sessionId.substring(0, 8)}. ` +
+              `Old thread ${existingSession.sdk_session_id.substring(0, 8)} is gone; ` +
+              `continuing with new thread ${threadId.substring(0, 8)}`
+          );
+          try {
+            await this.sessionsRepo.update(sessionId, { sdk_session_id: threadId });
+            console.log(`💾 Updated Codex thread ID in Agor session`);
+          } catch (updateError) {
+            console.warn(
+              `⚠️  [Codex] Could not persist updated thread ID for session ${sessionId.substring(0, 8)}:`,
+              updateError
+            );
+          }
+          return;
         }
         return;
       }
