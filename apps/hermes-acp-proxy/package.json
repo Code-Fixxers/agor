@@ -1,0 +1,27 @@
+{
+  "name": "@agor/hermes-acp-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "hermes-acp-proxy": "./dist/main.js"
+  },
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsup",
+    "clean": "rm -rf dist",
+    "dev": "tsx src/main.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "undici": "^7.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsup": "^8.5.1",
+    "tsx": "^4.20.0",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}

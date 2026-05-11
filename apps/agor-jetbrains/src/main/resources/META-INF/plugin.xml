@@ -1,0 +1,25 @@
+<!-- Based on https://github.com/JetBrains/intellij-platform-plugin-template -->
+<idea-plugin>
+    <id>live.agor.jetbrains</id>
+    <name>Agor</name>
+    <vendor email="hello@agor.live" url="https://agor.live">Agor</vendor>
+    <description><![CDATA[
+        <p><b>Agor</b> brings Agor boards, worktrees, sessions, and Hermes handoff actions into JetBrains IDEs.</p>
+        <p>Hermes chat runs through JetBrains' native ACP agent support; this plugin provides the Agor navigator and session controls.</p>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <resource-bundle>messages.AgorBundle</resource-bundle>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Agor" anchor="right" icon="/icons/agor.svg" factoryClass="live.agor.jetbrains.toolwindow.AgorToolWindowFactory"/>
+        <applicationService serviceImplementation="live.agor.jetbrains.settings.AgorSettings"/>
+    </extensions>
+
+    <applicationConfigurable
+        parentId="tools"
+        instance="live.agor.jetbrains.settings.AgorSettingsConfigurable"
+        id="live.agor.jetbrains.settings"
+        displayName="Agor"/>
+</idea-plugin>

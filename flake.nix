@@ -7,6 +7,11 @@
   };
 
   outputs = { self, nixpkgs, flake-utils }:
+    let
+      agorJetbrainsHomeManagerModule = import ./nix/home-manager/agor-jetbrains.nix {
+        inherit self;
+      };
+    in
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -168,6 +173,45 @@
           '';
         };
 
+        hermesAcpProxyScript = pkgs.writeShellApplication {
+          name = "hermes-acp-proxy";
+          runtimeInputs = with pkgs; [
+            nodejs_22
+          ];
+          text = ''
+            set -euo pipefail
+            exec node "${self}/apps/hermes-acp-proxy/standalone/hermes-acp-proxy.mjs" "$@"
+          '';
+        };
+
+        buildAgorJetbrainsPluginScript = pkgs.writeShellApplication {
+          name = "build-agor-jetbrains-plugin";
+          runtimeInputs = with pkgs; [
+            bash
+            coreutils
+            git
+            gradle
+            jdk21
+          ];
+          text = ''
+            set -euo pipefail
+
+            ROOT="''${AGOR_SOURCE_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+            APP_DIR="$ROOT/apps/agor-jetbrains"
+
+            if [ ! -f "$APP_DIR/build.gradle.kts" ]; then
+              echo "Missing apps/agor-jetbrains/build.gradle.kts from: $ROOT" >&2
+              exit 2
+            fi
+
+            export JAVA_HOME="${pkgs.jdk21.home}"
+            export PATH="$JAVA_HOME/bin:''${PATH:-}"
+
+            cd "$APP_DIR"
+            gradle buildPlugin --no-daemon --stacktrace "$@"
+          '';
+        };
+
         buildScript = pkgs.writeShellApplication {
           name = "build-agor-live";
           runtimeInputs = sharedRuntimeInputs;
@@ -269,6 +313,8 @@ NPMRC
           publish-agor-live-wrapper = publishScript;
           build-agor-android-apk = buildAgorAndroidApkScript;
           agor-android-smoke = agorAndroidSmokeScript;
+          hermes-acp-proxy = hermesAcpProxyScript;
+          build-agor-jetbrains-plugin = buildAgorJetbrainsPluginScript;
           default = runScript;
         };
 
@@ -292,6 +338,14 @@ NPMRC
           agor-android-smoke = {
             type = "app";
             program = "${agorAndroidSmokeScript}/bin/agor-android-smoke";
+          };
+          hermes-acp-proxy = {
+            type = "app";
+            program = "${hermesAcpProxyScript}/bin/hermes-acp-proxy";
+          };
+          build-agor-jetbrains-plugin = {
+            type = "app";
+            program = "${buildAgorJetbrainsPluginScript}/bin/build-agor-jetbrains-plugin";
           };
           default = self.apps.${system}.run-agor-live;
         };
@@ -336,5 +390,10 @@ NPMRC
             '';
           };
         };
-      });
+      }) // {
+        homeManagerModules = {
+          agor-jetbrains = agorJetbrainsHomeManagerModule;
+          default = agorJetbrainsHomeManagerModule;
+        };
+      };
 }
