@@ -41,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -343,6 +344,7 @@ private fun ChatMessagesPane(
     val scope = rememberCoroutineScope()
     var initialScrollDone by remember(sessionId) { mutableStateOf(false) }
     var lastScrollDirection by remember { mutableStateOf(ChatScrollDirection.TowardBottom) }
+    var previousLastMessageIndex by remember(sessionId) { mutableIntStateOf(-1) }
 
     val lastMessageIndex = rows.lastIndex
     val isNearTop by remember {
@@ -381,6 +383,16 @@ private fun ChatMessagesPane(
         if (isNearBottom) {
             listState.animateScrollToItem(lastMessageIndex)
         }
+    }
+    LaunchedEffect(lastMessageIndex, initialScrollDone) {
+        if (!initialScrollDone || lastMessageIndex < 0) {
+            previousLastMessageIndex = lastMessageIndex
+            return@LaunchedEffect
+        }
+        if (lastMessageIndex < previousLastMessageIndex && listState.firstVisibleItemIndex >= lastMessageIndex) {
+            listState.scrollToItem(lastMessageIndex)
+        }
+        previousLastMessageIndex = lastMessageIndex
     }
     LaunchedEffect(listState) {
         var previousIndex = 0
