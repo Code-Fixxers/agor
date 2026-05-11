@@ -197,7 +197,30 @@ class HermesVoiceManager(
     }
 
     fun stopForBackground() {
-        stop()
+        if (!_state.value.enabled) return
+        AppLogger.log("Hermes voice paused for background", LogLevel.INFO, "Voice")
+        modelPreparationJob?.cancel()
+        transcriptionJob?.cancel()
+        reviewJob?.cancel()
+        modelPreparationJob = null
+        transcriptionJob = null
+        reviewJob = null
+        pauseCapture()
+        tts.stop()
+        streamBuffer = ""
+        streamedCurrentReply = false
+        hermesRunning = false
+        _state.value = _state.value.copy(
+            phase = HermesVoicePhase.Idle,
+            modelDownloadInProgress = false,
+            errorMessage = null,
+        )
+    }
+
+    fun resumeForForeground() {
+        if (!_state.value.enabled || hermesRunning || _state.value.pendingTranscript != null) return
+        AppLogger.log("Hermes voice resumed in foreground", LogLevel.INFO, "Voice")
+        startCaptureIfNeeded()
     }
 
     fun updatePendingTranscript(text: String) {

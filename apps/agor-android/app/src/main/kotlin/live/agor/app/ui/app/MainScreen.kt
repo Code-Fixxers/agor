@@ -88,6 +88,7 @@ fun MainScreen(app: AppViewModel) {
                     if (returnedFromBackground) {
                         returnedFromBackground = false
                         app.lockForBiometricIfNeeded()
+                        container.hermesVoice.resumeForForeground()
                     }
                 }
                 Lifecycle.Event.ON_STOP -> {
