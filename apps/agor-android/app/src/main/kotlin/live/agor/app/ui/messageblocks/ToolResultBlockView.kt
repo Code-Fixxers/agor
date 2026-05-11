@@ -15,9 +15,11 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import live.agor.app.ui.chat.ChatRow
 
 private val ToolBlockShape = RoundedCornerShape(8.dp)
+private const val MAX_INLINE_TOOL_RESULT_CHARS = 2_000
 
 /**
  * Renders a [ChatRow.ToolResultRow]. The full body text is precomputed in the
@@ -38,8 +41,14 @@ private val ToolBlockShape = RoundedCornerShape(8.dp)
 @Composable
 fun ToolResultBlockView(row: ChatRow.ToolResultRow) {
     var expanded by remember(row.key) { mutableStateOf(false) }
+    var showFullBody by remember(row.key) { mutableStateOf(false) }
     val container = if (row.isError) MaterialTheme.colorScheme.errorContainer
     else MaterialTheme.colorScheme.surfaceVariant
+    val inlineBody = remember(row.full) {
+        if (row.full.length <= MAX_INLINE_TOOL_RESULT_CHARS) row.full
+        else row.full.take(MAX_INLINE_TOOL_RESULT_CHARS) + "\n…"
+    }
+    val bodyTruncated = row.full.length > MAX_INLINE_TOOL_RESULT_CHARS
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -69,9 +78,31 @@ fun ToolResultBlockView(row: ChatRow.ToolResultRow) {
         if (expanded) {
             Spacer(Modifier.height(6.dp))
             Text(
-                row.full,
+                inlineBody,
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
             )
+            if (bodyTruncated) {
+                TextButton(onClick = { showFullBody = true }) {
+                    Text("View full result")
+                }
+            }
         }
+    }
+    if (showFullBody) {
+        AlertDialog(
+            onDismissRequest = { showFullBody = false },
+            title = { Text("Tool result") },
+            text = {
+                Text(
+                    row.full,
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showFullBody = false }) {
+                    Text("Close")
+                }
+            },
+        )
     }
 }
