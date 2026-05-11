@@ -33,6 +33,12 @@ import kotlin.text.Charsets
  * assistant's final natural-language replies.
  */
 class HermesClient(private val tokens: SecureTokenStore) {
+    private enum class RemoteHistoryMode {
+        Unknown,
+        Conversations,
+        Responses,
+        Unsupported,
+    }
 
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -43,6 +49,8 @@ class HermesClient(private val tokens: SecureTokenStore) {
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
+    @Volatile
+    private var remoteHistoryMode: RemoteHistoryMode = RemoteHistoryMode.Unknown
 
     val baseUrl: String? get() = tokens.hermesUrl?.trimEnd('/')
     val isConfigured: Boolean get() = !tokens.hermesUrl.isNullOrBlank() && !tokens.hermesToken.isNullOrBlank()
@@ -228,20 +236,41 @@ class HermesClient(private val tokens: SecureTokenStore) {
     suspend fun downloadStoredSessions(maxConversations: Int = 100): List<HermesSession> =
         kotlinx.coroutines.withContext(Dispatchers.IO) {
             val (url, bearer) = requireConfig()
+            if (remoteHistoryMode == RemoteHistoryMode.Unsupported) return@withContext emptyList()
             val started = System.nanoTime()
             AppLogger.log("Hermes stored session import requested max=$maxConversations", LogLevel.INFO, "Hermes")
             val summaries = runCatching {
-                listStoredConversationSummaries(url, bearer, maxConversations)
-            }.getOrElse {
-                AppLogger.log("Hermes conversation summary import failed, falling back responses: ${it.message}", LogLevel.WARNING, "Hermes")
-                return@withContext listStoredResponseSessions(url, bearer, maxConversations)
+                if (remoteHistoryMode == RemoteHistoryMode.Responses) emptyList()
+                else listStoredConversationSummaries(url, bearer, maxConversations)
+            }.getOrElse { error ->
+                if (!isUnsupportedHistoryRoute(error)) throw error
+                AppLogger.log("Hermes conversation summary import unsupported, falling back to responses", LogLevel.DEBUG, "Hermes")
+                remoteHistoryMode = RemoteHistoryMode.Responses
+                emptyList()
             }
-            summaries.map { summary ->
-                val items = runCatching { listStoredConversationItems(url, bearer, summary.id) }
-                    .getOrDefault(emptyList())
-                buildHermesSession(summary, items)
-            }.sortedByDescending { it.updatedAtMillis }.also {
+            if (remoteHistoryMode != RemoteHistoryMode.Responses) {
+                remoteHistoryMode = RemoteHistoryMode.Conversations
+                return@withContext summaries.map { summary ->
+                    val items = runCatching { listStoredConversationItems(url, bearer, summary.id) }
+                        .getOrDefault(emptyList())
+                    buildHermesSession(summary, items)
+                }.sortedByDescending { it.updatedAtMillis }.also {
+                    AppLogger.log("Hermes stored session import loaded ${it.size} sessions in ${elapsedMs(started)}ms", LogLevel.INFO, "Hermes")
+                }
+            }
+            runCatching {
+                listStoredResponseSessions(url, bearer, maxConversations)
+            }.onSuccess {
+                remoteHistoryMode = RemoteHistoryMode.Responses
                 AppLogger.log("Hermes stored session import loaded ${it.size} sessions in ${elapsedMs(started)}ms", LogLevel.INFO, "Hermes")
+            }.getOrElse { error ->
+                if (isUnsupportedHistoryRoute(error)) {
+                    remoteHistoryMode = RemoteHistoryMode.Unsupported
+                    AppLogger.log("Hermes remote history API unsupported; keeping local sessions only", LogLevel.INFO, "Hermes")
+                    emptyList()
+                } else {
+                    throw error
+                }
             }
         }
 
@@ -357,7 +386,7 @@ class HermesClient(private val tokens: SecureTokenStore) {
                 )
             }
             type == "response.failed" || type == "error" -> {
-                HermesResponseEvent.Failed(obj.optString("message", obj.toString().take(400)))
+                HermesResponseEvent.Failed(extractFailureMessage(obj))
             }
             type.contains("output_item") || type.contains("tool") || type.contains("function") -> {
                 val item = obj.optJSONObject("item")
@@ -384,6 +413,20 @@ class HermesClient(private val tokens: SecureTokenStore) {
             }
         }
         return out.toString()
+    }
+
+    private fun extractFailureMessage(obj: JSONObject): String {
+        obj.optStringOrNull("message")?.let { return it }
+        obj.optJSONObject("error")?.optStringOrNull("message")?.let { return it }
+        val response = obj.optJSONObject("response")
+        response?.optJSONObject("error")?.optStringOrNull("message")?.let { return it }
+        extractOutputText(response ?: obj).takeIf { it.isNotBlank() }?.let { return it }
+        return obj.toString().take(400)
+    }
+
+    private fun isUnsupportedHistoryRoute(error: Throwable): Boolean {
+        val http = error as? HermesHttpException ?: return false
+        return http.code == 404 || http.code == 405
     }
 
     private fun listStoredResponseSessions(
@@ -542,7 +585,7 @@ class HermesClient(private val tokens: SecureTokenStore) {
         http.newCall(req).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
-                throw IOException("Hermes ${resp.code}: ${text.take(400)}")
+                throw HermesHttpException(resp.code, text.take(400))
             }
             return JSONObject(text)
         }
@@ -738,6 +781,11 @@ private data class RemoteConversationSummary(
     val createdAtMillis: Long?,
     val updatedAtMillis: Long?,
 )
+
+private class HermesHttpException(
+    val code: Int,
+    body: String,
+) : IOException("Hermes $code: $body")
 
 private fun elapsedMs(startedNanos: Long): Long =
     TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos)

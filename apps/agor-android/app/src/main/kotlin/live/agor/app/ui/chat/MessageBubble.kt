@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import live.agor.app.models.MessageRole
+import live.agor.app.ui.common.copyOnDoubleTap
 import live.agor.app.ui.messageblocks.MarkdownText
 
 // Hoisted constants so each visible bubble doesn't allocate its own modifier values.
@@ -49,6 +50,7 @@ fun TextBubble(
             modifier = Modifier
                 .widthIn(max = BubbleMaxWidth)
                 .background(bubbleColor, BubbleShape)
+                .copyOnDoubleTap(row.text)
                 .padding(BubbleInnerPadding),
         ) {
             // While streaming, render as plain Text. The markdown library re-parses
@@ -76,6 +78,7 @@ fun LiveOrphanBubble(row: ChatRow.LiveOrphanRow) {
             modifier = Modifier
                 .widthIn(max = BubbleMaxWidth)
                 .background(MaterialTheme.colorScheme.surface, BubbleShape)
+                .copyOnDoubleTap(listOf(row.thinking, row.text).filter { it.isNotBlank() }.joinToString("\n\n"))
                 .padding(BubbleInnerPadding),
         ) {
             Column {

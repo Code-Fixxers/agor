@@ -74,6 +74,7 @@ import live.agor.app.LocalAppContainer
 import live.agor.app.data.HermesImageInput
 import live.agor.app.data.HermesSession
 import live.agor.app.data.HermesTurn
+import live.agor.app.ui.common.copyOnDoubleTap
 import live.agor.app.ui.common.AttachmentPickerDialog
 import live.agor.app.ui.messageblocks.MarkdownText
 import live.agor.app.ui.simpleViewModelFactory
@@ -528,6 +529,11 @@ private fun TurnBubble(
 ) {
     val isUser = turn.role == "user"
     val align = if (isUser) Alignment.End else Alignment.Start
+    val displayContent = when {
+        turn.content.isNotEmpty() -> turn.content
+        turn.streaming -> "..."
+        else -> ""
+    }
     Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = align) {
         Text(
             if (isUser) "You" else "Hermes",
@@ -538,7 +544,9 @@ private fun TurnBubble(
         Surface(
             color = if (isUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
             shape = MaterialTheme.shapes.medium,
-            modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
+            modifier = Modifier
+                .padding(top = 2.dp, bottom = 4.dp)
+                .copyOnDoubleTap(displayContent),
         ) {
             Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 for (attachment in turn.attachments) {
@@ -549,11 +557,6 @@ private fun TurnBubble(
                         modifier = Modifier.fillMaxWidth().height(180.dp),
                     )
                     Spacer(Modifier.height(6.dp))
-                }
-                val displayContent = when {
-                    turn.content.isNotEmpty() -> turn.content
-                    turn.streaming -> "..."
-                    else -> ""
                 }
                 MarkdownText(markdown = displayContent, onSessionClick = onSessionClick)
                 if (turn.progress.isNotEmpty()) {
