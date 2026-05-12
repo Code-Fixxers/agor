@@ -6,7 +6,7 @@
 
 import type { Session, UUID } from '@agor/core/types';
 import { SessionStatus, WORKTREE_PERMISSION_LEVELS } from '@agor/core/types';
-import { and, desc, eq, inArray, isNotNull, like, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, like, or, sql } from 'drizzle-orm';
 import { getBaseUrl } from '../../config/config-manager';
 import { formatShortId, generateId } from '../../lib/ids';
 import { getSessionUrl } from '../../utils/url';
@@ -703,23 +703,38 @@ export class SessionRepository implements BaseRepository<Session, Partial<Sessio
       // Import messages table dynamically
       const { messages: messagesTable } = await import('../schema');
 
-      // Get last assistant message for each session using N+1 queries
-      // This is acceptable since we're enriching a small number of sessions at a time
-      // Much better than fetching all messages which could be huge for long-running sessions
+      // ⚡ Bolt Performance Optimization:
+      // Replaced N+1 queries loop with a single batched join query using a subquery.
+      // This prevents multiple consecutive round-trips to the DB when retrieving
+      // the latest messages for each session, significantly speeding up bulk operations.
+      // We first query the maximum index per session_id (grouped), then join back
+      // with messages to fetch the actual text content.
+      const sq = select(this.db, {
+        session_id: messagesTable.session_id,
+        max_index: sql<number>`max(${messagesTable.index})`.as('max_index'),
+      })
+        .from(messagesTable)
+        .where(
+          and(inArray(messagesTable.session_id, sessionIds), eq(messagesTable.role, 'assistant'))
+        )
+        .groupBy(messagesTable.session_id)
+        .as('sq');
+
+      const latestMessages = await select(this.db, {
+        session_id: messagesTable.session_id,
+        data: messagesTable.data,
+      })
+        .from(messagesTable)
+        .innerJoin(
+          sq,
+          and(eq(messagesTable.session_id, sq.session_id), eq(messagesTable.index, sq.max_index))
+        )
+        .all();
+
       const lastMessageBySession = new Map<string, string>();
 
-      for (const sessionId of sessionIds) {
-        const query = select(this.db, {
-          data: messagesTable.data,
-        })
-          .from(messagesTable)
-          .where(and(eq(messagesTable.session_id, sessionId), eq(messagesTable.role, 'assistant')));
-
-        // Chain orderBy and limit, then execute with one()
-        // The spread operator in the wrapper passes through these methods
-        const lastMessage = await query.orderBy(desc(messagesTable.index)).limit(1).one();
-
-        if (lastMessage) {
+      for (const lastMessage of latestMessages) {
+        if (lastMessage?.data) {
           // Extract text content from message data and truncate to requested length
           const messageData = lastMessage.data as {
             content?: Array<{ type: string; text?: string }>;
@@ -739,7 +754,9 @@ export class SessionRepository implements BaseRepository<Session, Partial<Sessio
             fullText = `${fullText.substring(0, truncationLength)}...`;
           }
 
-          lastMessageBySession.set(sessionId, fullText);
+          if (lastMessage.session_id) {
+            lastMessageBySession.set(lastMessage.session_id as string, fullText);
+          }
         }
       }
 
