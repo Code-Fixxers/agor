@@ -444,15 +444,16 @@ export function loadConfigSync(): AgorConfig {
  * Credential keys that are valid in `config.yaml`'s `credentials` section
  * (i.e., keys that have a meaningful global / app-level value). User-only
  * tokens like `CLAUDE_CODE_OAUTH_TOKEN` (Pro/Max subscription) and
- * `COPILOT_GITHUB_TOKEN` are intentionally excluded — they don't make sense
- * as a global default.
+ * `COPILOT_GITHUB_TOKEN` is intentionally excluded — it doesn't make sense as
+ * a global default.
  */
 export type ConfigCredentialKey =
   | 'ANTHROPIC_API_KEY'
   | 'ANTHROPIC_AUTH_TOKEN'
   | 'ANTHROPIC_BASE_URL'
   | 'OPENAI_API_KEY'
-  | 'GEMINI_API_KEY';
+  | 'GEMINI_API_KEY'
+  | 'JUNIE_LITELLM_API_KEY';
 
 const CONFIG_CREDENTIAL_KEYS: ReadonlySet<string> = new Set<ConfigCredentialKey>([
   'ANTHROPIC_API_KEY',
@@ -460,6 +461,7 @@ const CONFIG_CREDENTIAL_KEYS: ReadonlySet<string> = new Set<ConfigCredentialKey>
   'ANTHROPIC_BASE_URL',
   'OPENAI_API_KEY',
   'GEMINI_API_KEY',
+  'JUNIE_LITELLM_API_KEY',
 ]);
 
 export function isConfigCredentialKey(key: string): key is ConfigCredentialKey {

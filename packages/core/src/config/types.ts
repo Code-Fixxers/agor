@@ -644,6 +644,7 @@ export enum CredentialKey {
   OPENAI_API_KEY = 'OPENAI_API_KEY',
   GEMINI_API_KEY = 'GEMINI_API_KEY',
   COPILOT_GITHUB_TOKEN = 'COPILOT_GITHUB_TOKEN',
+  JUNIE_LITELLM_API_KEY = 'JUNIE_LITELLM_API_KEY',
 }
 
 /**
@@ -669,6 +670,29 @@ export interface AgorCredentials {
 
   /** GitHub token for Copilot */
   COPILOT_GITHUB_TOKEN?: string;
+
+  /** LiteLLM API key for Junie */
+  JUNIE_LITELLM_API_KEY?: string;
+}
+
+/**
+ * JetBrains Junie headless integration settings.
+ */
+export interface AgorJunieSettings {
+  /** Junie executable path or command (default: junie) */
+  executable?: string;
+
+  /** LiteLLM/OpenAI-compatible gateway root URL */
+  litellmBaseUrl?: string;
+
+  /** Primary model ID used by Junie */
+  defaultModel?: string;
+
+  /** Optional faster/helper model for Junie internal tasks */
+  fasterModel?: string;
+
+  /** Junie custom model API type (default: OpenAICompletion) */
+  apiType?: 'OpenAIResponses' | 'OpenAICompletion';
 }
 
 /**
@@ -775,6 +799,9 @@ export interface AgorConfig {
   /** OpenCode.ai integration settings */
   opencode?: AgorOpenCodeSettings;
 
+  /** JetBrains Junie integration settings */
+  junie?: AgorJunieSettings;
+
   /** Execution isolation settings */
   execution?: AgorExecutionSettings;
 
@@ -836,6 +863,7 @@ export type ConfigKey =
   | `ui.${keyof AgorUISettings}`
   | `database.${keyof AgorDatabaseSettings}`
   | `opencode.${keyof AgorOpenCodeSettings}`
+  | `junie.${keyof AgorJunieSettings}`
   | `execution.${keyof AgorExecutionSettings}`
   | `security.${keyof AgorSecuritySettings}`
   | `worktrees.${keyof AgorWorktreesSettings}`

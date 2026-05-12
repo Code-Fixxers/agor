@@ -104,6 +104,15 @@ export const TOOL_FIELD_CONFIGS: Record<AgenticToolName, AgenticToolFieldConfig[
       docUrl: 'https://github.com/settings/tokens',
     },
   ],
+  junie: [
+    {
+      field: 'JUNIE_LITELLM_API_KEY',
+      label: 'Junie LiteLLM API Key',
+      description: '(Junie)',
+      placeholder: 'sk-...',
+      docUrl: 'https://docs.litellm.ai/',
+    },
+  ],
   opencode: [],
 };
 

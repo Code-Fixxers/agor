@@ -738,7 +738,7 @@ function createExecuteHandler(
         sessionId,
         taskId,
         prompt: data.prompt,
-        tool: session.agentic_tool as 'claude-code' | 'gemini' | 'codex' | 'opencode' | 'copilot',
+        tool: session.agentic_tool as import('@agor/core/types').AgenticToolName,
         permissionMode: permissionModeForPayload as 'ask' | 'auto' | 'allow-all' | undefined,
         cwd,
         messageSource: data.messageSource,

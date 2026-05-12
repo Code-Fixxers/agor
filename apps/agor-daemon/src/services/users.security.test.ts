@@ -81,3 +81,18 @@ describe('UsersService — git token env var hardening', () => {
     ).resolves.toBeDefined();
   });
 });
+
+describe('UsersService — Junie API keys', () => {
+  dbTest('stores Junie LiteLLM API key encrypted and exposes status only', async ({ db }) => {
+    const service = new UsersService(db);
+    const id = await makeUser(service);
+
+    const patched = await service.patch(id, {
+      api_keys: { JUNIE_LITELLM_API_KEY: 'sk-junie-litellm' },
+    });
+
+    expect(patched.api_keys?.JUNIE_LITELLM_API_KEY).toBe(true);
+    expect(JSON.stringify(patched)).not.toContain('sk-junie-litellm');
+    await expect(service.getApiKey(id, 'JUNIE_LITELLM_API_KEY')).resolves.toBe('sk-junie-litellm');
+  });
+});

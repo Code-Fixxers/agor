@@ -79,6 +79,22 @@ describe('mapPermissionMode', () => {
       expect(mapPermissionMode('yolo', 'codex')).toBe('allow-all');
     });
   });
+
+  describe('Junie', () => {
+    it('maps all supported modes to Junie-managed default behavior', () => {
+      expect(mapPermissionMode('default', 'junie')).toBe('default');
+      expect(mapPermissionMode('acceptEdits', 'junie')).toBe('default');
+      expect(mapPermissionMode('bypassPermissions', 'junie')).toBe('default');
+      expect(mapPermissionMode('plan', 'junie')).toBe('default');
+      expect(mapPermissionMode('dontAsk', 'junie')).toBe('default');
+      expect(mapPermissionMode('autoEdit', 'junie')).toBe('default');
+      expect(mapPermissionMode('yolo', 'junie')).toBe('default');
+      expect(mapPermissionMode('ask', 'junie')).toBe('default');
+      expect(mapPermissionMode('auto', 'junie')).toBe('default');
+      expect(mapPermissionMode('on-failure', 'junie')).toBe('default');
+      expect(mapPermissionMode('allow-all', 'junie')).toBe('default');
+    });
+  });
 });
 
 describe('mapToCodexPermissionConfig', () => {

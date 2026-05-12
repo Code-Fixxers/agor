@@ -39,6 +39,8 @@ function maskCredentials(config: AgorConfig): AgorConfig {
       ANTHROPIC_BASE_URL: config.credentials.ANTHROPIC_BASE_URL,
       OPENAI_API_KEY: maskApiKey(config.credentials.OPENAI_API_KEY),
       GEMINI_API_KEY: maskApiKey(config.credentials.GEMINI_API_KEY),
+      COPILOT_GITHUB_TOKEN: maskApiKey(config.credentials.COPILOT_GITHUB_TOKEN),
+      JUNIE_LITELLM_API_KEY: maskApiKey(config.credentials.JUNIE_LITELLM_API_KEY),
     },
   };
 }
@@ -184,6 +186,63 @@ export class ConfigService {
       }
       if (data.opencode.serverUrl !== undefined) {
         config.opencode.serverUrl = data.opencode.serverUrl;
+      }
+    }
+
+    // Allow updating Junie configuration
+    if (data.junie) {
+      if (!config.junie) {
+        config.junie = {};
+      }
+      const juniePatch = data.junie as Record<string, unknown>;
+
+      if (juniePatch.executable !== undefined) {
+        if (juniePatch.executable === null || juniePatch.executable === '') {
+          delete config.junie.executable;
+        } else if (typeof juniePatch.executable === 'string') {
+          config.junie.executable = juniePatch.executable;
+        } else {
+          throw new Error('junie.executable must be a string');
+        }
+      }
+      if (juniePatch.litellmBaseUrl !== undefined) {
+        if (juniePatch.litellmBaseUrl === null || juniePatch.litellmBaseUrl === '') {
+          delete config.junie.litellmBaseUrl;
+        } else if (typeof juniePatch.litellmBaseUrl === 'string') {
+          config.junie.litellmBaseUrl = juniePatch.litellmBaseUrl;
+        } else {
+          throw new Error('junie.litellmBaseUrl must be a string');
+        }
+      }
+      if (juniePatch.defaultModel !== undefined) {
+        if (juniePatch.defaultModel === null || juniePatch.defaultModel === '') {
+          delete config.junie.defaultModel;
+        } else if (typeof juniePatch.defaultModel === 'string') {
+          config.junie.defaultModel = juniePatch.defaultModel;
+        } else {
+          throw new Error('junie.defaultModel must be a string');
+        }
+      }
+      if (juniePatch.fasterModel !== undefined) {
+        if (juniePatch.fasterModel === null || juniePatch.fasterModel === '') {
+          delete config.junie.fasterModel;
+        } else if (typeof juniePatch.fasterModel === 'string') {
+          config.junie.fasterModel = juniePatch.fasterModel;
+        } else {
+          throw new Error('junie.fasterModel must be a string');
+        }
+      }
+      if (juniePatch.apiType !== undefined) {
+        if (juniePatch.apiType === null || juniePatch.apiType === '') {
+          delete config.junie.apiType;
+        } else if (
+          juniePatch.apiType === 'OpenAIResponses' ||
+          juniePatch.apiType === 'OpenAICompletion'
+        ) {
+          config.junie.apiType = juniePatch.apiType;
+        } else {
+          throw new Error('junie.apiType must be OpenAIResponses or OpenAICompletion');
+        }
       }
     }
 
