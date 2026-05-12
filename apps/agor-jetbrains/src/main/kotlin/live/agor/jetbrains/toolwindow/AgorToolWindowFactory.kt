@@ -1,6 +1,7 @@
 package live.agor.jetbrains.toolwindow
 
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
@@ -31,13 +32,19 @@ import javax.swing.SwingUtilities
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
+private val LOG = Logger.getInstance(AgorToolWindowFactory::class.java)
+
 class AgorToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val view = AgorToolWindow(project)
-        val content = ContentFactory.getInstance().createContent(view.component, "", false)
+        val view = runCatching { AgorToolWindow(project) }
+            .onFailure { LOG.error("Failed to initialize Agor tool window", it) }
+            .getOrNull()
+        val component = view?.component ?: fallbackPanel("Agor failed to initialize. See the JetBrains IDE log for details.")
+        val content = ContentFactory.getInstance().createContent(component, "", false)
         toolWindow.contentManager.addContent(content)
-        view.refresh()
+        view?.refresh()
     }
+
 }
 
 private class AgorToolWindow(private val project: Project) {
@@ -94,6 +101,7 @@ private class AgorToolWindow(private val project: Project) {
                 }
                 .onFailure { error ->
                     SwingUtilities.invokeLater {
+                        LOG.warn("Could not refresh Agor snapshot", error)
                         showConnectionError(error)
                     }
                 }
@@ -188,7 +196,12 @@ private class AgorToolWindow(private val project: Project) {
             val client = AgorApiClient(agorUrl, settings.agorToken)
             runCatching { client.action() }
                 .onSuccess { SwingUtilities.invokeLater { refresh() } }
-                .onFailure { error -> SwingUtilities.invokeLater { Messages.showErrorDialog(project, error.userFacingMessage("Agor action failed"), "Agor") } }
+                .onFailure { error ->
+                    SwingUtilities.invokeLater {
+                        LOG.warn("Agor action failed", error)
+                        showActionError(error)
+                    }
+                }
         }
     }
 
@@ -206,6 +219,16 @@ private class AgorToolWindow(private val project: Project) {
                 "Agor",
                 "Connection unavailable",
                 listOf(error.userFacingMessage("Could not load Agor")),
+            ),
+        )
+    }
+
+    private fun showActionError(error: Throwable) {
+        replaceInspector(
+            detailPanel(
+                "Agor",
+                "Action failed",
+                listOf(error.userFacingMessage("Agor action failed")),
             ),
         )
     }
@@ -259,6 +282,7 @@ private class AgorToolWindow(private val project: Project) {
             runCatching { it.connect() }
                 .onFailure { error ->
                     socketConnectionKey = null
+                    LOG.warn("Could not connect Agor socket", error)
                     showConnectionError(error)
                 }
         }
@@ -274,3 +298,8 @@ private fun String.escapeHtml(): String =
 
 private fun Throwable.userFacingMessage(fallback: String): String =
     message?.takeIf { it.isNotBlank() } ?: fallback
+
+private fun fallbackPanel(message: String): JPanel =
+    JPanel(BorderLayout()).apply {
+        add(JLabel(message), BorderLayout.NORTH)
+    }
