@@ -11,10 +11,9 @@ describe('getJunieSessionId', () => {
 });
 
 describe('buildJunieArgs', () => {
-  it('builds headless Junie args without leaking the API key', () => {
+  it('does not pass --session-id for a first Junie prompt', () => {
     const args = buildJunieArgs({
       projectPath: '/repo',
-      sessionId: 'agor-session',
       profileId: 'agor-litellm',
       modelDir: '/tmp/models',
       mcpDir: '/tmp/mcp',
@@ -27,8 +26,6 @@ describe('buildJunieArgs', () => {
     expect(args).toEqual([
       '--project',
       '/repo',
-      '--session-id',
-      'agor-session',
       '--model',
       'custom:agor-litellm',
       '--model-default-locations',
@@ -54,5 +51,28 @@ describe('buildJunieArgs', () => {
       'Do the thing',
     ]);
     expect(args.join(' ')).not.toContain('sk-junie');
+  });
+
+  it('passes --session-id only when resuming an existing Junie session', () => {
+    const args = buildJunieArgs({
+      projectPath: '/repo',
+      sessionId: 'junie-session-123',
+      profileId: 'agor-litellm',
+      modelDir: '/tmp/models',
+      mcpDir: '/tmp/mcp',
+      configPath: '/tmp/config.json',
+      cacheDir: '/tmp/cache',
+      outputPath: '/tmp/output.json',
+      prompt: 'Follow up',
+    });
+
+    expect(args.slice(0, 6)).toEqual([
+      '--project',
+      '/repo',
+      '--session-id',
+      'junie-session-123',
+      '--model',
+      'custom:agor-litellm',
+    ]);
   });
 });

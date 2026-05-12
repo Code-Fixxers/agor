@@ -47,7 +47,11 @@ async function resolveJunieApiKey(client: AgorClient, taskId: TaskID): Promise<s
   return result.apiKey;
 }
 
-async function getNextMessageIndex(client: AgorClient, sessionId: SessionID): Promise<number> {
+async function getMessageState(
+  client: AgorClient,
+  sessionId: SessionID,
+  taskId: TaskID
+): Promise<{ nextIndex: number; hasUserMessageForTask: boolean }> {
   const existingMessages = await client.service('messages').find({
     query: {
       session_id: sessionId,
@@ -55,7 +59,22 @@ async function getNextMessageIndex(client: AgorClient, sessionId: SessionID): Pr
     },
   });
   const messages = Array.isArray(existingMessages) ? existingMessages : existingMessages.data;
-  return messages?.length || 0;
+  return {
+    nextIndex: messages?.length || 0,
+    hasUserMessageForTask:
+      messages?.some((message) => {
+        const candidate = message as {
+          task_id?: string | null;
+          type?: string | null;
+          role?: string | null;
+        };
+        return (
+          candidate.task_id === taskId &&
+          (candidate.type === 'user' || candidate.type === 'system') &&
+          candidate.role === 'user'
+        );
+      }) ?? false,
+  };
 }
 
 async function writeJsonFile(filePath: string, value: unknown, mode = 0o600): Promise<void> {
@@ -187,10 +206,9 @@ export async function executeJunieTask(params: {
     );
   }
 
-  const junieSessionId = getJunieSessionId(sessionId, session.sdk_session_id);
-  if (!session.sdk_session_id) {
-    await client.service('sessions').patch(sessionId, { sdk_session_id: junieSessionId });
-  }
+  const junieSessionId = session.sdk_session_id
+    ? getJunieSessionId(sessionId, session.sdk_session_id)
+    : undefined;
 
   const files = await prepareJunieFiles({
     sessionId,
@@ -202,20 +220,23 @@ export async function executeJunieTask(params: {
   });
 
   try {
-    let nextIndex = await getNextMessageIndex(client, sessionId);
-    await client.service('messages').create({
-      message_id: generateId() as MessageID,
-      session_id: sessionId,
-      task_id: taskId,
-      type: 'user',
-      role: MessageRole.USER,
-      index: nextIndex,
-      timestamp: new Date().toISOString(),
-      content_preview: prompt.substring(0, 200),
-      content: prompt,
-      metadata: params.messageSource ? { source: params.messageSource } : undefined,
-    });
-    nextIndex += 1;
+    const messageState = await getMessageState(client, sessionId, taskId);
+    let nextIndex = messageState.nextIndex;
+    if (!messageState.hasUserMessageForTask) {
+      await client.service('messages').create({
+        message_id: generateId() as MessageID,
+        session_id: sessionId,
+        task_id: taskId,
+        type: 'user',
+        role: MessageRole.USER,
+        index: nextIndex,
+        timestamp: new Date().toISOString(),
+        content_preview: prompt.substring(0, 200),
+        content: prompt,
+        metadata: params.messageSource ? { source: params.messageSource } : undefined,
+      });
+      nextIndex += 1;
+    }
 
     const executable = settings.executable?.trim() || 'junie';
     const args = buildJunieArgs({
@@ -247,6 +268,11 @@ export async function executeJunieTask(params: {
       exitCode: processResult.exitCode,
       model: `custom:${JUNIE_PROFILE_ID}`,
     };
+    const returnedSessionId =
+      typeof rawSdkResponse.sessionId === 'string' ? rawSdkResponse.sessionId.trim() : '';
+    if (!session.sdk_session_id && returnedSessionId) {
+      await client.service('sessions').patch(sessionId, { sdk_session_id: returnedSessionId });
+    }
 
     if (processResult.exitCode !== 0) {
       const message = processResult.stderr.trim() || processResult.stdout.trim() || 'Junie failed';

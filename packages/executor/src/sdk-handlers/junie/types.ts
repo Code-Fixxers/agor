@@ -44,7 +44,7 @@ export interface JunieRawResponse {
 
 export interface JunieArgsOptions {
   projectPath: string;
-  sessionId: string;
+  sessionId?: string;
   profileId: string;
   modelDir: string;
   mcpDir: string;

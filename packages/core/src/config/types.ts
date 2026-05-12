@@ -258,7 +258,7 @@ export interface AgorJunieSettings {
   /** Optional faster/helper model for Junie internal tasks */
   fasterModel?: string;
 
-  /** Junie custom model API type (default: OpenAIResponses) */
+  /** Junie custom model API type (default: OpenAICompletion) */
   apiType?: 'OpenAIResponses' | 'OpenAICompletion';
 }
 

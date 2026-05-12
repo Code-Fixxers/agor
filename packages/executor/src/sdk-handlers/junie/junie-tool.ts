@@ -5,11 +5,9 @@ export function getJunieSessionId(agorSessionId: string, sdkSessionId?: string |
 }
 
 export function buildJunieArgs(options: JunieArgsOptions): string[] {
-  return [
+  const args = [
     '--project',
     options.projectPath,
-    '--session-id',
-    options.sessionId,
     '--model',
     `custom:${options.profileId}`,
     '--model-default-locations',
@@ -34,4 +32,10 @@ export function buildJunieArgs(options: JunieArgsOptions): string[] {
     '--task',
     options.prompt,
   ];
+
+  if (options.sessionId?.trim()) {
+    args.splice(2, 0, '--session-id', options.sessionId.trim());
+  }
+
+  return args;
 }

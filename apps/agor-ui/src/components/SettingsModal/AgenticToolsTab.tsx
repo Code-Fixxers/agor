@@ -30,7 +30,7 @@ export const AgenticToolsTab: React.FC<AgenticToolsTabProps> = ({ client }) => {
     litellmBaseUrl: '',
     defaultModel: '',
     fasterModel: '',
-    apiType: 'OpenAIResponses',
+    apiType: 'OpenAICompletion',
     executable: '',
   });
   const [junieSettingsInput, setJunieSettingsInput] = useState(junieSettings);
@@ -72,7 +72,7 @@ export const AgenticToolsTab: React.FC<AgenticToolsTabProps> = ({ client }) => {
           litellmBaseUrl: junie.litellmBaseUrl || '',
           defaultModel: junie.defaultModel || '',
           fasterModel: junie.fasterModel || '',
-          apiType: junie.apiType || 'OpenAIResponses',
+          apiType: junie.apiType || 'OpenAICompletion',
           executable: junie.executable || '',
         };
         setJunieSettings(loadedJunieSettings);
@@ -305,8 +305,8 @@ export const AgenticToolsTab: React.FC<AgenticToolsTabProps> = ({ client }) => {
             value={junieSettingsInput.apiType}
             onChange={(apiType) => setJunieSettingsInput((prev) => ({ ...prev, apiType }))}
             options={[
-              { value: 'OpenAIResponses', label: 'OpenAI Responses (recommended)' },
-              { value: 'OpenAICompletion', label: 'OpenAI Chat Completions' },
+              { value: 'OpenAICompletion', label: 'OpenAI Chat Completions (recommended)' },
+              { value: 'OpenAIResponses', label: 'OpenAI Responses' },
             ]}
           />
           <Input

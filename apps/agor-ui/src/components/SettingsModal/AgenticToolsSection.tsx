@@ -124,7 +124,7 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
   const [junieDefaultModel, setJunieDefaultModel] = useState('');
   const [junieFasterModel, setJunieFasterModel] = useState('');
   const [junieApiType, setJunieApiType] = useState<'OpenAIResponses' | 'OpenAICompletion'>(
-    'OpenAIResponses'
+    'OpenAICompletion'
   );
 
   // Load API keys configuration
@@ -227,14 +227,14 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
         setJunieLiteLLMBaseUrl(config?.litellmBaseUrl || '');
         setJunieDefaultModel(config?.defaultModel || '');
         setJunieFasterModel(config?.fasterModel || '');
-        setJunieApiType(config?.apiType || 'OpenAIResponses');
+        setJunieApiType(config?.apiType || 'OpenAICompletion');
       } catch (err) {
         console.error('Failed to load Junie config:', err);
         setJunieExecutable('junie');
         setJunieLiteLLMBaseUrl('');
         setJunieDefaultModel('');
         setJunieFasterModel('');
-        setJunieApiType('OpenAIResponses');
+        setJunieApiType('OpenAICompletion');
       } finally {
         setLoadingJunieConfig(false);
       }
@@ -566,10 +566,10 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
                   </Form.Item>
                   <Form.Item label="LiteLLM API type">
                     <Select value={junieApiType} onChange={setJunieApiType}>
-                      <Select.Option value="OpenAIResponses">OpenAI Responses</Select.Option>
                       <Select.Option value="OpenAICompletion">
                         OpenAI Chat Completions
                       </Select.Option>
+                      <Select.Option value="OpenAIResponses">OpenAI Responses</Select.Option>
                     </Select>
                   </Form.Item>
                   <Button

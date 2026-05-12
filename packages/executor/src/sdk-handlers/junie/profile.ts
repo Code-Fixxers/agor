@@ -8,7 +8,7 @@ function stripTrailingSlash(value: string): string {
 
 export function resolveJunieBaseUrl(
   baseUrl: string,
-  apiType: JunieApiType = 'OpenAIResponses'
+  apiType: JunieApiType = 'OpenAICompletion'
 ): string {
   const normalized = stripTrailingSlash(baseUrl.trim());
   if (apiType === 'OpenAIResponses') {
@@ -23,7 +23,7 @@ export function resolveJunieBaseUrl(
 }
 
 export function buildJunieModelProfile(options: JunieModelProfileOptions): JunieModelProfile {
-  const apiType = options.apiType ?? 'OpenAIResponses';
+  const apiType = options.apiType ?? 'OpenAICompletion';
   const profile: JunieModelProfile = {
     apiType,
     baseUrl: resolveJunieBaseUrl(options.baseUrl, apiType),
