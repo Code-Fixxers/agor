@@ -15,11 +15,10 @@
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Agor" anchor="right" icon="/icons/agor.svg" factoryClass="live.agor.jetbrains.toolwindow.AgorToolWindowFactory"/>
         <applicationService serviceImplementation="live.agor.jetbrains.settings.AgorSettings"/>
+        <applicationConfigurable
+            parentId="tools"
+            instance="live.agor.jetbrains.settings.AgorSettingsConfigurable"
+            id="live.agor.jetbrains.settings"
+            displayName="Agor"/>
     </extensions>
-
-    <applicationConfigurable
-        parentId="tools"
-        instance="live.agor.jetbrains.settings.AgorSettingsConfigurable"
-        id="live.agor.jetbrains.settings"
-        displayName="Agor"/>
 </idea-plugin>
