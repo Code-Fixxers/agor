@@ -228,7 +228,7 @@ class HermesSessionStore(
             emptyList()
         } else {
             runCatching {
-                AgorJson.decodeFromString(HermesSessionIndex.serializer(), file.readText()).sessions
+                decodeHermesSessions(file.readText())
             }.getOrDefault(emptyList())
         }
     }
@@ -237,7 +237,7 @@ class HermesSessionStore(
         val file = fileFor(scopeKey())
         file.parentFile?.mkdirs()
         val tmp = File(file.parentFile, "${file.name}.tmp")
-        tmp.writeText(AgorJson.encodeToString(HermesSessionIndex.serializer(), HermesSessionIndex(sessions)))
+        tmp.writeText(encodeHermesSessions(sessions))
         if (!tmp.renameTo(file)) {
             file.writeText(tmp.readText())
             tmp.delete()
@@ -262,6 +262,14 @@ class HermesSessionStore(
 
 @Serializable
 private data class HermesSessionIndex(val sessions: List<HermesSession>)
+
+internal fun encodeHermesSessions(sessions: List<HermesSession>): String =
+    AgorJson.encodeToString(HermesSessionIndex.serializer(), HermesSessionIndex(sessions))
+
+internal fun decodeHermesSessions(raw: String): List<HermesSession> =
+    runCatching {
+        AgorJson.decodeFromString(HermesSessionIndex.serializer(), raw).sessions
+    }.getOrDefault(emptyList())
 
 @Serializable
 data class HermesSession(

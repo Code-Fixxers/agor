@@ -62,6 +62,16 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 For the emulator, Agor's daemon at `http://localhost:3030` on the host is reachable
 from the emulator at `http://10.0.2.2:3030`.
 
+### Network policy
+
+Release builds use `app/src/main/res/xml/network_security_config.xml`, which
+denies cleartext traffic and trusts only system certificate authorities. Use HTTPS
+daemon URLs for production or release-candidate validation.
+
+Debug builds overlay `@xml/network_security_config` from `app/src/debug/`, allowing
+cleartext and user-installed CAs for local daemon development, emulator access to
+`http://10.0.2.2:3030`, and trusted proxy/debug certificates.
+
 ### NixOS / Nix
 
 The repo flake defines a fully-pinned Android build environment (SDK 35,
@@ -88,6 +98,61 @@ debug APK and uploads it as a downloadable artifact named
 `agor-android-debug-<short-sha>`. Open the Actions run, scroll to **Artifacts**,
 download the zip, then `adb install -r` the APK inside.
 
+## Release validation
+
+Before publishing a release or release candidate:
+
+* Build the intended variant and confirm the manifest does not allow cleartext
+  traffic for release builds.
+* Confirm release builds do not include the debug-only automation intent filters
+  or broadcast receiver from `app/src/debug/AndroidManifest.xml`. Those paths are
+  additionally guarded by `BuildConfig.DEBUG`, but they should remain absent from
+  release manifests.
+* Install a previous signed APK, then install the candidate over it with
+  `adb install -r` to confirm the signing certificate and package name are
+  update-compatible. `INSTALL_FAILED_UPDATE_INCOMPATIBLE` means the device sees a
+  different signing lineage and users will need an uninstall unless the signing
+  path is fixed.
+* Check that `versionCode` increases monotonically and the in-app update manifest
+  points to an APK signed with the same certificate as the installed app.
+* Exercise the in-app update flow on a clean device profile: download the APK,
+  tap install, grant Android's per-app "Install unknown apps" permission when
+  prompted, return to Agor, and tap install again. The permission is a system
+  setting, not a runtime dialog, so users must be able to recover after leaving
+  the app.
+* Re-run the update flow after the install permission is already allowed and
+  confirm it proceeds straight to the system package installer.
+* Audit permissions before release. `REQUEST_INSTALL_PACKAGES` is used only by
+  the in-app updater and must route through Android's per-app "Install unknown
+  apps" settings plus the system package installer. `SYSTEM_ALERT_WINDOW` is
+  currently declared for future floating voice/session affordances, but the app
+  does not request overlay access or call overlay APIs yet; remove it before
+  release unless that feature is actively shipped.
+
+## Credential storage policy
+
+Agor stores profile-scoped tokens, optional saved email/password credentials,
+optional saved API keys, GitHub update tokens, Hermes tokens, and remote Whisper
+tokens in app-private encrypted storage backed by Android security primitives.
+Backup and data-extraction rules exclude the secure preferences file.
+
+Saved passwords and API keys are allowed for this native client because they
+support silent re-authentication, biometric unlock, and profile switching. Treat
+them as long-lived secrets: only save them on a trusted personal device, prefer
+API-key login when possible, require biometric/user authentication before
+enabling biometric unlock, and use sign out to clear the current profile's saved
+token and credential snapshot.
+
+## Attachment URI handling
+
+Prompt, Hermes, gallery, camera, crash-log, and diagnostics attachments are copied
+into app-controlled memory or cache before upload. The app does not keep external
+document URIs for later retries, so it does not request persistable URI
+permissions today. If a future queued-upload feature stores external URIs across
+process death or reboot, that feature must explicitly call
+`takePersistableUriPermission` only for those retained URIs and release the grant
+after the upload completes or is deleted.
+
 ## On-device transcription
 
 Voice mode uses a local `ggml-base.en.bin` from `app/src/main/assets/whisper/`,
@@ -110,8 +175,17 @@ scripts/fetch-whisper-model.sh base.en
 If `SKIP_WHISPER=1` is set or the local assets are otherwise unavailable, the
 JNI library still compiles as a no-op stub and the voice UI reports local
 transcription as unavailable. Settings default remote transcription to
-WhisperLiveKit at `http://100.101.157.56:8090`, using `/v1/listen` for live
+WhisperLiveKit at `http://100.101.157.56:8090`, using `/asr` for live
 streaming and `/v1/audio/transcriptions` for final/fallback transcription.
+
+Model downloads use HTTPS from the upstream project release/source locations:
+the Whisper `ggml-base.en.bin` artifact is fetched from the `ggerganov/whisper.cpp`
+Hugging Face repository, and the Silero VAD ONNX file is fetched from the
+`snakers4/silero-vad` GitHub repository. Runtime downloads store files under
+app-private `filesDir/voice-models/` and only accept non-empty files today. There
+is no pinned checksum or signature verification yet, so release candidates should
+either ship vetted bundled assets or add checksum validation before treating
+runtime model refreshes as integrity-checked.
 
 ## Project structure
 

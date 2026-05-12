@@ -13,6 +13,13 @@ class TranscriptionServiceTest {
     }
 
     @Test
+    fun cleanTranscriptRemovesWhisperNoSpeechArtifacts() {
+        val cleaned = cleanTranscript(" <|nospeech|> (silence)  Hello   world. [ Silence ] ")
+
+        assertEquals("Hello world.", cleaned)
+    }
+
+    @Test
     fun encodeWavWritesPcmHeaderAndDataSize() {
         val wav = encodeWav(shortArrayOf(1, -1), sampleRate = 16_000)
 
@@ -21,6 +28,20 @@ class TranscriptionServiceTest {
         assertEquals("fmt ", wav.decodeAscii(12, 16))
         assertEquals("data", wav.decodeAscii(36, 40))
         assertTrue(wav.size == 48)
+    }
+
+    @Test
+    fun whisperLiveKitUrlUsesNativeAsrEndpoint() {
+        val url = whisperLiveKitAsrUrl("http://100.101.157.56:8090")
+
+        assertEquals("ws://100.101.157.56:8090/asr", url)
+    }
+
+    @Test
+    fun whisperLiveKitUrlPreservesExplicitWebSocketScheme() {
+        val url = whisperLiveKitAsrUrl("wss://voice.example.test/base/")
+
+        assertEquals("wss://voice.example.test/base/asr", url)
     }
 
     private fun ByteArray.decodeAscii(start: Int, end: Int): String {

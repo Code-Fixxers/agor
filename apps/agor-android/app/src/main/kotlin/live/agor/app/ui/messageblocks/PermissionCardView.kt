@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Construction
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -24,6 +25,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import live.agor.app.models.PermissionRequestContent
 import live.agor.app.models.PermissionStatus
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 @Composable
 fun PermissionCardView(
@@ -46,7 +50,19 @@ fun PermissionCardView(
             Text("Permission requested", style = MaterialTheme.typography.titleMedium)
         }
         Spacer(Modifier.height(8.dp))
-        Text(request.toolName, style = MaterialTheme.typography.bodyMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Construction, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text(request.toolName, style = MaterialTheme.typography.bodyMedium)
+        }
+        permissionInputPreview(request.toolInput)?.let { preview ->
+            Spacer(Modifier.height(4.dp))
+            Text(
+                preview,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         request.description?.takeIf { it.isNotEmpty() }?.let {
             Spacer(Modifier.height(4.dp))
             Text(it, style = MaterialTheme.typography.bodySmall)
@@ -70,3 +86,20 @@ fun PermissionCardView(
         }
     }
 }
+
+internal fun permissionInputPreview(input: JsonObject): String? {
+    val preferred = listOf("command", "file_path", "path", "pattern", "url", "query")
+    for (key in preferred) {
+        val value = input[key]?.asPreviewString()?.takeIf { it.isNotBlank() } ?: continue
+        return "$key: ${value.truncatePreview()}"
+    }
+    val keys = input.keys.sorted()
+    if (keys.isEmpty()) return null
+    return keys.take(5).joinToString(prefix = "{", postfix = "}") { it }
+}
+
+private fun kotlinx.serialization.json.JsonElement.asPreviewString(): String? =
+    (this as? JsonPrimitive)?.contentOrNull ?: toString()
+
+private fun String.truncatePreview(): String =
+    if (length <= 120) this else take(117) + "..."

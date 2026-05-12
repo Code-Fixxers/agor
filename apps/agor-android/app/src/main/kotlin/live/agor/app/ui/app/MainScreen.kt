@@ -1,11 +1,16 @@
 package live.agor.app.ui.app
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
@@ -17,6 +22,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -26,6 +34,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -39,6 +48,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
 import live.agor.app.LocalAppContainer
 import live.agor.app.ui.chat.ChatScreen
 import live.agor.app.ui.hermes.HermesScreen
@@ -49,6 +59,7 @@ import live.agor.app.ui.simpleViewModelFactory
 import live.agor.app.viewmodels.AppViewModel
 import live.agor.app.viewmodels.NavigationViewModel
 import live.agor.app.viewmodels.UpdateViewModel
+import live.agor.app.voice.ContinuousVoiceService
 
 sealed class MainRoute {
     data object EmptyHome : MainRoute()
@@ -67,8 +78,10 @@ fun MainScreen(app: AppViewModel) {
         factory = simpleViewModelFactory { UpdateViewModel(container) },
     )
     val updateState by updateVm.state.collectAsState()
+    val sessionVoice by ContinuousVoiceService.state.collectAsState()
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val processLifecycle = ProcessLifecycleOwner.get().lifecycle
     // Default to Hermes when configured — that's the orchestrator-first flow.
@@ -76,10 +89,23 @@ fun MainScreen(app: AppViewModel) {
     val initialRoute: MainRoute = if (container.hermesClient.isConfigured) MainRoute.Hermes()
     else MainRoute.EmptyHome
     var route by remember { mutableStateOf(initialRoute) }
+    var chatRefreshNonce by remember { mutableIntStateOf(0) }
+    var lastChatSessionId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) { nav.start() }
     LaunchedEffect(Unit) { updateVm.checkSilently() }
     DisposableEffect(Unit) { onDispose { nav.stop() } }
+    LaunchedEffect(Unit) {
+        app.snackbars.collectLatest { message ->
+            snackbarHostState.showSnackbar(message)
+            app.consumeToast()
+        }
+    }
+    LaunchedEffect(Unit) {
+        nav.transitionEvents.collect { event ->
+            app.showToast(event.message)
+        }
+    }
     DisposableEffect(processLifecycle) {
         var returnedFromBackground = false
         val observer = LifecycleEventObserver { _, event ->
@@ -87,12 +113,18 @@ fun MainScreen(app: AppViewModel) {
                 Lifecycle.Event.ON_START -> {
                     if (returnedFromBackground) {
                         returnedFromBackground = false
+                        app.showToast("Reconnecting...")
                         app.lockForBiometricIfNeeded()
+                        app.reconnectForForeground()
+                        nav.start()
+                        chatRefreshNonce += 1
                         container.hermesVoice.resumeForForeground()
+                        app.showToast("Updated")
                     }
                 }
                 Lifecycle.Event.ON_STOP -> {
                     returnedFromBackground = true
+                    nav.stop()
                     container.hermesVoice.stopForBackground()
                 }
                 else -> Unit
@@ -121,48 +153,69 @@ fun MainScreen(app: AppViewModel) {
         app.consumePendingHermesSessionId()
     }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            ModalDrawerSheet(modifier = Modifier.width(320.dp)) {
-                SidebarScreen(
-                    nav = nav,
-                    onSelectSession = { sessionId ->
-                        route = MainRoute.Chat(sessionId)
-                        scope.launch { drawerState.close() }
-                    },
-                    onSelectHermesSession = { sessionId ->
-                        route = MainRoute.Hermes(sessionId)
-                        scope.launch { drawerState.close() }
-                    },
-                    onOpenSettings = {
-                        route = MainRoute.Settings
-                        scope.launch { drawerState.close() }
-                    },
-                    onOpenHermes = {
-                        route = if (container.hermesClient.isConfigured) {
-                            MainRoute.Hermes()
-                        } else {
-                            MainRoute.HermesSetup
-                        }
-                        scope.launch { drawerState.close() }
-                    },
-                )
-            }
-        },
-    ) {
+    fun selectSession(sessionId: String) {
+        route = MainRoute.Chat(sessionId)
+        scope.launch { drawerState.close() }
+    }
+
+    fun selectHermesSession(sessionId: String?) {
+        route = MainRoute.Hermes(sessionId)
+        scope.launch { drawerState.close() }
+    }
+
+    fun openSettings() {
+        route = MainRoute.Settings
+        scope.launch { drawerState.close() }
+    }
+
+    fun openHermes() {
+        route = if (container.hermesClient.isConfigured) {
+            MainRoute.Hermes()
+        } else {
+            MainRoute.HermesSetup
+        }
+        scope.launch { drawerState.close() }
+    }
+
+    fun switchProfile(profile: live.agor.app.models.ServerProfile) {
+        route = MainRoute.EmptyHome
+        app.switchProfile(profile) {
+            nav.start()
+        }
+        scope.launch { drawerState.close() }
+    }
+
+    fun createSession(worktreeId: String) {
+        nav.createSession(worktreeId) { sessionId ->
+            route = MainRoute.Chat(sessionId)
+            scope.launch { drawerState.close() }
+        }
+    }
+
+    @Composable
+    fun Sidebar() {
+        SidebarScreen(
+            nav = nav,
+            onSelectSession = ::selectSession,
+            onSelectHermesSession = ::selectHermesSession,
+            onOpenSettings = ::openSettings,
+            onSwitchProfile = ::switchProfile,
+            onCreateSession = ::createSession,
+            onOpenHermes = ::openHermes,
+        )
+    }
+
+    @Composable
+    fun Content(openDrawer: () -> Unit) {
         when (val r = route) {
             is MainRoute.EmptyHome -> EmptyHome(
-                onOpenDrawer = { scope.launch { drawerState.open() } },
+                onOpenDrawer = openDrawer,
                 hermesConfigured = container.hermesClient.isConfigured,
-                onOpenHermes = {
-                    route = if (container.hermesClient.isConfigured) MainRoute.Hermes()
-                    else MainRoute.HermesSetup
-                },
+                onOpenHermes = ::openHermes,
             )
             is MainRoute.Hermes -> HermesScreen(
                 initialSessionId = r.sessionId,
-                onOpenDrawer = { scope.launch { drawerState.open() } },
+                onOpenDrawer = openDrawer,
                 onOpenSettings = { route = MainRoute.HermesSetup },
                 onOpenSession = { route = MainRoute.Chat(it) },
             )
@@ -172,18 +225,66 @@ fun MainScreen(app: AppViewModel) {
             )
             is MainRoute.Chat -> ChatScreen(
                 sessionId = r.sessionId,
-                onOpenDrawer = { scope.launch { drawerState.open() } },
+                refreshNonce = chatRefreshNonce,
+                onOpenDrawer = openDrawer,
                 onClose = { route = if (container.hermesClient.isConfigured) MainRoute.Hermes() else MainRoute.EmptyHome },
                 onOpenSession = { route = MainRoute.Chat(it) },
             )
             is MainRoute.Settings -> SettingsScreen(
                 app = app,
-                onOpenDrawer = { scope.launch { drawerState.open() } },
+                currentSessionId = lastChatSessionId,
+                onOpenDrawer = openDrawer,
                 onClose = { route = if (container.hermesClient.isConfigured) MainRoute.Hermes() else MainRoute.EmptyHome },
                 onOpenHermesSetup = { route = MainRoute.HermesSetup },
                 onDrawerSessionFilterChanged = { scope.launch { nav.refresh() } },
             )
         }
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val wideLayout = maxWidth >= 840.dp
+        if (wideLayout) {
+            Row(Modifier.fillMaxSize().testTag("main-two-pane")) {
+                ModalDrawerSheet(modifier = Modifier.width(320.dp).fillMaxHeight()) {
+                    Sidebar()
+                }
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    Content(openDrawer = { app.showToast("Navigation is already visible") })
+                }
+            }
+        } else {
+            ModalNavigationDrawer(
+                drawerState = drawerState,
+                drawerContent = {
+                    ModalDrawerSheet(modifier = Modifier.width(320.dp)) {
+                        Sidebar()
+                    }
+                },
+            ) {
+                Content(openDrawer = { scope.launch { drawerState.open() } })
+            }
+        }
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+        val currentChatSessionId = (route as? MainRoute.Chat)?.sessionId
+        val activeVoiceSessionId = sessionVoice.activeSessionId
+        if (sessionVoice.enabled && activeVoiceSessionId != null && activeVoiceSessionId != currentChatSessionId) {
+            SmallFloatingActionButton(
+                onClick = { route = MainRoute.Chat(activeVoiceSessionId) },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp)
+                    .testTag("return-to-voice-session"),
+            ) {
+                Icon(Icons.Default.GraphicEq, contentDescription = "Return to voice session")
+            }
+        }
+    }
+
+    LaunchedEffect(route) {
+        (route as? MainRoute.Chat)?.let { lastChatSessionId = it.sessionId }
     }
 
     UpdatePrompt(state = updateState, vm = updateVm)

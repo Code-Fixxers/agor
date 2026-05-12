@@ -2,6 +2,7 @@ package live.agor.app.network
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import live.agor.app.models.SessionStatus
 import live.agor.app.util.AppLogger
 import java.util.concurrent.ConcurrentHashMap
 
@@ -23,7 +25,7 @@ import java.util.concurrent.ConcurrentHashMap
  *    them concurrently from `Dispatchers.Default`. The previous `mutableMapOf`
  *    raced under high stream throughput.
  *
- *  - Throttling is done via a [MutableSharedFlow] + [sample] @ 100 ms instead of
+ *  - Throttling is done via a [MutableSharedFlow] + [sample] @ 50 ms instead of
  *    a manual debounce job. The old guard `if (debounceJob?.isActive) return`
  *    silently dropped trailing chunks before a long pause; `sample` keeps the
  *    most recent value and never drops the trailing edge.
@@ -33,16 +35,22 @@ import java.util.concurrent.ConcurrentHashMap
  *    unrelated entries, which is what allows Compose smart-skip to avoid
  *    re-recomposing message bubbles whose own snapshot didn't change.
  */
+@OptIn(FlowPreview::class)
 class StreamingService(
     private val socket: SocketService,
     private val logger: AppLogger,
 ) {
+    companion object {
+        const val STREAM_SAMPLE_INTERVAL_MS: Long = 50
+    }
+
     data class StreamSnapshot(val text: String, val thinking: String, val finished: Boolean)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val buffers = ConcurrentHashMap<String, StringBuilder>()
     private val thinkBuffers = ConcurrentHashMap<String, StringBuilder>()
+    private val sessionKeys = ConcurrentHashMap<String, String>()
 
     private val _live = MutableStateFlow<Map<String, StreamSnapshot>>(emptyMap())
     val live: StateFlow<Map<String, StreamSnapshot>> = _live.asStateFlow()
@@ -54,18 +62,31 @@ class StreamingService(
     )
 
     init {
-        // Sample at 100ms — at most ~10 emissions/sec per message under heavy
+        // Sample at 50ms — at most ~20 emissions/sec per message under heavy
         // streaming. Multiple chunks for the same messageId between ticks
         // coalesce into one snapshot read.
         scope.launch {
             emitTicks
-                .sample(100)
+                .sample(STREAM_SAMPLE_INTERVAL_MS)
                 .collect { messageId -> emitFor(messageId, finished = false) }
+        }
+
+        scope.launch {
+            socket.state
+                .collect { state ->
+                    if (state != ConnectionState.Connected) clearAll()
+                }
+        }
+        socket.onSessionPatched { session ->
+            if (shouldClearStreamsForSessionStatus(session.status)) {
+                clearSession(session.sessionId)
+            }
         }
 
         scope.launch {
             socket.streamingStart.collect { ev ->
                 val key = ev.messageId ?: return@collect
+                sessionKeys[key] = ev.sessionId
                 buffers.computeIfAbsent(key) { StringBuilder() }
                 thinkBuffers.computeIfAbsent(key) { StringBuilder() }
                 emitTicks.tryEmit(key)
@@ -74,20 +95,38 @@ class StreamingService(
         scope.launch {
             socket.streamingChunk.collect { ev ->
                 val key = ev.messageId ?: ev.sessionId
+                sessionKeys[key] = ev.sessionId
                 buffers.computeIfAbsent(key) { StringBuilder() }.append(ev.text)
+                emitTicks.tryEmit(key)
+            }
+        }
+        scope.launch {
+            socket.thinkingStart.collect { ev ->
+                val key = ev.messageId ?: ev.sessionId
+                sessionKeys[key] = ev.sessionId
+                thinkBuffers.computeIfAbsent(key) { StringBuilder() }
                 emitTicks.tryEmit(key)
             }
         }
         scope.launch {
             socket.thinkingChunk.collect { ev ->
                 val key = ev.messageId ?: ev.sessionId
+                sessionKeys[key] = ev.sessionId
                 thinkBuffers.computeIfAbsent(key) { StringBuilder() }.append(ev.text)
                 emitTicks.tryEmit(key)
             }
         }
         scope.launch {
+            socket.thinkingEnd.collect { ev ->
+                val key = ev.messageId ?: ev.sessionId
+                sessionKeys[key] = ev.sessionId
+                emitFor(key, finished = false)
+            }
+        }
+        scope.launch {
             socket.streamingEnd.collect { ev ->
                 val key = ev.messageId ?: return@collect
+                sessionKeys[key] = ev.sessionId
                 emitFor(key, finished = true)
             }
         }
@@ -106,7 +145,29 @@ class StreamingService(
     fun finalize(messageId: String) {
         buffers.remove(messageId)
         thinkBuffers.remove(messageId)
+        sessionKeys.remove(messageId)
         _live.update { it - messageId }
+    }
+
+    private fun clearSession(sessionId: String) {
+        val keys = sessionKeys.entries
+            .filter { it.value == sessionId }
+            .map { it.key }
+        if (keys.isEmpty()) return
+        keys.forEach { key ->
+            buffers.remove(key)
+            thinkBuffers.remove(key)
+            sessionKeys.remove(key)
+        }
+        _live.update { current -> current - keys.toSet() }
+    }
+
+    private fun clearAll() {
+        if (buffers.isEmpty() && thinkBuffers.isEmpty() && _live.value.isEmpty()) return
+        buffers.clear()
+        thinkBuffers.clear()
+        sessionKeys.clear()
+        _live.value = emptyMap()
     }
 
     /**
@@ -124,3 +185,5 @@ class StreamingService(
         }
     }
 }
+
+internal fun shouldClearStreamsForSessionStatus(status: SessionStatus): Boolean = !status.isActive

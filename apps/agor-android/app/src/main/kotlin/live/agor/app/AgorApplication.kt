@@ -4,15 +4,22 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.decode.GifDecoder
+import coil.decode.ImageDecoderDecoder
 import live.agor.app.notifications.NotificationChannels
+import live.agor.app.notifications.SessionTransitionPollWorker
 
-class AgorApplication : Application() {
+class AgorApplication : Application(), ImageLoaderFactory {
 
     val container: AppContainer by lazy { AppContainer(this) }
 
     override fun onCreate() {
         super.onCreate()
+        container.crashLogs.install()
         registerNotificationChannels()
+        SessionTransitionPollWorker.schedule(this)
     }
 
     private fun registerNotificationChannels() {
@@ -47,4 +54,15 @@ class AgorApplication : Application() {
         }
         nm.createNotificationChannel(hermes)
     }
+
+    override fun newImageLoader(): ImageLoader =
+        ImageLoader.Builder(this)
+            .components {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    add(ImageDecoderDecoder.Factory())
+                } else {
+                    add(GifDecoder.Factory())
+                }
+            }
+            .build()
 }

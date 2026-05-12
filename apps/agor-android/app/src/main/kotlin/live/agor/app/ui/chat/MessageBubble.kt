@@ -34,6 +34,7 @@ private val BubbleMaxWidth = 600.dp
 fun TextBubble(
     row: ChatRow.TextBubbleRow,
     onSessionClick: (String) -> Unit,
+    onWorktreePathClick: (String) -> Unit,
 ) {
     val alignment = if (row.role == MessageRole.USER) Alignment.End else Alignment.Start
     val bubbleColor = when (row.role) {
@@ -61,7 +62,11 @@ fun TextBubble(
             if (row.streaming) {
                 Text(text = row.text)
             } else {
-                MarkdownText(markdown = row.text, onSessionClick = onSessionClick)
+                MarkdownText(
+                    markdown = row.text,
+                    onSessionClick = onSessionClick,
+                    onWorktreePathClick = onWorktreePathClick,
+                )
             }
         }
     }

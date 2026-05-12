@@ -216,7 +216,9 @@ private fun elapsedMs(startedNanos: Long): Long =
 
 fun cleanTranscript(raw: String): String {
     return raw
-        .replace(Regex("\\[[A-Z_ ]+]"), " ")
+        .replace(Regex("<\\|[^>]+\\|>"), " ")
+        .replace(Regex("\\[[A-Za-z_ ]+]"), " ")
+        .replace(Regex("\\((?i:silence|blank audio|music|noise)\\)"), " ")
         .replace(Regex("\\s+"), " ")
         .trim()
 }

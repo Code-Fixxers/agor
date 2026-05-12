@@ -28,7 +28,7 @@ import java.util.concurrent.ConcurrentHashMap
 class HermesForegroundService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val activeJobs = ConcurrentHashMap<String, Job>()
-    private val queuedPrompts = ConcurrentHashMap<String, ArrayDeque<QueuedPrompt>>()
+    private val queuedPrompts = HermesPromptQueue()
     private lateinit var container: AppContainer
 
     override fun onCreate() {
@@ -145,11 +145,7 @@ class HermesForegroundService : Service() {
         attachments: List<HermesAttachment>,
     ) {
         if (activeJobs.containsKey(sessionId)) {
-            val queue = queuedPrompts.getOrPut(sessionId) { ArrayDeque() }
-            val depth = synchronized(queue) {
-                queue.addLast(QueuedPrompt(prompt, imageDataUrls, attachments))
-                queue.size
-            }
+            val depth = queuedPrompts.enqueue(sessionId, QueuedHermesPrompt(prompt, imageDataUrls, attachments))
             AppLogger.log(
                 "Hermes prompt queued session=${sessionId.take(8)} depth=$depth",
                 LogLevel.INFO,
@@ -161,18 +157,12 @@ class HermesForegroundService : Service() {
         startSessionRun(sessionId, prompt, imageDataUrls, attachments)
     }
 
-    private fun dequeueNextPrompt(sessionId: String): QueuedPrompt? {
-        val queue = queuedPrompts[sessionId] ?: return null
-        return synchronized(queue) {
-            val next = queue.removeFirstOrNull()
-            if (queue.isEmpty()) queuedPrompts.remove(sessionId)
-            next
-        }
+    private fun dequeueNextPrompt(sessionId: String): QueuedHermesPrompt? {
+        return queuedPrompts.dequeue(sessionId)
     }
 
     private fun queueDepth(sessionId: String): Int {
-        val queue = queuedPrompts[sessionId] ?: return 0
-        return synchronized(queue) { queue.size }
+        return queuedPrompts.depth(sessionId)
     }
 
     private fun buildNotification(activeCount: Int): Notification {
@@ -221,12 +211,6 @@ class HermesForegroundService : Service() {
         private const val EXTRA_IMAGE_DATA_URLS = "live.agor.app.extra.HERMES_IMAGE_DATA_URLS"
         private const val EXTRA_ATTACHMENTS_JSON = "live.agor.app.extra.HERMES_ATTACHMENTS_JSON"
         private const val NOTIF_ID = 5252
-
-        private data class QueuedPrompt(
-            val prompt: String,
-            val imageDataUrls: List<String>,
-            val attachments: List<HermesAttachment>,
-        )
 
         fun startPrompt(
             context: Context,

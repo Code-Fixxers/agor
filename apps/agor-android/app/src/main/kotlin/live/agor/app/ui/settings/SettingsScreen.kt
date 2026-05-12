@@ -1,6 +1,7 @@
 package live.agor.app.ui.settings
 
 import android.content.Intent
+import live.agor.app.auth.AuthState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,6 +26,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -45,8 +47,10 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import live.agor.app.BuildConfig
 import live.agor.app.LocalAppContainer
+import live.agor.app.models.ServerProfile
 import live.agor.app.models.DrawerSessionFilter
 import live.agor.app.network.ConnectionState
+import live.agor.app.network.UploadFileInput
 import live.agor.app.ui.common.ConnectionIndicator
 import live.agor.app.ui.common.findFragmentActivity
 import live.agor.app.ui.simpleViewModelFactory
@@ -58,6 +62,7 @@ import live.agor.app.viewmodels.UpdateViewModel
 import live.agor.app.auth.SecureTokenStore
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,9 +72,11 @@ fun SettingsScreen(
     onClose: () -> Unit,
     onOpenHermesSetup: (() -> Unit)? = null,
     onDrawerSessionFilterChanged: () -> Unit = {},
+    currentSessionId: String? = null,
 ) {
     val container = LocalAppContainer.current
     val user by app.user.collectAsState()
+    val auth by app.authState.collectAsState()
     val conn by app.connectionState.collectAsState()
     val scroll = rememberScrollState()
 
@@ -142,6 +149,11 @@ fun SettingsScreen(
             Spacer(Modifier.height(24.dp))
             Divider()
             Spacer(Modifier.height(16.dp))
+            ServerProfilesRow()
+
+            Spacer(Modifier.height(24.dp))
+            Divider()
+            Spacer(Modifier.height(16.dp))
             DrawerSessionFilterRow(onChanged = onDrawerSessionFilterChanged)
 
             Spacer(Modifier.height(24.dp))
@@ -175,7 +187,12 @@ fun SettingsScreen(
             Spacer(Modifier.height(24.dp))
             Divider()
             Spacer(Modifier.height(16.dp))
-            DiagnosticsRow()
+            DiagnosticsRow(
+                currentSessionId = currentSessionId,
+                authState = auth,
+                connectionState = conn,
+                baseUrl = container.client.baseUrl,
+            )
 
             Spacer(Modifier.height(24.dp))
             Divider()
@@ -203,15 +220,23 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun DiagnosticsRow() {
+private fun DiagnosticsRow(
+    currentSessionId: String?,
+    authState: AuthState,
+    connectionState: ConnectionState,
+    baseUrl: String,
+) {
+    val container = LocalAppContainer.current
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
+    val crashReport = remember { container.crashLogs.read() }
 
     fun shareLogs() {
         runCatching {
             val dir = File(context.cacheDir, "logs").apply { mkdirs() }
             val file = File(dir, "agor-logs-${System.currentTimeMillis()}.txt")
-            file.writeText(AppLogger.exportText())
+            file.writeText(AppLogger.exportText(container.crashLogs.read()))
             val uri = FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.update.fileprovider",
@@ -230,16 +255,75 @@ private fun DiagnosticsRow() {
         }
     }
 
+    fun clearLogs() {
+        val removed = AppLogger.clear()
+        container.crashLogs.clear()
+        message = if (removed == 1) {
+            "Cleared 1 log entry and crash log."
+        } else {
+            "Cleared $removed log entries and crash log."
+        }
+    }
+
+    fun sendLogsToSession() {
+        val sessionId = currentSessionId ?: run {
+            message = "Open an Agor session first, then return here to send logs."
+            return
+        }
+        val text = AppLogger.exportText(container.crashLogs.read())
+        val filename = "agor-android-logs-${System.currentTimeMillis()}.txt"
+        message = "Sending logs to session..."
+        scope.launch {
+            runCatching {
+                container.client.uploadSessionFiles(
+                    sessionId = sessionId,
+                    files = listOf(
+                        UploadFileInput(
+                            filename = filename,
+                            mimeType = "text/plain",
+                            bytes = text.toByteArray(),
+                        ),
+                    ),
+                    notifyAgent = true,
+                    message = diagnosticsUploadMessage(),
+                )
+            }.onSuccess {
+                message = "Logs sent to current session."
+            }.onFailure {
+                message = "Could not send logs: ${it.message}"
+            }
+        }
+    }
+
     Text("Diagnostics", style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(4.dp))
     Text(
-        "Export recent app logs for voice, transcription, networking, and update debugging.",
+        "Export recent app logs and the latest crash report for voice, transcription, networking, and update debugging.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(6.dp))
+    Text(
+        diagnosticHealthSummary(
+            authState = authState,
+            connectionState = connectionState,
+            baseUrl = baseUrl,
+            logEntryCount = AppLogger.snapshot().size,
+            hasCrashReport = !crashReport.isNullOrBlank(),
+        ),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.testTag("settings-diagnostic-health"),
     )
     Spacer(Modifier.height(8.dp))
     TextButton(onClick = ::shareLogs, modifier = Modifier.fillMaxWidth().testTag("settings-export-logs")) {
         Text("Download logs")
+    }
+    TextButton(onClick = ::sendLogsToSession, modifier = Modifier.fillMaxWidth().testTag("settings-send-logs")) {
+        Text("Send logs to current session")
+    }
+    TextButton(onClick = ::clearLogs, modifier = Modifier.fillMaxWidth().testTag("settings-clear-logs")) {
+        Text("Clear logs")
     }
     message?.let {
         Spacer(Modifier.height(4.dp))
@@ -249,6 +333,194 @@ private fun DiagnosticsRow() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+internal fun diagnosticsUploadMessage(): String =
+    "Attached file(s): {filepath}\n\nPlease review these Android diagnostics logs."
+
+internal fun diagnosticHealthSummary(
+    authState: AuthState,
+    connectionState: ConnectionState,
+    baseUrl: String,
+    logEntryCount: Int,
+    hasCrashReport: Boolean,
+): String {
+    val authLabel = when (authState) {
+        AuthState.Unknown -> "auth unknown"
+        AuthState.NeedsLogin -> "needs login"
+        AuthState.NeedsBiometricUnlock -> "locked"
+        AuthState.Authenticated -> "authenticated"
+    }
+    val socketLabel = when (connectionState) {
+        ConnectionState.Connected -> "socket connected"
+        ConnectionState.Connecting -> "socket connecting"
+        ConnectionState.Reconnecting -> "socket reconnecting"
+        ConnectionState.Disconnected -> "socket disconnected"
+    }
+    val httpLabel = if (baseUrl.isBlank()) "HTTP base URL unset" else "HTTP $baseUrl"
+    val crashLabel = if (hasCrashReport) "crash report available" else "no crash report"
+    return "$authLabel · $socketLabel · $httpLabel · $logEntryCount log entries · $crashLabel"
+}
+
+@Composable
+private fun ServerProfilesRow() {
+    val container = LocalAppContainer.current
+    val profiles by container.serverProfiles.profiles.collectAsState(initial = emptyList())
+    val activeUrl = container.tokenStore.serverUrl?.trimEnd('/').orEmpty()
+    val scope = rememberCoroutineScope()
+    var editing by remember { mutableStateOf<ServerProfile?>(null) }
+    var showEditor by remember { mutableStateOf(false) }
+
+    fun openEditor(profile: ServerProfile?) {
+        editing = profile
+        showEditor = true
+    }
+
+    Text("Servers", style = MaterialTheme.typography.titleMedium)
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "Saved Agor servers are shown in the drawer. Credentials are stored per server when you sign in.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(8.dp))
+    profiles.forEach { profile ->
+        val selected = profile.url.trimEnd('/') == activeUrl
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    listOfNotNull(
+                        profile.label,
+                        if (selected) "current" else null,
+                        if (profile.isDefault) "default" else null,
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    profile.url,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            TextButton(onClick = { openEditor(profile) }) {
+                Text("Edit")
+            }
+            TextButton(
+                onClick = {
+                    scope.launch {
+                        container.serverProfiles.setDefault(profile.id, profiles)
+                    }
+                },
+                enabled = !profile.isDefault,
+            ) {
+                Text("Default")
+            }
+            TextButton(
+                onClick = {
+                    scope.launch {
+                        container.serverProfiles.remove(profile.id, profiles)
+                        container.tokenStore.removeProfileCredentials(profile.id)
+                    }
+                },
+                enabled = !selected,
+            ) {
+                Text("Delete")
+            }
+        }
+    }
+    TextButton(
+        onClick = { openEditor(null) },
+        modifier = Modifier.fillMaxWidth().testTag("settings-add-server-profile"),
+    ) {
+        Text("Add server")
+    }
+
+    if (showEditor) {
+        ServerProfileEditorDialog(
+            initial = editing,
+            onDismiss = { showEditor = false },
+            onSave = { profile ->
+                scope.launch {
+                    container.serverProfiles.upsert(profile, profiles)
+                    showEditor = false
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun ServerProfileEditorDialog(
+    initial: ServerProfile?,
+    onDismiss: () -> Unit,
+    onSave: (ServerProfile) -> Unit,
+) {
+    var label by remember(initial) { mutableStateOf(initial?.label.orEmpty()) }
+    var url by remember(initial) { mutableStateOf(initial?.url.orEmpty()) }
+    var email by remember(initial) { mutableStateOf(initial?.email.orEmpty()) }
+    val trimmedUrl = url.trim().trimEnd('/')
+    val canSave = label.trim().isNotBlank() && trimmedUrl.isNotBlank()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "Add server" else "Edit server") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it },
+                    label = { Text("Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("Daemon URL") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Email") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val id = initial?.id ?: UUID.randomUUID().toString()
+                    onSave(
+                        ServerProfile(
+                            id = id,
+                            label = label.trim(),
+                            url = trimmedUrl,
+                            email = email.trim().ifBlank { null },
+                            isDefault = initial?.isDefault == true,
+                        ),
+                    )
+                },
+                enabled = canSave,
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
 }
 
 @Composable

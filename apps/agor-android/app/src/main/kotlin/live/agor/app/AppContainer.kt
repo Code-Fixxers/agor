@@ -9,10 +9,12 @@ import live.agor.app.auth.BiometricCredentialStore
 import live.agor.app.auth.SecureTokenStore
 import live.agor.app.auth.ServerProfileManager
 import live.agor.app.data.ChatCache
+import live.agor.app.data.ChatDraftStore
 import live.agor.app.data.FavoriteSessionsStore
 import live.agor.app.data.HermesImageStore
 import live.agor.app.data.HermesSessionStore
 import live.agor.app.data.SidebarCache
+import live.agor.app.data.SidebarExpansionStore
 import live.agor.app.network.AgorClient
 import live.agor.app.network.HermesClient
 import live.agor.app.network.SocketService
@@ -21,7 +23,9 @@ import live.agor.app.notifications.AgorNotificationManager
 import live.agor.app.update.UpdateChecker
 import live.agor.app.update.UpdateInstaller
 import live.agor.app.util.AppLogger
+import live.agor.app.util.CrashLogStore
 import live.agor.app.voice.HermesVoiceManager
+import live.agor.app.voice.SessionVoiceSettingsStore
 import live.agor.app.voice.VoiceModelManager
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -33,6 +37,7 @@ import java.util.concurrent.TimeUnit
 class AppContainer(context: Context) {
     val appContext: Context = context.applicationContext
     val logger: AppLogger = AppLogger
+    val crashLogs: CrashLogStore = CrashLogStore(appContext.filesDir)
     val tokenStore: SecureTokenStore = SecureTokenStore(appContext)
     val serverProfiles: ServerProfileManager = ServerProfileManager(appContext)
     val biometricStore: BiometricCredentialStore = BiometricCredentialStore(appContext, tokenStore)
@@ -42,11 +47,14 @@ class AppContainer(context: Context) {
     val socket: SocketService = SocketService(client, logger)
     val streaming: StreamingService = StreamingService(socket, logger)
     val sidebarCache: SidebarCache = SidebarCache(appContext)
+    val sidebarExpansion: SidebarExpansionStore = SidebarExpansionStore(appContext)
     val favoriteSessions: FavoriteSessionsStore = FavoriteSessionsStore(appContext)
     val chatCache: ChatCache = ChatCache(appContext, tokenStore)
+    val chatDrafts: ChatDraftStore = ChatDraftStore(appContext, tokenStore)
     val hermesSessions: HermesSessionStore = HermesSessionStore(appContext, tokenStore)
     val hermesImages: HermesImageStore = HermesImageStore(appContext)
     val voiceModels: VoiceModelManager = VoiceModelManager(appContext)
+    val sessionVoiceSettings: SessionVoiceSettingsStore = SessionVoiceSettingsStore(appContext)
     val hermesVoice: HermesVoiceManager = HermesVoiceManager(appContext, tokenStore, hermesSessions, voiceModels)
     val notifications: AgorNotificationManager = AgorNotificationManager(appContext)
 

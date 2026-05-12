@@ -29,6 +29,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -42,7 +45,11 @@ import live.agor.app.viewmodels.FileBrowserViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FileBrowserSheet(worktreeId: String, onDismiss: () -> Unit) {
+fun FileBrowserSheet(
+    worktreeId: String,
+    onDismiss: () -> Unit,
+    initialPath: String? = null,
+) {
     val container = LocalAppContainer.current
     val vm: FileBrowserViewModel = viewModel(
         key = "files-$worktreeId",
@@ -50,7 +57,22 @@ fun FileBrowserSheet(worktreeId: String, onDismiss: () -> Unit) {
     )
     val state by vm.state.collectAsState()
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var handledInitialPath by remember(worktreeId, initialPath) { mutableStateOf(false) }
     LaunchedEffect(Unit) { vm.load() }
+    LaunchedEffect(state.flatList, initialPath, handledInitialPath) {
+        val target = initialPath?.trim('/')?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        if (handledInitialPath || state.isLoading || state.flatList.isEmpty()) return@LaunchedEffect
+        handledInitialPath = true
+
+        val knownPaths = state.flatList.map { it.path.trim('/') }.toSet()
+        val exact = knownPaths.firstOrNull { it == target }
+        val targetForExpansion = exact ?: nearestKnownPath(target, knownPaths) ?: target
+        expandParents(targetForExpansion, onToggle = vm::toggle)
+        val exactItem = state.flatList.firstOrNull { it.path.trim('/') == exact }
+        if (exactItem?.isDirectory != true && exact != null) {
+            vm.open(exact)
+        }
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet) {
         Box(modifier = Modifier.fillMaxSize().padding(16.dp)) {
@@ -165,4 +187,23 @@ private fun humanSize(bytes: Long): String {
     if (kb < 1024) return "${"%.1f".format(kb)} KB"
     val mb = kb / 1024.0
     return "${"%.1f".format(mb)} MB"
+}
+
+private fun nearestKnownPath(target: String, knownPaths: Set<String>): String? {
+    var cursor = target.substringBeforeLast('/', missingDelimiterValue = "")
+    while (cursor.isNotEmpty()) {
+        if (cursor in knownPaths || knownPaths.any { it.startsWith("$cursor/") }) return cursor
+        cursor = cursor.substringBeforeLast('/', missingDelimiterValue = "")
+    }
+    return null
+}
+
+private fun expandParents(path: String, onToggle: (String) -> Unit) {
+    val parts = path.trim('/').split('/').filter { it.isNotEmpty() }
+    if (parts.size < 2) return
+    var cursor = ""
+    parts.dropLast(1).forEach { part ->
+        cursor = if (cursor.isEmpty()) part else "$cursor/$part"
+        onToggle(cursor)
+    }
 }

@@ -15,16 +15,21 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import live.agor.app.models.AgorTask
 import live.agor.app.models.Message
 import live.agor.app.models.Session
+import live.agor.app.models.SessionMCPServer
 import live.agor.app.models.StreamingChunkEvent
 import live.agor.app.models.StreamingEndEvent
 import live.agor.app.models.StreamingErrorEvent
 import live.agor.app.models.StreamingStartEvent
 import live.agor.app.models.ThinkingChunkEvent
+import live.agor.app.models.ThinkingEndEvent
+import live.agor.app.models.ThinkingStartEvent
 import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
 
@@ -55,6 +60,9 @@ class SocketService(
     private val taskPatched = mutableListOf<(AgorTask) -> Unit>()
     private val messageCreated = mutableListOf<(Message) -> Unit>()
     private val messagePatched = mutableListOf<(Message) -> Unit>()
+    private val sessionMcpServerCreated = mutableListOf<(SessionMCPServer) -> Unit>()
+    private val sessionMcpServerPatched = mutableListOf<(SessionMCPServer) -> Unit>()
+    private val sessionMcpServerRemoved = mutableListOf<(SessionMCPServer) -> Unit>()
 
     private val _streamingStart = MutableSharedFlow<StreamingStartEvent>(extraBufferCapacity = 64)
     val streamingStart: SharedFlow<StreamingStartEvent> = _streamingStart.asSharedFlow()
@@ -66,6 +74,10 @@ class SocketService(
     val streamingError: SharedFlow<StreamingErrorEvent> = _streamingError.asSharedFlow()
     private val _thinkingChunk = MutableSharedFlow<ThinkingChunkEvent>(extraBufferCapacity = 256)
     val thinkingChunk: SharedFlow<ThinkingChunkEvent> = _thinkingChunk.asSharedFlow()
+    private val _thinkingStart = MutableSharedFlow<ThinkingStartEvent>(extraBufferCapacity = 64)
+    val thinkingStart: SharedFlow<ThinkingStartEvent> = _thinkingStart.asSharedFlow()
+    private val _thinkingEnd = MutableSharedFlow<ThinkingEndEvent>(extraBufferCapacity = 64)
+    val thinkingEnd: SharedFlow<ThinkingEndEvent> = _thinkingEnd.asSharedFlow()
 
     var onAuthFailure: (() -> Unit)? = null
 
@@ -76,6 +88,9 @@ class SocketService(
     fun onTaskPatched(handler: (AgorTask) -> Unit) { taskPatched += handler }
     fun onMessageCreated(handler: (Message) -> Unit) { messageCreated += handler }
     fun onMessagePatched(handler: (Message) -> Unit) { messagePatched += handler }
+    fun onSessionMcpServerCreated(handler: (SessionMCPServer) -> Unit) { sessionMcpServerCreated += handler }
+    fun onSessionMcpServerPatched(handler: (SessionMCPServer) -> Unit) { sessionMcpServerPatched += handler }
+    fun onSessionMcpServerRemoved(handler: (SessionMCPServer) -> Unit) { sessionMcpServerRemoved += handler }
 
     fun connect() {
         val url = client.baseUrl
@@ -145,12 +160,23 @@ class SocketService(
         s.on("tasks patched") { args -> decode(args, AgorTask.serializer()) { taskPatched.forEach { h -> h(it) } } }
         s.on("messages created") { args -> decode(args, Message.serializer()) { messageCreated.forEach { h -> h(it) } } }
         s.on("messages patched") { args -> decode(args, Message.serializer()) { messagePatched.forEach { h -> h(it) } } }
+        s.on("session-mcp-servers created") { args ->
+            decode(args, SessionMCPServer.serializer()) { event -> sessionMcpServerCreated.forEach { h -> h(event) } }
+        }
+        s.on("session-mcp-servers patched") { args ->
+            decode(args, SessionMCPServer.serializer()) { event -> sessionMcpServerPatched.forEach { h -> h(event) } }
+        }
+        s.on("session-mcp-servers removed") { args ->
+            decode(args, SessionMCPServer.serializer()) { event -> sessionMcpServerRemoved.forEach { h -> h(event) } }
+        }
 
         s.on("messages streaming:start") { args -> decode(args, StreamingStartEvent.serializer()) { _streamingStart.tryEmit(it) } }
         s.on("messages streaming:chunk") { args -> decode(args, StreamingChunkEvent.serializer()) { _streamingChunk.tryEmit(it) } }
         s.on("messages streaming:end") { args -> decode(args, StreamingEndEvent.serializer()) { _streamingEnd.tryEmit(it) } }
         s.on("messages streaming:error") { args -> decode(args, StreamingErrorEvent.serializer()) { _streamingError.tryEmit(it) } }
+        s.on("messages thinking:start") { args -> decode(args, ThinkingStartEvent.serializer()) { _thinkingStart.tryEmit(it) } }
         s.on("messages thinking:chunk") { args -> decode(args, ThinkingChunkEvent.serializer()) { _thinkingChunk.tryEmit(it) } }
+        s.on("messages thinking:end") { args -> decode(args, ThinkingEndEvent.serializer()) { _thinkingEnd.tryEmit(it) } }
     }
 
     private fun authenticateWithFeathers() {
@@ -184,7 +210,7 @@ class SocketService(
     }
 
     /**
-     * Generic Socket.IO ack call. Used for `find` against the authenticated socket.
+     * Generic Socket.IO service calls against the authenticated socket.
      */
     fun <T : Any> emitFind(
         service: String,
@@ -197,11 +223,66 @@ class SocketService(
             onResult(null); return
         }
         s.emit("find", service, query, io.socket.client.Ack { args ->
-            val payload = args.getOrNull(1) ?: return@Ack onResult(null)
-            val str = payload.toString()
-            val parsed = runCatching { AgorJson.parseToJsonElement(str) }.getOrNull()
-            onResult(parsed?.let { decode(it) })
+            onResult(socketAckPayload(args)?.let { decode(it) })
         })
+    }
+
+    fun <T : Any> emitGet(
+        service: String,
+        id: String,
+        params: JSONObject = JSONObject(),
+        decode: (JsonElement) -> T?,
+        onResult: (T?) -> Unit,
+    ) {
+        emitServiceCall("get", service, arrayOf(id, params), decode, onResult)
+    }
+
+    fun <T : Any> emitCreate(
+        service: String,
+        data: JSONObject,
+        params: JSONObject = JSONObject(),
+        decode: (JsonElement) -> T?,
+        onResult: (T?) -> Unit,
+    ) {
+        emitServiceCall("create", service, arrayOf(data, params), decode, onResult)
+    }
+
+    fun <T : Any> emitPatch(
+        service: String,
+        id: String,
+        data: JSONObject,
+        params: JSONObject = JSONObject(),
+        decode: (JsonElement) -> T?,
+        onResult: (T?) -> Unit,
+    ) {
+        emitServiceCall("patch", service, arrayOf(id, data, params), decode, onResult)
+    }
+
+    fun <T : Any> emitRemove(
+        service: String,
+        id: String,
+        params: JSONObject = JSONObject(),
+        decode: (JsonElement) -> T?,
+        onResult: (T?) -> Unit,
+    ) {
+        emitServiceCall("remove", service, arrayOf(id, params), decode, onResult)
+    }
+
+    private fun <T : Any> emitServiceCall(
+        method: String,
+        service: String,
+        payloadArgs: Array<Any>,
+        decode: (JsonElement) -> T?,
+        onResult: (T?) -> Unit,
+    ) {
+        val s = socket
+        if (s == null || _state.value != ConnectionState.Connected) {
+            onResult(null); return
+        }
+        val args = arrayOf<Any>(service, *payloadArgs, io.socket.client.Ack { ackArgs ->
+            onResult(socketAckPayload(ackArgs)?.let { decode(it) })
+        })
+        s.emit(method, *args)
     }
 
     private fun <T> decode(
@@ -217,4 +298,30 @@ class SocketService(
         }.onSuccess { onValue(it) }
             .onFailure { logger.log("decode failed: ${it.message}", LogLevel.WARNING, "Socket") }
     }
+}
+
+internal fun socketAckPayload(args: Array<out Any?>): JsonElement? {
+    if (args.isEmpty()) return null
+
+    val first = args.firstOrNull()
+    if (first is String && first.equals("NO ACK", ignoreCase = true)) return null
+    if (first is JSONObject && (first.has("code") || first.has("message") || first.has("name"))) return null
+
+    val payload = if (first == null || first === JSONObject.NULL) {
+        args.getOrNull(1)
+    } else {
+        first
+    } ?: return null
+
+    if (payload is String && payload.equals("NO ACK", ignoreCase = true)) return null
+    if (payload === JSONObject.NULL) return JsonNull
+
+    return runCatching {
+        when (payload) {
+            is JsonElement -> payload
+            is JSONObject, is JSONArray -> AgorJson.parseToJsonElement(payload.toString())
+            is String -> AgorJson.parseToJsonElement(payload)
+            else -> AgorJson.parseToJsonElement(payload.toString())
+        }
+    }.getOrNull()
 }

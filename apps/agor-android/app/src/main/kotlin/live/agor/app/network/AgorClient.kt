@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -14,15 +14,20 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import live.agor.app.auth.SecureTokenStore
 import live.agor.app.models.AgorTask
+import live.agor.app.models.AgenticTool
 import live.agor.app.models.Board
 import live.agor.app.models.FileDetail
 import live.agor.app.models.FileListItem
 import live.agor.app.models.MCPServer
+import live.agor.app.models.ModelConfig
 import live.agor.app.models.Message
+import live.agor.app.models.PermissionConfig
+import live.agor.app.models.PermissionMode
 import live.agor.app.models.Repo
 import live.agor.app.models.Session
+import live.agor.app.models.SessionMCPServer
+import live.agor.app.models.SessionStatus
 import live.agor.app.models.User
 import live.agor.app.models.Worktree
 import live.agor.app.util.AppLogger
@@ -37,6 +42,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
+interface AgorTokenStore {
+    var accessToken: String?
+    var refreshToken: String?
+    var serverUrl: String?
+    var lastEmail: String?
+}
+
 /**
  * REST client for Agor's FeathersJS API.
  *
@@ -47,9 +59,9 @@ import java.util.concurrent.TimeUnit
  *
  * Mirrors apps/agor-ios/AgorApp/Services/AgorClient.swift.
  */
-class AgorClient(private val tokens: SecureTokenStore) {
+class AgorClient(private val tokens: AgorTokenStore) {
 
-    val tokensRef: SecureTokenStore get() = tokens
+    val tokensRef: AgorTokenStore get() = tokens
 
     private val _baseUrl = MutableStateFlow(tokens.serverUrl ?: "")
     val baseUrlState: StateFlow<String> = _baseUrl.asStateFlow()
@@ -75,28 +87,12 @@ class AgorClient(private val tokens: SecureTokenStore) {
      * the first one whose /health endpoint responds. Mirrors AuthService's probe in iOS.
      */
     suspend fun probeBaseUrl(input: String): String? = withContext(Dispatchers.IO) {
-        val trimmed = input.trim().trimEnd('/')
+        val trimmed = normalizeAgorBaseUrl(input)
         if (trimmed.isEmpty()) return@withContext null
-        for (candidate in candidatesFor(trimmed)) {
+        for (candidate in agorBaseUrlCandidates(trimmed)) {
             if (healthOk(candidate)) return@withContext candidate
         }
         null
-    }
-
-    private fun candidatesFor(input: String): List<String> {
-        val out = mutableListOf<String>()
-        val hasScheme = input.startsWith("http://") || input.startsWith("https://")
-        val hasPort = input.substringAfterLast('/').contains(':')
-        if (hasScheme) {
-            out += input
-            if (!hasPort) out += "$input:3030"
-        } else {
-            out += "https://$input"
-            out += "https://$input:3030"
-            out += "http://$input"
-            out += "http://$input:3030"
-        }
-        return out.distinct()
     }
 
     private fun healthOk(url: String): Boolean {
@@ -120,7 +116,7 @@ class AgorClient(private val tokens: SecureTokenStore) {
         }.getOrDefault(false)
     }
 
-    private fun canonicalUrl(url: String): String = url.trim().trimEnd('/')
+    private fun canonicalUrl(url: String): String = normalizeAgorBaseUrl(url)
 
     // ---- Auth ----
 
@@ -223,6 +219,21 @@ class AgorClient(private val tokens: SecureTokenStore) {
 
     suspend fun getSession(id: String): Session = getOne("/sessions/$id", Session.serializer())
 
+    suspend fun createSession(
+        worktreeId: String,
+        agenticTool: AgenticTool,
+        title: String? = null,
+        permissionConfig: PermissionConfig? = null,
+        modelConfig: ModelConfig? = null,
+    ): Session = withContext(Dispatchers.IO) {
+        val resp = authenticatedRequest(
+            "POST",
+            "/sessions",
+            createSessionPayload(worktreeId, agenticTool, title, permissionConfig, modelConfig),
+        )
+        AgorJson.decodeFromJsonElement(Session.serializer(), resp)
+    }
+
     suspend fun listTasks(sessionId: String): List<AgorTask> =
         listAll("/tasks", AgorTask.serializer(), mapOf("session_id" to sessionId))
 
@@ -230,13 +241,15 @@ class AgorClient(private val tokens: SecureTokenStore) {
         sessionId: String,
         limit: Int = 100,
         skip: Int = 0,
+        taskId: String? = null,
     ): List<Message> {
-        val q = mapOf(
-            "session_id" to sessionId,
-            "\$limit" to limit.toString(),
-            "\$skip" to skip.toString(),
-            "\$sort[index]" to "-1",
-        )
+        val q = buildMap {
+            put("session_id", sessionId)
+            put("\$limit", limit.toString())
+            put("\$skip", skip.toString())
+            put("\$sort[index]", "-1")
+            taskId?.let { put("task_id", it) }
+        }
         return listPage("/messages", Message.serializer(), q).sortedBy { it.index }
     }
 
@@ -244,6 +257,37 @@ class AgorClient(private val tokens: SecureTokenStore) {
 
     suspend fun listMcpServers(): List<MCPServer> =
         listAll("/mcp-servers", MCPServer.serializer())
+
+    suspend fun listSessionMcpServers(sessionId: String): List<SessionMCPServer> =
+        listAll(
+            "/session-mcp-servers",
+            SessionMCPServer.serializer(),
+            mapOf("session_id" to sessionId),
+        )
+
+    suspend fun addSessionMcpServer(sessionId: String, serverId: String) {
+        authenticatedRequest(
+            "POST",
+            "/sessions/$sessionId/mcp-servers",
+            sessionMcpAttachPayload(serverId),
+        )
+    }
+
+    suspend fun removeSessionMcpServer(sessionId: String, serverId: String) {
+        authenticatedRequest(
+            "DELETE",
+            "/sessions/$sessionId/mcp-servers/${encodePath(serverId)}",
+            JsonObject(emptyMap()),
+        )
+    }
+
+    suspend fun setSessionMcpServerEnabled(sessionId: String, serverId: String, enabled: Boolean) {
+        authenticatedRequest(
+            "PATCH",
+            "/sessions/$sessionId/mcp-servers/${encodePath(serverId)}",
+            sessionMcpTogglePayload(enabled),
+        )
+    }
 
     suspend fun listFiles(worktreeId: String): List<FileListItem> =
         listAll("/file", FileListItem.serializer(), mapOf("worktree_id" to worktreeId))
@@ -280,22 +324,7 @@ class AgorClient(private val tokens: SecureTokenStore) {
             LogLevel.INFO,
             "Chat",
         )
-        val body = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .addFormDataPart("notifyAgent", notifyAgent.toString())
-            .addFormDataPart("message", message)
-            .apply {
-                files.forEach { file ->
-                    val mediaType = file.mimeType?.toMediaTypeOrNull()
-                        ?: "application/octet-stream".toMediaType()
-                    addFormDataPart(
-                        "files",
-                        file.filename,
-                        file.bytes.toRequestBody(mediaType),
-                    )
-                }
-            }
-            .build()
+        val body = uploadSessionFilesMultipartBody(files, notifyAgent, message)
         val resp = authenticatedMultipartUpload(
             buildUrl("/sessions/$sessionId/upload", mapOf("destination" to "worktree")),
             body,
@@ -315,31 +344,33 @@ class AgorClient(private val tokens: SecureTokenStore) {
 
     suspend fun decidePermission(
         sessionId: String,
-        permissionId: String,
+        requestId: String,
+        taskId: String?,
         approve: Boolean,
+        decidedBy: String,
         note: String? = null,
+        remember: Boolean = false,
+        scope: String = "once",
     ) {
-        val body = buildJsonObject {
-            put("permission_id", JsonPrimitive(permissionId))
-            put("decision", JsonPrimitive(if (approve) "approved" else "denied"))
-            note?.let { put("decision_note", JsonPrimitive(it)) }
-        }
-        authenticatedRequest("POST", "/sessions/$sessionId/permission-decision", body)
+        authenticatedRequest(
+            "POST",
+            "/sessions/$sessionId/permission-decision",
+            permissionDecisionPayload(requestId, taskId, approve, decidedBy, note, remember, scope),
+        )
     }
 
     suspend fun answerInputRequest(
         sessionId: String,
-        inputRequestId: String,
-        answers: List<String>,
+        requestId: String,
+        taskId: String?,
+        answers: Map<String, String>,
+        respondedBy: String,
     ) {
-        val body = buildJsonObject {
-            put("input_request_id", JsonPrimitive(inputRequestId))
-            put(
-                "answers",
-                AgorJson.encodeToJsonElement(ListSerializer(String.serializer()), answers),
-            )
-        }
-        authenticatedRequest("POST", "/sessions/$sessionId/input-response", body)
+        authenticatedRequest(
+            "POST",
+            "/sessions/$sessionId/input-response",
+            inputResponsePayload(requestId, taskId, answers, respondedBy),
+        )
     }
 
     suspend fun patchSession(sessionId: String, fields: JsonObject): Session = withContext(Dispatchers.IO) {
@@ -567,6 +598,125 @@ private inline fun buildJsonObject(block: MutableMap<String, JsonElement>.() -> 
     val map = mutableMapOf<String, JsonElement>()
     map.block()
     return JsonObject(map)
+}
+
+internal fun normalizeAgorBaseUrl(input: String): String = input.trim().trimEnd('/')
+
+internal fun agorBaseUrlCandidates(input: String): List<String> {
+    val normalized = normalizeAgorBaseUrl(input)
+    if (normalized.isBlank()) return emptyList()
+    val out = mutableListOf<String>()
+    val hasScheme = normalized.startsWith("http://") || normalized.startsWith("https://")
+    val hostPortPart = normalized
+        .removePrefix("http://")
+        .removePrefix("https://")
+        .substringBefore('/')
+    val hasPort = hostPortPart.contains(':')
+    if (hasScheme) {
+        out += normalized
+        if (!hasPort) {
+            val scheme = normalized.substringBefore("://")
+            val rest = normalized.substringAfter("://")
+            out += "$scheme://$rest:3030"
+        }
+    } else {
+        out += "https://$normalized"
+        out += "https://$normalized:3030"
+        out += "http://$normalized"
+        out += "http://$normalized:3030"
+    }
+    return out.distinct()
+}
+
+internal fun uploadSessionFilesMultipartBody(
+    files: List<UploadFileInput>,
+    notifyAgent: Boolean,
+    message: String,
+): MultipartBody = MultipartBody.Builder()
+    .setType(MultipartBody.FORM)
+    .addFormDataPart("notifyAgent", notifyAgent.toString())
+    .addFormDataPart("message", message)
+    .apply {
+        files.forEach { file ->
+            val mediaType = file.mimeType?.toMediaTypeOrNull()
+                ?: "application/octet-stream".toMediaType()
+            addFormDataPart(
+                "files",
+                file.filename,
+                file.bytes.toRequestBody(mediaType),
+            )
+        }
+    }
+    .build()
+
+internal fun permissionDecisionPayload(
+    requestId: String,
+    taskId: String?,
+    approve: Boolean,
+    decidedBy: String,
+    note: String? = null,
+    remember: Boolean = false,
+    scope: String = "once",
+): JsonObject = buildJsonObject {
+    put("requestId", JsonPrimitive(requestId))
+    taskId?.let { put("taskId", JsonPrimitive(it)) }
+    put("allow", JsonPrimitive(approve))
+    put("reason", JsonPrimitive(note ?: if (approve) "Approved by user" else "Denied by user"))
+    put("remember", JsonPrimitive(remember))
+    put("scope", JsonPrimitive(scope))
+    put("decidedBy", JsonPrimitive(decidedBy))
+}
+
+internal fun inputResponsePayload(
+    requestId: String,
+    taskId: String?,
+    answers: Map<String, String>,
+    respondedBy: String,
+): JsonObject = buildJsonObject {
+    put("requestId", JsonPrimitive(requestId))
+    taskId?.let { put("taskId", JsonPrimitive(it)) }
+    put(
+        "answers",
+        AgorJson.encodeToJsonElement(
+            MapSerializer(String.serializer(), String.serializer()),
+            answers,
+        ),
+    )
+    put("respondedBy", JsonPrimitive(respondedBy))
+}
+
+internal fun createSessionPayload(
+    worktreeId: String,
+    agenticTool: AgenticTool,
+    title: String?,
+    permissionConfig: PermissionConfig?,
+    modelConfig: ModelConfig?,
+): JsonObject = buildJsonObject {
+    put("worktree_id", JsonPrimitive(worktreeId))
+    put("status", AgorJson.encodeToJsonElement(SessionStatus.serializer(), SessionStatus.IDLE))
+    put("agentic_tool", AgorJson.encodeToJsonElement(AgenticTool.serializer(), agenticTool))
+    title?.takeIf { it.isNotBlank() }?.let { put("title", JsonPrimitive(it)) }
+    permissionConfig?.let {
+        put("permission_config", AgorJson.encodeToJsonElement(PermissionConfig.serializer(), it))
+    }
+    modelConfig?.let {
+        put("model_config", AgorJson.encodeToJsonElement(ModelConfig.serializer(), it))
+    }
+}
+
+internal fun sessionPermissionModePayload(mode: PermissionMode): JsonObject = buildJsonObject {
+    put(
+        "permission_config",
+        AgorJson.encodeToJsonElement(PermissionConfig.serializer(), PermissionConfig(mode = mode)),
+    )
+}
+
+internal fun sessionMcpAttachPayload(serverId: String): JsonObject = buildJsonObject {
+    put("mcpServerId", JsonPrimitive(serverId))
+}
+
+internal fun sessionMcpTogglePayload(enabled: Boolean): JsonObject = buildJsonObject {
+    put("enabled", JsonPrimitive(enabled))
 }
 
 private fun elapsedMs(startedNanos: Long): Long =

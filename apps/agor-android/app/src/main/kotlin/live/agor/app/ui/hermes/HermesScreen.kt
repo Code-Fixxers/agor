@@ -288,7 +288,15 @@ fun HermesScreen(
                             TurnBubble(turn, onSessionClick = onOpenSession)
                         }
                         state.errorMessage?.let { error ->
-                            item { ErrorBubble(error, onDismiss = vm::cancel, onOpenSettings = onOpenSettings) }
+                            item {
+                                ErrorBubble(
+                                    message = error,
+                                    onRetry = vm::retryFailedTurn,
+                                    onResume = vm::resumeFailedTurn,
+                                    onDismiss = vm::cancel,
+                                    onOpenSettings = onOpenSettings,
+                                )
+                            }
                         }
                     }
                 }
@@ -575,7 +583,13 @@ private fun TurnBubble(
 }
 
 @Composable
-private fun ErrorBubble(message: String, onDismiss: () -> Unit, onOpenSettings: () -> Unit) {
+private fun ErrorBubble(
+    message: String,
+    onRetry: () -> Unit,
+    onResume: () -> Unit,
+    onDismiss: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
     Surface(
         color = MaterialTheme.colorScheme.errorContainer,
         shape = MaterialTheme.shapes.medium,
@@ -597,6 +611,8 @@ private fun ErrorBubble(message: String, onDismiss: () -> Unit, onOpenSettings: 
                 modifier = Modifier.padding(top = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                Button(onClick = onRetry) { Text("Retry") }
+                Button(onClick = onResume) { Text("Resume") }
                 TextButton(onClick = onOpenSettings) { Text("Open settings") }
                 TextButton(onClick = onDismiss) { Text("Dismiss") }
             }

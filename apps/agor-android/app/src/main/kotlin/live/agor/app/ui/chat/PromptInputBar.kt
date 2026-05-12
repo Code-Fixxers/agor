@@ -66,7 +66,12 @@ fun PromptInputBar(
                     items(attachments, key = { it.id }) { attachment ->
                         AssistChip(
                             onClick = { onRemoveAttachment(attachment.id) },
-                            label = { Text("${attachment.filename} (${formatAttachmentSize(attachment.sizeBytes)})") },
+                            label = {
+                                Text(
+                                    attachment.uploadedPath
+                                        ?: "${attachment.filename} (${formatAttachmentSize(attachment.sizeBytes)})",
+                                )
+                            },
                             trailingIcon = {
                                 Icon(
                                     Icons.Default.Close,

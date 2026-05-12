@@ -63,6 +63,11 @@ fun HermesSetupScreen(
     var probing by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var statusOk by remember { mutableStateOf(false) }
+    val partialConfigMessage = when {
+        url.isBlank() && token.isNotBlank() -> "Hermes is partially configured: add the base URL before saving or testing."
+        url.isNotBlank() && token.isBlank() -> "Hermes is partially configured: add a fresh API server token before saving or testing."
+        else -> null
+    }
 
     Scaffold(
         topBar = {
@@ -85,9 +90,11 @@ fun HermesSetupScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "Hermes runs in a container on your NixOS host and exposes an OpenAI-compatible API. Enter the Tailnet URL and the API server bearer token.",
+                partialConfigMessage
+                    ?: "Hermes runs in a container on your NixOS host and exposes an OpenAI-compatible API. Enter the Tailnet URL and the API server bearer token.",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (partialConfigMessage == null) MaterialTheme.colorScheme.onSurfaceVariant
+                else MaterialTheme.colorScheme.error,
             )
 
             OutlinedTextField(

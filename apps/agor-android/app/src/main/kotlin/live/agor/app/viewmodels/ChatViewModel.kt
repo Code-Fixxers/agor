@@ -25,19 +25,30 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import live.agor.app.AppContainer
 import live.agor.app.models.AgorTask
+import live.agor.app.models.ContentBlock
+import live.agor.app.models.InputRequestContent
 import live.agor.app.models.InputRequestStatus
 import live.agor.app.models.Message
 import live.agor.app.models.MessageContent
+import live.agor.app.models.MessageRole
 import live.agor.app.models.PermissionStatus
+import live.agor.app.models.PermissionMode
 import live.agor.app.models.Session
 import live.agor.app.network.UploadFileInput
+import live.agor.app.network.sessionPermissionModePayload
 import live.agor.app.network.StreamingService
 import live.agor.app.ui.chat.ChatRow
 import live.agor.app.ui.chat.ChatRowFlattener
+import live.agor.app.ui.chat.TaskCentricChat
+import live.agor.app.ui.chat.groupMessagesByTask
+import live.agor.app.ui.chat.taskCentricTasks
 import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
+import live.agor.app.voice.ContinuousVoiceService
 import live.agor.app.voice.PromptVoiceInputController
 import live.agor.app.voice.PromptVoicePhase
+import live.agor.app.voice.SessionVoicePolicy
+import live.agor.app.voice.SessionVoiceSettings
 import java.io.IOException
 import java.util.UUID
 
@@ -66,6 +77,7 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         val mimeType: String?,
         val sizeBytes: Long,
         val bytes: ByteArray,
+        val uploadedPath: String? = null,
     ) {
         fun toUploadInput(): UploadFileInput = UploadFileInput(filename, mimeType, bytes)
     }
@@ -87,6 +99,14 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
     private val _tasks = MutableStateFlow<List<AgorTask>>(emptyList())
     val tasks: StateFlow<List<AgorTask>> = _tasks.asStateFlow()
 
+    private val _messagesByTask = MutableStateFlow<Map<String, List<Message>>>(emptyMap())
+    val messagesByTask: StateFlow<Map<String, List<Message>>> = _messagesByTask.asStateFlow()
+
+    private val _loadedTaskIds = MutableStateFlow<Set<String>>(emptySet())
+    val loadedTaskIds: StateFlow<Set<String>> = _loadedTaskIds.asStateFlow()
+
+    private val _taskWindow = MutableStateFlow(TaskCentricChat.initialWindow(emptyList()))
+
     /** Mirrors [StreamingService.live] directly; no extra copy. */
     val live: StateFlow<Map<String, StreamingService.StreamSnapshot>> = container.streaming.live
 
@@ -95,6 +115,10 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
 
     private val _attachments = MutableStateFlow<List<PendingSessionAttachment>>(emptyList())
     val attachments: StateFlow<List<PendingSessionAttachment>> = _attachments.asStateFlow()
+
+    val sessionVoiceState: StateFlow<live.agor.app.voice.SessionVoiceState> = ContinuousVoiceService.state
+    val sessionVoiceSettings: StateFlow<SessionVoiceSettings> = container.sessionVoiceSettings.settings
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionVoiceSettings.Default)
 
     private val promptVoice = PromptVoiceInputController(
         container.appContext,
@@ -105,6 +129,8 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
 
     private val rowFlattener = ChatRowFlattener()
     private var cacheSaveJob: Job? = null
+    private var draftSaveJob: Job? = null
+    private var postSendRefreshJob: Job? = null
     private var voiceDraftPrefix: String? = null
 
     /** Lazy derivation — scans messages from the end, returns first pending. */
@@ -129,21 +155,19 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
      * (drawer toggle, file browser sheet) so re-entry doesn't trigger a cold
      * recomputation.
      */
-    private val rowStructure: StateFlow<ChatRowFlattener.Structure> = combine(
-        _messages,
-        _tasks,
-    ) { m, t -> rowFlattener.buildStructure(m, t, m.size >= 100) }
-        .flowOn(Dispatchers.Default)
-        .stateIn(
-            viewModelScope,
-            SharingStarted.WhileSubscribed(5_000),
-            ChatRowFlattener.Structure(showLoadEarlier = false, messageLayouts = emptyList()),
-        )
-
     val rows: StateFlow<List<ChatRow>> = combine(
-        rowStructure,
+        _tasks,
+        _messagesByTask,
+        _taskWindow,
         live,
-    ) { structure, l -> rowFlattener.render(structure, l) }
+    ) { t, byTask, window, l ->
+        rowFlattener.renderTaskCentric(
+            orderedTasks = t,
+            messagesByTask = byTask,
+            window = window,
+            live = l,
+        )
+    }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -156,16 +180,26 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         }
         container.socket.onMessageCreated { msg ->
             if (msg.sessionId != sessionId) return@onMessageCreated
-            viewModelScope.launch { upsertSorted(msg) }
+            viewModelScope.launch {
+                upsertSorted(msg)
+                speakAssistantIfNeeded(msg)
+            }
         }
         container.socket.onMessagePatched { msg ->
             if (msg.sessionId != sessionId) return@onMessagePatched
-            viewModelScope.launch { upsertSorted(msg) }
+            viewModelScope.launch {
+                upsertSorted(msg)
+                speakAssistantIfNeeded(msg)
+            }
         }
         container.socket.onTaskCreated { t ->
             if (t.sessionId != sessionId) return@onTaskCreated
             viewModelScope.launch {
-                _tasks.update { current -> current + t }
+                _tasks.update { current ->
+                    taskCentricTasks(sessionId, current.filterNot { it.taskId == t.taskId } + t, _messages.value)
+                }
+                _taskWindow.update { it.expand(t.taskId) }
+                _loadedTaskIds.value = _taskWindow.value.loadedTaskIds
                 scheduleCacheSave()
             }
         }
@@ -174,8 +208,9 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
             viewModelScope.launch {
                 _tasks.update { current ->
                     val idx = current.indexOfFirst { it.taskId == t.taskId }
-                    if (idx < 0) current + t
+                    val next = if (idx < 0) current + t
                     else current.toMutableList().apply { set(idx, t) }
+                    taskCentricTasks(sessionId, next, _messages.value)
                 }
                 scheduleCacheSave()
             }
@@ -184,6 +219,7 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
             if (s.sessionId != sessionId) return@onSessionPatched
             viewModelScope.launch {
                 _uiState.update { it.copy(session = s) }
+                syncSessionVoice(s)
                 scheduleCacheSave()
             }
         }
@@ -192,10 +228,13 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
     fun load() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            val savedDraft = container.chatDrafts.load(sessionId)
+            if (savedDraft.isNotEmpty()) {
+                _uiState.update { it.copy(draft = savedDraft) }
+            }
             val cached = container.chatCache.load(sessionId)
             if (cached != null) {
-                _messages.value = cached.messages.sortedBy { it.index }
-                _tasks.value = cached.tasks
+                applyInitialTaskCentricState(cached.tasks, cached.messages)
                 _uiState.update {
                     it.copy(session = cached.session, isLoading = false, errorMessage = null)
                 }
@@ -208,11 +247,32 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
                     val messagesDeferred = async { container.client.listMessages(sessionId, limit = 200) }
                     Triple(sessionDeferred.await(), tasksDeferred.await(), messagesDeferred.await())
                 }
-                _messages.value = mergeMessages(cached?.messages.orEmpty(), latestMessages)
-                _tasks.value = tasks
-                _uiState.update {
-                    it.copy(session = session, isLoading = false, errorMessage = null)
+                val viewedSession = if (session.readyForPrompt == true) {
+                    runCatching {
+                        container.client.patchSession(
+                            sessionId,
+                            JsonObject(mapOf("ready_for_prompt" to JsonPrimitive(false))),
+                        )
+                    }.getOrDefault(session.copy(readyForPrompt = false))
+                } else {
+                    session
                 }
+                val orderedTasks = taskCentricTasks(sessionId, tasks, latestMessages)
+                val latestTaskId = orderedTasks.lastOrNull()?.taskId
+                val latestTaskMessages = if (latestTaskId == null || latestTaskId == TaskCentricChat.VirtualTaskId) {
+                    latestMessages
+                } else {
+                    runCatching {
+                        container.client.listMessages(sessionId, limit = 200, taskId = latestTaskId)
+                    }.getOrElse {
+                        latestMessages.filter { message -> message.taskId == latestTaskId }
+                    }
+                }
+                applyInitialTaskCentricState(tasks, latestTaskMessages)
+                _uiState.update {
+                    it.copy(session = viewedSession, isLoading = false, errorMessage = null)
+                }
+                syncSessionVoice(viewedSession)
                 val elapsed = SystemClock.elapsedRealtime() - started
                 AppLogger.log(
                     "Chat $sessionId refresh loaded ${tasks.size} tasks and " +
@@ -220,7 +280,7 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
                     LogLevel.DEBUG,
                     "Perf",
                 )
-                container.chatCache.save(session, tasks, _messages.value)
+                container.chatCache.save(viewedSession, tasks, _messages.value)
             } catch (t: Throwable) {
                 AppLogger.log("Chat load failed: ${t.message}", LogLevel.ERROR, "Chat")
                 _uiState.update {
@@ -242,12 +302,45 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
             // a user-driven action (button tap) — not in the streaming hot path —
             // so a single sortedBy is fine.
             _messages.value = mergeMessages(older, current)
+            regroupLoadedMessages(_messages.value)
+            scheduleCacheSave()
+        }
+    }
+
+    fun showOlderTasks() {
+        _taskWindow.update { it.revealOlder(orderedTasks = _tasks.value) }
+        _loadedTaskIds.value = _taskWindow.value.loadedTaskIds
+    }
+
+    fun toggleTask(taskId: String) {
+        val window = _taskWindow.value
+        if (taskId in window.expandedTaskIds) {
+            _messagesByTask.update { it - taskId }
+            _taskWindow.update {
+                it.copy(
+                    expandedTaskIds = it.expandedTaskIds - taskId,
+                    loadedTaskIds = it.loadedTaskIds - taskId,
+                )
+            }
+            _loadedTaskIds.value = _taskWindow.value.loadedTaskIds
+            syncFlatMessagesFromTaskMap()
+            scheduleCacheSave()
+            return
+        }
+
+        viewModelScope.launch {
+            val loaded = loadMessagesForTask(taskId)
+            _messagesByTask.update { current -> current + (taskId to loaded) }
+            _taskWindow.update { it.expand(taskId) }
+            _loadedTaskIds.value = _taskWindow.value.loadedTaskIds
+            syncFlatMessagesFromTaskMap()
             scheduleCacheSave()
         }
     }
 
     fun updateDraft(text: String) {
         _uiState.update { it.copy(draft = text) }
+        scheduleDraftSave(text)
     }
 
     fun hasMicPermission(): Boolean = promptVoice.hasMicPermission()
@@ -272,6 +365,47 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         promptVoice.dismissWhisperDownloadPrompt()
     }
 
+    fun startSessionVoiceMode() {
+        ContinuousVoiceService.start(container.appContext, sessionId)
+        _uiState.value.session?.let(::syncSessionVoice)
+    }
+
+    fun stopSessionVoiceMode() {
+        ContinuousVoiceService.stop(container.appContext)
+    }
+
+    fun updateSessionVoiceTranscript(text: String) {
+        ContinuousVoiceService.updatePendingTranscript(text)
+    }
+
+    fun sendSessionVoiceTranscriptNow() {
+        ContinuousVoiceService.sendPendingTranscript()
+    }
+
+    fun cancelSessionVoiceTranscript() {
+        ContinuousVoiceService.cancelPendingTranscript()
+    }
+
+    fun skipSessionVoiceTts() {
+        ContinuousVoiceService.skipTts()
+    }
+
+    fun downloadSessionVoiceWhisperModel() {
+        ContinuousVoiceService.downloadWhisperModel()
+    }
+
+    fun dismissSessionVoiceWhisperDownloadPrompt() {
+        ContinuousVoiceService.dismissWhisperDownloadPrompt()
+    }
+
+    fun saveSessionVoiceSettings(settings: SessionVoiceSettings) {
+        viewModelScope.launch { container.sessionVoiceSettings.save(settings) }
+    }
+
+    fun resetSessionVoiceSettings() {
+        viewModelScope.launch { container.sessionVoiceSettings.reset() }
+    }
+
     fun addAttachmentFromUri(uri: Uri) {
         viewModelScope.launch {
             runCatching { withContext(Dispatchers.IO) { readAttachment(uri) } }
@@ -291,7 +425,7 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
     }
 
     fun addLogsAttachment() {
-        val text = AppLogger.exportText()
+        val text = AppLogger.exportText(container.crashLogs.read())
         val filename = "agor-android-logs-${System.currentTimeMillis()}.txt"
         _attachments.update { current ->
             current + PendingSessionAttachment(
@@ -319,11 +453,7 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
                 if (pendingAttachments.isEmpty()) {
                     container.client.sendPrompt(sessionId, text)
                 } else {
-                    val message = if (text.isBlank()) {
-                        "Attached file(s): {filepath}\n\nPlease review these attached files."
-                    } else {
-                        "$text\n\nAttached file(s): {filepath}"
-                    }
+                    val message = uploadNotificationMessage(text)
                     val result = container.client.uploadSessionFiles(
                         sessionId = sessionId,
                         files = pendingAttachments.map { it.toUploadInput() },
@@ -333,6 +463,10 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
                     result.warning?.let { warning ->
                         AppLogger.log("Upload notification warning: $warning", LogLevel.WARNING, "Chat")
                     }
+                    val uploadedPaths = result.files.map { it.path }
+                    if (uploadedPaths.isNotEmpty()) {
+                        _attachments.value = pendingAttachments.withUploadedPaths(uploadedPaths)
+                    }
                 }
                 AppLogger.log(
                     "Session send completed session=${sessionId.take(8)} attachments=${pendingAttachments.size} elapsed=${SystemClock.elapsedRealtime() - started}ms",
@@ -340,7 +474,9 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
                     "Chat",
                 )
                 _uiState.update { it.copy(draft = "") }
+                container.chatDrafts.clear(sessionId)
                 _attachments.value = emptyList()
+                schedulePostSendRefresh()
             } catch (t: Throwable) {
                 AppLogger.log(
                     "Send failed session=${sessionId.take(8)} attachments=${pendingAttachments.size} elapsed=${SystemClock.elapsedRealtime() - started}ms: ${t.message}",
@@ -358,15 +494,33 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         }
     }
 
-    fun decidePermission(permissionId: String, approve: Boolean) {
+    fun decidePermission(permissionId: String, taskId: String?, approve: Boolean) {
         viewModelScope.launch {
-            runCatching { container.client.decidePermission(sessionId, permissionId, approve) }
+            val decidedBy = container.authService.user.value?.userId ?: "anonymous"
+            runCatching {
+                container.client.decidePermission(
+                    sessionId = sessionId,
+                    requestId = permissionId,
+                    taskId = taskId,
+                    approve = approve,
+                    decidedBy = decidedBy,
+                )
+            }
         }
     }
 
-    fun answerInputRequest(inputRequestId: String, answers: List<String>) {
+    fun answerInputRequest(request: InputRequestContent, taskId: String?, answers: List<String>) {
         viewModelScope.launch {
-            runCatching { container.client.answerInputRequest(sessionId, inputRequestId, answers) }
+            val respondedBy = container.authService.user.value?.userId ?: "anonymous"
+            runCatching {
+                container.client.answerInputRequest(
+                    sessionId = sessionId,
+                    requestId = request.inputRequestId,
+                    taskId = taskId,
+                    answers = answersByQuestion(request, answers),
+                    respondedBy = respondedBy,
+                )
+            }
         }
     }
 
@@ -377,6 +531,35 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
                     sessionId,
                     JsonObject(mapOf("archived" to JsonPrimitive(true))),
                 )
+            }
+        }
+    }
+
+    fun resetSession(onCreated: (String) -> Unit) {
+        val current = _uiState.value.session ?: return
+        viewModelScope.launch {
+            runCatching {
+                container.client.patchSession(
+                    sessionId,
+                    JsonObject(
+                        mapOf(
+                            "archived" to JsonPrimitive(true),
+                            "archived_reason" to JsonPrimitive("reset"),
+                        ),
+                    ),
+                )
+                container.client.createSession(
+                    worktreeId = current.worktreeId,
+                    agenticTool = current.agenticTool,
+                    title = current.title,
+                    permissionConfig = current.permissionConfig,
+                    modelConfig = current.modelConfig,
+                )
+            }.onSuccess { fresh ->
+                onCreated(fresh.sessionId)
+            }.onFailure { error ->
+                AppLogger.log("Reset session failed: ${error.message}", LogLevel.ERROR, "Chat")
+                _uiState.update { it.copy(errorMessage = error.message) }
             }
         }
     }
@@ -395,6 +578,20 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
                 scheduleCacheSave()
             }.onFailure { error ->
                 AppLogger.log("Rename failed: ${error.message}", LogLevel.ERROR, "Chat")
+                _uiState.update { it.copy(errorMessage = error.message) }
+            }
+        }
+    }
+
+    fun changePermissionMode(mode: PermissionMode) {
+        viewModelScope.launch {
+            runCatching {
+                container.client.patchSession(sessionId, sessionPermissionModePayload(mode))
+            }.onSuccess { updated ->
+                _uiState.update { it.copy(session = updated, errorMessage = null) }
+                scheduleCacheSave()
+            }.onFailure { error ->
+                AppLogger.log("Permission mode update failed: ${error.message}", LogLevel.ERROR, "Chat")
                 _uiState.update { it.copy(errorMessage = error.message) }
             }
         }
@@ -424,6 +621,7 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
             if (insertIdx >= out.size) out.add(message) else out.add(insertIdx, message)
             out
         }
+        upsertTaskMessage(message)
         // Drop the streaming buffer for this id once the canonical message lands.
         container.streaming.finalize(message.messageId)
         scheduleCacheSave()
@@ -436,6 +634,108 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
             delay(500)
             container.chatCache.save(session, _tasks.value, _messages.value)
         }
+    }
+
+    private fun scheduleDraftSave(text: String) {
+        draftSaveJob?.cancel()
+        draftSaveJob = viewModelScope.launch {
+            delay(300)
+            container.chatDrafts.save(sessionId, text)
+        }
+    }
+
+    private fun schedulePostSendRefresh() {
+        postSendRefreshJob?.cancel()
+        postSendRefreshJob = viewModelScope.launch {
+            delay(1_200)
+            runCatching {
+                val tasks = container.client.listTasks(sessionId)
+                val latestMessages = container.client.listMessages(sessionId, limit = 200)
+                val orderedTasks = taskCentricTasks(sessionId, tasks, latestMessages)
+                _tasks.value = orderedTasks
+                val currentLatest = orderedTasks.lastOrNull()?.taskId
+                val merged = mergeMessages(_messages.value, latestMessages)
+                _messages.value = merged
+                if (currentLatest != null) {
+                    _taskWindow.update { it.expand(currentLatest) }
+                }
+                regroupLoadedMessages(merged)
+                _loadedTaskIds.value = _taskWindow.value.loadedTaskIds
+                scheduleCacheSave()
+            }.onFailure { error ->
+                AppLogger.log(
+                    "Post-send refresh failed session=${sessionId.take(8)}: ${error.message}",
+                    LogLevel.WARNING,
+                    "Chat",
+                )
+            }
+        }
+    }
+
+    private fun applyInitialTaskCentricState(
+        rawTasks: List<AgorTask>,
+        messages: List<Message>,
+    ) {
+        val orderedTasks = taskCentricTasks(sessionId, rawTasks, messages)
+        val grouped = groupMessagesByTask(messages, orderedTasks)
+        val state = TaskCentricChat.initialState(orderedTasks, grouped)
+        _tasks.value = state.orderedTasks
+        _messagesByTask.value = state.messagesByTask
+        _taskWindow.value = state.window
+        _loadedTaskIds.value = state.window.loadedTaskIds
+        syncFlatMessagesFromTaskMap()
+    }
+
+    private suspend fun loadMessagesForTask(taskId: String): List<Message> =
+        if (taskId == TaskCentricChat.VirtualTaskId) {
+            container.client.listMessages(sessionId, limit = 200)
+        } else {
+            runCatching {
+                container.client.listMessages(sessionId, limit = 200, taskId = taskId)
+            }.getOrElse {
+                _messages.value.filter { message -> message.taskId == taskId }
+            }
+        }
+
+    private fun regroupLoadedMessages(messages: List<Message>) {
+        val grouped = groupMessagesByTask(messages, _tasks.value)
+        _messagesByTask.value = grouped.filterKeys { it in _taskWindow.value.loadedTaskIds }
+        syncFlatMessagesFromTaskMap()
+    }
+
+    private fun upsertTaskMessage(message: Message) {
+        ensureVirtualTaskFor(message)
+        val taskId = message.taskId ?: TaskCentricChat.VirtualTaskId
+        val taskKnown = _tasks.value.any { it.taskId == taskId }
+        if (!taskKnown) return
+        val isLatestTask = _tasks.value.lastOrNull()?.taskId == taskId
+        if (isLatestTask || _taskWindow.value.visibleTaskIds.isEmpty()) {
+            _taskWindow.update { it.expand(taskId) }
+            _loadedTaskIds.value = _taskWindow.value.loadedTaskIds
+        }
+        if (taskId !in _taskWindow.value.loadedTaskIds) return
+        _messagesByTask.update { current ->
+            val existing = current[taskId].orEmpty()
+            val merged = mergeMessages(existing, listOf(message))
+            current + (taskId to merged)
+        }
+        syncFlatMessagesFromTaskMap()
+    }
+
+    private fun ensureVirtualTaskFor(message: Message) {
+        if (message.taskId != null) return
+        if (_tasks.value.any { it.taskId == TaskCentricChat.VirtualTaskId }) return
+        if (_tasks.value.isNotEmpty()) return
+        _tasks.value = taskCentricTasks(sessionId, emptyList(), _messages.value.ifEmpty { listOf(message) })
+        _taskWindow.value = TaskCentricChat.initialWindow(_tasks.value)
+        _loadedTaskIds.value = _taskWindow.value.loadedTaskIds
+    }
+
+    private fun syncFlatMessagesFromTaskMap() {
+        _messages.value = _messagesByTask.value.values
+            .flatten()
+            .distinctBy { it.messageId }
+            .sortedBy { it.index }
     }
 
     private fun mergeMessages(
@@ -456,9 +756,41 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         _uiState.update { current ->
             val prefix = voiceDraftPrefix ?: current.draft.trimEnd().also { voiceDraftPrefix = it }
             val next = if (prefix.isBlank()) transcript else "$prefix $transcript"
+            scheduleDraftSave(next)
             current.copy(draft = next)
         }
         if (final) voiceDraftPrefix = null
+    }
+
+    private fun syncSessionVoice(session: Session) {
+        ContinuousVoiceService.updatePromptability(
+            sessionId = session.sessionId,
+            canPrompt = SessionVoicePolicy.isPromptable(session.status, session.readyForPrompt),
+            status = session.status,
+        )
+    }
+
+    private fun speakAssistantIfNeeded(message: Message) {
+        if (message.role != MessageRole.ASSISTANT) return
+        if (sessionVoiceState.value.activeSessionId != sessionId) return
+        val text = assistantText(message).trim()
+        if (text.isBlank()) return
+        ContinuousVoiceService.speakAssistant(message.messageId, text)
+    }
+
+    private fun assistantText(message: Message): String = when (val content = message.content) {
+        is MessageContent.Text -> content.text
+        is MessageContent.Blocks -> content.blocks.asSequence()
+            .mapNotNull { block ->
+                when (block) {
+                    is ContentBlock.Text -> block.text
+                    else -> null
+                }
+            }
+            .filterNot { it.trimStart().startsWith("```") }
+            .joinToString("\n")
+        is MessageContent.Permission,
+        is MessageContent.InputRequest -> ""
     }
 
     private fun readAttachment(uri: Uri): PendingSessionAttachment {
@@ -521,6 +853,36 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
         return null
     }
 }
+
+internal fun uploadNotificationMessage(prompt: String): String {
+    val trimmed = prompt.trim()
+    return if (trimmed.isBlank()) {
+        "Attached file(s): {filepath}\n\nPlease review these attached files."
+    } else {
+        "$trimmed\n\nAttached file(s): {filepath}"
+    }
+}
+
+internal fun answersByQuestion(
+    request: InputRequestContent,
+    answers: List<String>,
+): Map<String, String> {
+    if (answers.isEmpty()) return emptyMap()
+    val questions = request.questions
+    if (questions.isEmpty()) return mapOf("answer" to answers.joinToString(", "))
+    if (questions.size == 1) return mapOf(questions.first().question to answers.joinToString(", "))
+    return questions.mapIndexedNotNull { index, question ->
+        val answer = answers.getOrNull(index)?.trim().orEmpty()
+        if (answer.isEmpty()) null else question.question to answer
+    }.toMap()
+}
+
+internal fun List<ChatViewModel.PendingSessionAttachment>.withUploadedPaths(
+    paths: List<String>,
+): List<ChatViewModel.PendingSessionAttachment> =
+    mapIndexed { index, attachment ->
+        attachment.copy(uploadedPath = paths.getOrNull(index))
+    }
 
 private fun inferUploadMimeType(contentResolverType: String?, filename: String): String? {
     val provided = contentResolverType?.substringBefore(';')?.lowercase()

@@ -10,6 +10,8 @@ import live.agor.app.models.Message
 import live.agor.app.models.MessageContent
 import live.agor.app.models.MessageRole
 import live.agor.app.models.PermissionRequestContent
+import live.agor.app.models.PermissionStatus
+import live.agor.app.models.InputRequestStatus
 import live.agor.app.models.ToolResultValue
 import live.agor.app.network.AgorJson
 import live.agor.app.network.StreamingService
@@ -41,7 +43,16 @@ sealed interface ChatRow {
     }
 
     @Immutable
-    data class TaskHeaderRow(val task: AgorTask) : ChatRow {
+    data class ShowOlderTasks(val count: Int) : ChatRow {
+        override val key: String = "show-older-tasks"
+    }
+
+    @Immutable
+    data class TaskHeaderRow(
+        val task: AgorTask,
+        val expanded: Boolean = true,
+        val loadedMessageCount: Int = 0,
+    ) : ChatRow {
         override val key: String get() = "task-${task.taskId}"
     }
 
@@ -100,6 +111,7 @@ sealed interface ChatRow {
     data class PermissionRow(
         override val key: String,
         val messageId: String,
+        val taskId: String?,
         val request: PermissionRequestContent,
     ) : ChatRow
 
@@ -107,6 +119,7 @@ sealed interface ChatRow {
     data class InputRequestRow(
         override val key: String,
         val messageId: String,
+        val taskId: String?,
         val request: InputRequestContent,
     ) : ChatRow
 
@@ -134,6 +147,19 @@ fun flattenChatRows(
     val flattener = ChatRowFlattener()
     val structure = flattener.buildStructure(messages, tasks, showLoadEarlier)
     return flattener.render(structure, live)
+}
+
+internal fun newestAttentionRowIndex(rows: List<ChatRow>): Int? {
+    for (index in rows.indices.reversed()) {
+        when (val row = rows[index]) {
+            is ChatRow.PermissionRow ->
+                if (row.request.status == PermissionStatus.PENDING) return index
+            is ChatRow.InputRequestRow ->
+                if (row.request.status == InputRequestStatus.PENDING) return index
+            else -> Unit
+        }
+    }
+    return null
 }
 
 /**
@@ -234,6 +260,45 @@ class ChatRowFlattener {
         messageRows.keys.removeAll { it !in seen }
         orphanRows.keys.removeAll { it !in live.keys || it in seen }
 
+        return out
+    }
+
+    fun renderTaskCentric(
+        orderedTasks: List<AgorTask>,
+        messagesByTask: Map<String, List<Message>>,
+        window: TaskCentricChat.TaskWindow,
+        live: Map<String, StreamingService.StreamSnapshot>,
+    ): List<ChatRow> {
+        val visibleTasks = orderedTasks.filter { it.taskId in window.visibleTaskIds }
+        val flattenedMessages = visibleTasks
+            .filter { it.taskId in window.expandedTaskIds }
+            .flatMap { messagesByTask[it.taskId].orEmpty() }
+        val structure = buildStructure(flattenedMessages, orderedTasks, showLoadEarlier = false)
+        val rowsByTask = LinkedHashMap<String, MutableList<ChatRow>>()
+        var currentTaskId: String? = null
+        for (row in render(structure, live)) {
+            if (row is ChatRow.TaskHeaderRow) {
+                currentTaskId = row.task.taskId
+                rowsByTask.getOrPut(currentTaskId) { mutableListOf() }
+            } else {
+                currentTaskId?.let { rowsByTask.getOrPut(it) { mutableListOf() }.add(row) }
+            }
+        }
+
+        val out = ArrayList<ChatRow>(flattenedMessages.size + visibleTasks.size + 1)
+        if (window.olderTaskCount > 0) out += ChatRow.ShowOlderTasks(window.olderTaskCount)
+        for (task in visibleTasks) {
+            val taskId = task.taskId
+            val expanded = taskId in window.expandedTaskIds
+            out += ChatRow.TaskHeaderRow(
+                task = task,
+                expanded = expanded,
+                loadedMessageCount = messagesByTask[taskId].orEmpty().size,
+            )
+            if (expanded) {
+                rowsByTask[taskId]?.let { out.addAll(it) }
+            }
+        }
         return out
     }
 
@@ -384,10 +449,10 @@ private fun buildMessageRows(
         }
 
         is MessageContent.Permission ->
-            out += ChatRow.PermissionRow("perm-$mid", mid, c.request)
+            out += ChatRow.PermissionRow("perm-$mid", mid, msg.taskId ?: c.request.taskId, c.request)
 
         is MessageContent.InputRequest ->
-            out += ChatRow.InputRequestRow("input-$mid", mid, c.request)
+            out += ChatRow.InputRequestRow("input-$mid", mid, msg.taskId ?: c.request.taskId, c.request)
     }
 
     return out

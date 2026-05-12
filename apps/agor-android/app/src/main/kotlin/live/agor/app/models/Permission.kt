@@ -17,7 +17,9 @@ enum class PermissionStatus {
 @Serializable
 @Immutable
 data class PermissionRequestContent(
-    @SerialName("permission_id") val permissionId: String,
+    @SerialName("request_id") val requestId: String = "",
+    @SerialName("permission_id") val legacyPermissionId: String? = null,
+    @SerialName("task_id") val taskId: String? = null,
     @SerialName("tool_name") val toolName: String,
     @SerialName("tool_input") val toolInput: JsonObject = JsonObject(emptyMap()),
     val description: String? = null,
@@ -27,4 +29,7 @@ data class PermissionRequestContent(
     @SerialName("requested_at") val requestedAt: String? = null,
     @SerialName("expires_at") val expiresAt: String? = null,
     @SerialName("decision_note") val decisionNote: String? = null,
-)
+) {
+    val permissionId: String
+        get() = requestId.ifBlank { legacyPermissionId.orEmpty() }
+}

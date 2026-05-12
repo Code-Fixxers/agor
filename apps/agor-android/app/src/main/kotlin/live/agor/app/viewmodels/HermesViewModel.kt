@@ -118,6 +118,43 @@ class HermesViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    fun retryFailedTurn() {
+        val state = _state.value
+        val sessionId = state.selectedSessionId ?: return
+        val failedAssistantIndex = state.turns.indexOfLast { it.role == "assistant" && !it.streaming }
+        if (failedAssistantIndex < 1 || state.errorMessage.isNullOrBlank()) return
+        val userTurn = state.turns.subList(0, failedAssistantIndex)
+            .lastOrNull { it.role == "user" }
+            ?: return
+        HermesForegroundService.startPrompt(
+            context = container.appContext,
+            sessionId = sessionId,
+            prompt = userTurn.content,
+            imageDataUrls = emptyList(),
+            attachments = userTurn.attachments,
+        )
+    }
+
+    fun resumeFailedTurn() {
+        val state = _state.value
+        val sessionId = state.selectedSessionId ?: return
+        val failedAssistant = state.turns.lastOrNull { it.role == "assistant" && !it.streaming } ?: return
+        if (state.errorMessage.isNullOrBlank()) return
+        val partial = failedAssistant.content.trim()
+        val prompt = if (partial.isBlank()) {
+            "Continue the previous Hermes turn from where it failed."
+        } else {
+            "Continue the previous Hermes turn from where it failed. Do not repeat this already streamed text:\n\n$partial"
+        }
+        HermesForegroundService.startPrompt(
+            context = container.appContext,
+            sessionId = sessionId,
+            prompt = prompt,
+            imageDataUrls = emptyList(),
+            attachments = emptyList(),
+        )
+    }
+
     fun cancel() {
         val id = _state.value.selectedSessionId ?: return
         HermesForegroundService.cancel(container.appContext, id)

@@ -8,9 +8,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
@@ -23,11 +26,14 @@ import java.time.ZoneOffset
 import live.agor.app.AppContainer
 import live.agor.app.data.HermesSession
 import live.agor.app.data.SidebarCache
+import live.agor.app.data.SidebarExpansionState
+import live.agor.app.models.AgenticTool
 import live.agor.app.models.Board
 import live.agor.app.models.DrawerSessionFilter
+import live.agor.app.models.Repo
 import live.agor.app.models.Session
-import live.agor.app.models.SessionStatus
 import live.agor.app.models.Worktree
+import live.agor.app.notifications.SessionTransitionTracker
 import live.agor.app.ui.nav.SidebarRow
 import live.agor.app.ui.nav.SidebarRowFlattener
 import live.agor.app.util.AppLogger
@@ -47,11 +53,13 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
     data class State(
         val boards: List<Board> = emptyList(),
         val worktreesByBoard: Map<String, List<Worktree>> = emptyMap(),
+        val reposById: Map<String, Repo> = emptyMap(),
         val sessionsByWorktree: Map<String, List<Session>> = emptyMap(),
         val sessions: List<Session> = emptyList(),
         val hermesSessions: List<HermesSession> = emptyList(),
         val favorites: Set<String> = emptySet(),
         val showArchived: Boolean = false,
+        val searchQuery: String = "",
     )
 
     @androidx.compose.runtime.Immutable
@@ -73,6 +81,12 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
     val expandedWorktrees: StateFlow<Set<String>> = _expandedWorktrees.asStateFlow()
 
     private val rowFlattener = SidebarRowFlattener()
+    private val transitionTracker = SessionTransitionTracker()
+
+    private val _transitionEvents = MutableSharedFlow<SessionTransitionTracker.Event>(
+        extraBufferCapacity = 16,
+    )
+    val transitionEvents: SharedFlow<SessionTransitionTracker.Event> = _transitionEvents.asSharedFlow()
 
     /**
      * Pre-flattened sidebar rows. Derived off-Main on [Dispatchers.Default] so
@@ -110,6 +124,9 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
     fun start() {
         viewModelScope.launch {
             val favorites = container.favoriteSessions.load()
+            val expansion = container.sidebarExpansion.load()
+            _expandedBoards.value = expansion.boardIds
+            _expandedWorktrees.value = expansion.worktreeIds
             val cached = container.sidebarCache.load()
             if (cached != null) {
                 _state.value = _state.value.copy(
@@ -119,6 +136,7 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
                     sessions = cached.sessions,
                     favorites = favorites,
                 )
+                transitionTracker.observe(cached.sessions, favorites)
             } else {
                 _state.value = _state.value.copy(favorites = favorites)
             }
@@ -134,12 +152,20 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
 
     fun toggleBoard(boardId: String) {
         val cur = _expandedBoards.value
-        _expandedBoards.value = if (cur.contains(boardId)) cur - boardId else cur + boardId
+        val next = if (cur.contains(boardId)) cur - boardId else cur + boardId
+        _expandedBoards.value = next
+        saveExpansion()
     }
 
     fun toggleWorktree(worktreeId: String) {
         val cur = _expandedWorktrees.value
-        _expandedWorktrees.value = if (cur.contains(worktreeId)) cur - worktreeId else cur + worktreeId
+        val next = if (cur.contains(worktreeId)) cur - worktreeId else cur + worktreeId
+        _expandedWorktrees.value = next
+        saveExpansion()
+    }
+
+    fun setSearchQuery(query: String) {
+        _state.value = _state.value.copy(searchQuery = query)
     }
 
     fun toggleFavorite(sessionId: String) {
@@ -150,6 +176,22 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
         )
         viewModelScope.launch {
             container.favoriteSessions.save(updated)
+        }
+    }
+
+    fun createSession(worktreeId: String, onCreated: (String) -> Unit) {
+        viewModelScope.launch {
+            runCatching {
+                container.client.createSession(
+                    worktreeId = worktreeId,
+                    agenticTool = AgenticTool.CLAUDE_CODE,
+                )
+            }.onSuccess { session ->
+                applySessionPatch(session)
+                onCreated(session.sessionId)
+            }.onFailure { error ->
+                AppLogger.log("Create session failed: ${error.message}", LogLevel.ERROR, "Navigation")
+            }
         }
     }
 
@@ -204,16 +246,7 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
 
         _state.value = current.copy(sessions = newSessions, sessionsByWorktree = newByWt)
         scheduleCacheSave()
-
-        if (current.favorites.contains(patched.sessionId) &&
-            patched.status == SessionStatus.IDLE
-        ) {
-            container.notifications.notifySessionIdle(
-                sessionId = patched.sessionId,
-                title = patched.displayTitle,
-                sessionUrl = patched.url,
-            )
-        }
+        dispatchSessionTransitionEvents(transitionTracker.observe(listOf(patched), current.favorites))
     }
 
     suspend fun refresh() {
@@ -221,9 +254,10 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
         val started = SystemClock.elapsedRealtime()
         try {
             val filter = DrawerSessionFilter.fromToken(container.tokenStore.drawerSessionFilter)
-            val (boards, worktrees, sessions, hermesSessions) = coroutineScope {
+            val (boards, worktrees, repos, sessions, hermesSessions) = coroutineScope {
                 val boardsDeferred = async { container.client.listBoards() }
                 val worktreesDeferred = async { container.client.listWorktrees(includeArchived = filter.includeArchived) }
+                val reposDeferred = async { container.client.listRepos() }
                 val sessionsDeferred = async {
                     container.client.listSessions(
                         compact = true,
@@ -231,9 +265,10 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
                     )
                 }
                 val hermesDeferred = async { loadAndSyncHermesSessions(filter) }
-                Quad(
+                Quint(
                     boardsDeferred.await(),
                     worktreesDeferred.await(),
+                    reposDeferred.await(),
                     sessionsDeferred.await(),
                     hermesDeferred.await(),
                 )
@@ -242,16 +277,18 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
             _state.value = _state.value.copy(
                 boards = boards,
                 worktreesByBoard = worktrees.groupBy { it.boardId ?: "" },
+                reposById = repos.associateBy { it.repoId },
                 sessionsByWorktree = visibleSessions.groupBy { it.worktreeId },
                 sessions = visibleSessions,
                 hermesSessions = hermesSessions,
                 showArchived = filter.includeArchived,
             )
+            dispatchSessionTransitionEvents(transitionTracker.observe(visibleSessions, _state.value.favorites))
             _loadState.value = LoadState(isLoading = false, errorMessage = null)
             val elapsed = SystemClock.elapsedRealtime() - started
             AppLogger.log(
                 "Sidebar refresh loaded ${boards.size} boards, ${worktrees.size} worktrees, " +
-                    "${visibleSessions.size}/${sessions.size} compact sessions and " +
+                    "${repos.size} repos, ${visibleSessions.size}/${sessions.size} compact sessions and " +
                     "${hermesSessions.size} Hermes sessions in ${elapsed}ms",
                 LogLevel.DEBUG,
                 "Perf",
@@ -293,6 +330,32 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
                     s.sessions,
                 ),
             )
+        }
+    }
+
+    private fun saveExpansion() {
+        viewModelScope.launch {
+            container.sidebarExpansion.save(
+                SidebarExpansionState(
+                    boardIds = _expandedBoards.value,
+                    worktreeIds = _expandedWorktrees.value,
+                ),
+            )
+        }
+    }
+
+    private fun dispatchSessionTransitionEvents(events: List<SessionTransitionTracker.Event>) {
+        events.forEach { event ->
+            if (event.kind == SessionTransitionTracker.EventKind.FAVORITE_IDLE) {
+                val session = event.session
+                container.notifications.notifySessionIdle(
+                    sessionId = session.sessionId,
+                    title = session.displayTitle,
+                    sessionUrl = session.url,
+                )
+            } else {
+                _transitionEvents.tryEmit(event)
+            }
         }
     }
 
@@ -352,10 +415,11 @@ class NavigationViewModel(private val container: AppContainer) : ViewModel() {
             }
     }
 
-    private data class Quad<A, B, C, D>(
+    private data class Quint<A, B, C, D, E>(
         val first: A,
         val second: B,
         val third: C,
         val fourth: D,
+        val fifth: E,
     )
 }

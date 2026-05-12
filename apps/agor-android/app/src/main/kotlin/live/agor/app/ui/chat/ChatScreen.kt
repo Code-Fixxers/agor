@@ -7,10 +7,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -22,22 +24,29 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -64,6 +73,10 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import live.agor.app.LocalAppContainer
 import live.agor.app.models.ContentBlock
+import live.agor.app.models.InputRequestContent
+import live.agor.app.models.PermissionMode
+import live.agor.app.models.Session
+import live.agor.app.models.displaySummary
 import live.agor.app.ui.common.AgentIcon
 import live.agor.app.ui.common.AttachmentPickerDialog
 import live.agor.app.ui.common.StatusBadge
@@ -75,6 +88,7 @@ import live.agor.app.ui.messageblocks.ThinkingBlockView
 import live.agor.app.ui.messageblocks.ToolResultBlockView
 import live.agor.app.ui.messageblocks.ToolTraceBlockView
 import live.agor.app.ui.messageblocks.ToolUseBlockView
+import live.agor.app.ui.mcp.McpSessionSheet
 import live.agor.app.ui.simpleViewModelFactory
 import live.agor.app.viewmodels.ChatViewModel
 import live.agor.app.voice.PromptVoicePhase
@@ -89,6 +103,7 @@ private enum class ChatScrollDirection {
 @Composable
 fun ChatScreen(
     sessionId: String,
+    refreshNonce: Int = 0,
     onOpenDrawer: () -> Unit,
     onClose: () -> Unit,
     onOpenSession: (String) -> Unit,
@@ -103,23 +118,32 @@ fun ChatScreen(
     val messageCount by vm.messageCount.collectAsState()
     val ui by vm.uiState.collectAsState()
     val promptVoice by vm.promptVoiceState.collectAsState()
+    val sessionVoice by vm.sessionVoiceState.collectAsState()
+    val sessionVoiceSettings by vm.sessionVoiceSettings.collectAsState()
     val attachments by vm.attachments.collectAsState()
     var showFiles by remember { mutableStateOf(false) }
+    var fileBrowserInitialPath by remember(sessionId) { mutableStateOf<String?>(null) }
     var showAttachDialog by remember { mutableStateOf(false) }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     var showRenameDialog by remember { mutableStateOf(false) }
+    var showOverflow by remember { mutableStateOf(false) }
+    var showArchiveDialog by remember { mutableStateOf(false) }
+    var showResetDialog by remember { mutableStateOf(false) }
+    var showMcpServers by remember { mutableStateOf(false) }
+    var showSessionSettings by remember { mutableStateOf(false) }
     var renameDraft by remember(sessionId) { mutableStateOf("") }
 
     val promptVoiceActive = promptVoice.phase == PromptVoicePhase.LoadingModels ||
         promptVoice.phase == PromptVoicePhase.Listening ||
         promptVoice.phase == PromptVoicePhase.Recording ||
         promptVoice.phase == PromptVoicePhase.Transcribing
+    val ownsSessionVoice = sessionVoice.enabled && sessionVoice.activeSessionId == sessionId
 
-    LaunchedEffect(sessionId) { vm.load() }
+    LaunchedEffect(sessionId, refreshNonce) { vm.load() }
 
     val micPermLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
-    ) { granted -> if (granted) vm.startVoiceInput() }
+    ) { granted -> if (granted) vm.startSessionVoiceMode() }
     val fileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
     ) { uri -> if (uri != null) vm.addAttachmentFromUri(uri) }
@@ -165,6 +189,29 @@ fun ChatScreen(
         )
     }
 
+    if (sessionVoice.needsWhisperDownload && ownsSessionVoice) {
+        AlertDialog(
+            onDismissRequest = vm::dismissSessionVoiceWhisperDownloadPrompt,
+            title = { Text("Download local Whisper model?") },
+            text = {
+                Text(
+                    "Remote Whisper is unavailable. Download the base English model once for on-device fallback. " +
+                        "It is stored in app data and survives APK updates.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = vm::downloadSessionVoiceWhisperModel) {
+                    Text(if (sessionVoice.modelDownloadInProgress) "Downloading..." else "Download")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = vm::dismissSessionVoiceWhisperDownloadPrompt) {
+                    Text("Not now")
+                }
+            },
+        )
+    }
+
     if (showRenameDialog) {
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
@@ -196,6 +243,56 @@ fun ChatScreen(
             },
         )
     }
+
+    if (showArchiveDialog) {
+        AlertDialog(
+            onDismissRequest = { showArchiveDialog = false },
+            title = { Text("Archive session?") },
+            text = { Text("The session will leave normal drawer views but remain available in archived history.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        vm.archiveSession()
+                        showArchiveDialog = false
+                        onClose()
+                    },
+                ) {
+                    Text("Archive")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showArchiveDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    if (showResetDialog) {
+        AlertDialog(
+            onDismissRequest = { showResetDialog = false },
+            title = { Text("Reset session?") },
+            text = {
+                Text("The current session will be archived and a fresh idle session will open on the same worktree.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showResetDialog = false
+                        vm.resetSession(onOpenSession)
+                    },
+                ) {
+                    Text("Reset")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
 
     if (showAttachDialog) {
         AttachmentPickerDialog(
@@ -238,6 +335,20 @@ fun ChatScreen(
                             AgentIcon(it.agenticTool)
                             Spacer(Modifier.width(6.dp))
                         }
+                        if (ui.session?.isPlanMode == true) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.tertiaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                                shape = MaterialTheme.shapes.extraSmall,
+                            ) {
+                                Text(
+                                    "PLAN",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
+                            Spacer(Modifier.width(6.dp))
+                        }
                         Text(
                             ui.session?.displayTitle ?: "Loading…",
                             style = MaterialTheme.typography.titleMedium,
@@ -272,6 +383,45 @@ fun ChatScreen(
                     IconButton(onClick = { showFiles = true }, modifier = Modifier.testTag("chat-files")) {
                         Icon(Icons.Default.Folder, contentDescription = "Files")
                     }
+                    Box {
+                        IconButton(onClick = { showOverflow = true }, modifier = Modifier.testTag("chat-overflow")) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "More")
+                        }
+                        DropdownMenu(
+                            expanded = showOverflow,
+                            onDismissRequest = { showOverflow = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Session Settings") },
+                                onClick = {
+                                    showOverflow = false
+                                    showSessionSettings = true
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("MCP Servers") },
+                                onClick = {
+                                    showOverflow = false
+                                    showMcpServers = true
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Archive") },
+                                leadingIcon = { Icon(Icons.Default.Archive, contentDescription = null) },
+                                onClick = {
+                                    showOverflow = false
+                                    showArchiveDialog = true
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Reset Session") },
+                                onClick = {
+                                    showOverflow = false
+                                    showResetDialog = true
+                                },
+                            )
+                        }
+                    }
                     IconButton(onClick = onClose, modifier = Modifier.testTag("chat-close")) {
                         Icon(Icons.Default.Close, contentDescription = "Close")
                     }
@@ -279,54 +429,235 @@ fun ChatScreen(
             )
         },
         bottomBar = {
-            PromptInputBar(
-                draft = ui.draft,
-                onDraftChange = vm::updateDraft,
-                onSend = vm::sendPrompt,
-                enabled = ui.session?.canQueuePrompt == true,
-                attachments = attachments,
-                onAttachClick = { showAttachDialog = true },
-                onRemoveAttachment = vm::removeAttachment,
-                voiceState = promptVoice,
-                onVoiceInputClick = {
-                    if (promptVoiceActive) {
-                        vm.stopVoiceInput()
-                    } else {
-                        val granted = ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.RECORD_AUDIO,
-                        ) == PackageManager.PERMISSION_GRANTED
-                        if (granted) vm.startVoiceInput()
-                        else micPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    }
-                },
-            )
+            if (ownsSessionVoice) {
+                SessionVoiceControlBar(
+                    state = sessionVoice,
+                    settings = sessionVoiceSettings,
+                    onPendingTranscriptChange = vm::updateSessionVoiceTranscript,
+                    onCancelPendingTranscript = vm::cancelSessionVoiceTranscript,
+                    onSendPendingTranscript = vm::sendSessionVoiceTranscriptNow,
+                    onSkipTts = vm::skipSessionVoiceTts,
+                    onStopVoice = vm::stopSessionVoiceMode,
+                    onSettingsChange = vm::saveSessionVoiceSettings,
+                    onResetSettings = vm::resetSessionVoiceSettings,
+                )
+            } else {
+                PromptInputBar(
+                    draft = ui.draft,
+                    onDraftChange = vm::updateDraft,
+                    onSend = vm::sendPrompt,
+                    enabled = ui.session?.canQueuePrompt == true,
+                    attachments = attachments,
+                    onAttachClick = { showAttachDialog = true },
+                    onRemoveAttachment = vm::removeAttachment,
+                    voiceState = promptVoice,
+                    onVoiceInputClick = {
+                        if (promptVoiceActive) {
+                            vm.stopVoiceInput()
+                        } else {
+                            val granted = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.RECORD_AUDIO,
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (granted) vm.startSessionVoiceMode()
+                            else micPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
+                )
+            }
         },
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            ChatMessagesPane(
-                sessionId = sessionId,
-                rows = rows,
-                messageCount = messageCount,
-                isLoading = ui.isLoading,
-                errorMessage = ui.errorMessage,
-                onLoadEarlier = vm::loadEarlier,
-                onOpenSession = onOpenSession,
-                onApprovePermission = { vm.decidePermission(it, true) },
-                onDenyPermission = { vm.decidePermission(it, false) },
-                onAnswerInputRequest = vm::answerInputRequest,
-            )
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            if (ui.session?.isPlanMode == true) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "Plan mode: read-only planning session. Tool execution stays disabled.",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
+            }
+            ui.session?.modelConfig?.displaySummary?.takeIf { it.isNotBlank() }?.let { summary ->
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        summary,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                    )
+                }
+            }
+            Box(modifier = Modifier.weight(1f)) {
+                ChatMessagesPane(
+                    sessionId = sessionId,
+                    rows = rows,
+                    messageCount = messageCount,
+                    isLoading = ui.isLoading,
+                    errorMessage = ui.errorMessage,
+                    onLoadEarlier = vm::loadEarlier,
+                    onShowOlderTasks = vm::showOlderTasks,
+                    onToggleTask = vm::toggleTask,
+                    onOpenSession = onOpenSession,
+                    onOpenWorktreePath = { path ->
+                        fileBrowserInitialPath = path
+                        showFiles = true
+                    },
+                    onApprovePermission = { requestId, taskId -> vm.decidePermission(requestId, taskId, true) },
+                    onDenyPermission = { requestId, taskId -> vm.decidePermission(requestId, taskId, false) },
+                    onAnswerInputRequest = vm::answerInputRequest,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                val activeVoiceSessionId = sessionVoice.activeSessionId
+                if (sessionVoice.enabled && activeVoiceSessionId != null && activeVoiceSessionId != sessionId) {
+                    SmallFloatingActionButton(
+                        onClick = { onOpenSession(activeVoiceSessionId) },
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(16.dp)
+                            .testTag("chat-return-to-voice-session"),
+                    ) {
+                        Icon(Icons.Default.ArrowUpward, contentDescription = "Return to voice session")
+                    }
+                }
+            }
         }
 
         if (showFiles) {
             ui.session?.let {
                 FileBrowserSheet(
                     worktreeId = it.worktreeId,
-                    onDismiss = { showFiles = false },
+                    initialPath = fileBrowserInitialPath,
+                    onDismiss = {
+                        showFiles = false
+                        fileBrowserInitialPath = null
+                    },
+                )
+            }
+        }
+        if (showMcpServers) {
+            McpSessionSheet(
+                sessionId = sessionId,
+                onDismiss = { showMcpServers = false },
+            )
+        }
+        if (showSessionSettings) {
+            ui.session?.let { session ->
+                SessionSettingsSheet(
+                    session = session,
+                    onChangePermissionMode = vm::changePermissionMode,
+                    onDismiss = { showSessionSettings = false },
                 )
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SessionSettingsSheet(
+    session: Session,
+    onChangePermissionMode: (PermissionMode) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, bottom = 24.dp)
+                .testTag("session-settings-sheet"),
+        ) {
+            Text("Session Settings", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(12.dp))
+            SessionSettingRow("Status", session.status.displayLabel)
+            SessionSettingRow("Agent", session.agenticTool.displayName)
+            PermissionModeSettingRow(
+                current = session.permissionConfig?.mode,
+                onChange = onChangePermissionMode,
+            )
+            session.modelConfig?.displaySummary?.takeIf { it.isNotBlank() }?.let {
+                SessionSettingRow("Model", it)
+            }
+            SessionSettingRow("Worktree", session.worktreeId)
+            SessionSettingRow("Session ID", session.sessionId)
+        }
+    }
+}
+
+@Composable
+private fun PermissionModeSettingRow(
+    current: PermissionMode?,
+    onChange: (PermissionMode) -> Unit,
+) {
+    val options = listOf(
+        PermissionMode.DEFAULT,
+        PermissionMode.PLAN,
+        PermissionMode.ASK,
+        PermissionMode.AUTO,
+        PermissionMode.ACCEPT_EDITS,
+        PermissionMode.BYPASS,
+    )
+    var showMenu by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Text(
+            "Permission mode",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Box {
+            TextButton(
+                onClick = { showMenu = true },
+                modifier = Modifier.testTag("session-permission-mode"),
+            ) {
+                Text(current.permissionModeLabel())
+            }
+            DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                options.forEach { mode ->
+                    DropdownMenuItem(
+                        text = { Text(mode.permissionModeLabel()) },
+                        onClick = {
+                            showMenu = false
+                            onChange(mode)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionSettingRow(label: String, value: String) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+private fun PermissionMode?.permissionModeLabel(): String = when (this) {
+    PermissionMode.DEFAULT -> "Default"
+    PermissionMode.ACCEPT_EDITS -> "Accept edits"
+    PermissionMode.BYPASS -> "Bypass permissions"
+    PermissionMode.PLAN -> "Plan"
+    PermissionMode.DONT_ASK -> "Don't ask"
+    PermissionMode.AUTO_EDIT -> "Auto edit"
+    PermissionMode.YOLO -> "Yolo"
+    PermissionMode.ASK -> "Ask"
+    PermissionMode.AUTO -> "Auto"
+    PermissionMode.ON_FAILURE -> "On failure"
+    PermissionMode.ALLOW_ALL -> "Allow all"
+    null -> "Default"
 }
 
 @Composable
@@ -337,10 +668,14 @@ private fun ChatMessagesPane(
     isLoading: Boolean,
     errorMessage: String?,
     onLoadEarlier: () -> Unit,
+    onShowOlderTasks: () -> Unit,
+    onToggleTask: (String) -> Unit,
     onOpenSession: (String) -> Unit,
-    onApprovePermission: (String) -> Unit,
-    onDenyPermission: (String) -> Unit,
-    onAnswerInputRequest: (String, List<String>) -> Unit,
+    onOpenWorktreePath: (String) -> Unit,
+    onApprovePermission: (String, String?) -> Unit,
+    onDenyPermission: (String, String?) -> Unit,
+    onAnswerInputRequest: (InputRequestContent, String?, List<String>) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -374,6 +709,7 @@ private fun ChatMessagesPane(
             }
         }
     }
+    val attentionIndex = remember(rows) { newestAttentionRowIndex(rows) }
 
     LaunchedEffect(lastMessageIndex, messageCount, initialScrollDone) {
         if (initialScrollDone || messageCount == 0 || lastMessageIndex < 0) return@LaunchedEffect
@@ -421,19 +757,38 @@ private fun ChatMessagesPane(
     }
 
     if (isLoading && messageCount == 0) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("Loading…")
         }
         return
     }
     if (errorMessage != null && messageCount == 0) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(errorMessage, color = MaterialTheme.colorScheme.error)
         }
         return
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = modifier.fillMaxSize()) {
+        if (attentionIndex != null) {
+            Surface(
+                color = MaterialTheme.colorScheme.tertiaryContainer,
+                modifier = Modifier.fillMaxWidth().testTag("chat-attention-banner"),
+            ) {
+                TextButton(
+                    onClick = {
+                        scope.launch { listState.animateScrollToItem(attentionIndex) }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "Pending response needed",
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                }
+            }
+        }
+        Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize().testTag("chat-list"),
@@ -449,8 +804,20 @@ private fun ChatMessagesPane(
                     is ChatRow.LoadEarlier -> {
                         TextButton(onClick = onLoadEarlier) { Text("Load earlier messages") }
                     }
-                    is ChatRow.TaskHeaderRow -> TaskHeader(row.task)
-                    is ChatRow.TextBubbleRow -> TextBubble(row, onSessionClick = onOpenSession)
+                    is ChatRow.ShowOlderTasks -> {
+                        TextButton(onClick = onShowOlderTasks) { Text("Show ${row.count} older tasks") }
+                    }
+                    is ChatRow.TaskHeaderRow -> TaskHeader(
+                        task = row.task,
+                        expanded = row.expanded,
+                        loadedMessageCount = row.loadedMessageCount,
+                        onToggle = { onToggleTask(row.task.taskId) },
+                    )
+                    is ChatRow.TextBubbleRow -> TextBubble(
+                        row,
+                        onSessionClick = onOpenSession,
+                        onWorktreePathClick = onOpenWorktreePath,
+                    )
                     is ChatRow.ToolUseRow -> ToolUseBlockView(row)
                     is ChatRow.ToolResultRow -> ToolResultBlockView(row)
                     is ChatRow.ToolTraceRow -> ToolTraceBlockView(row)
@@ -458,13 +825,13 @@ private fun ChatMessagesPane(
                     is ChatRow.ImageRow -> ImageBlockView(ContentBlock.Image(row.source))
                     is ChatRow.PermissionRow -> PermissionCardView(
                         request = row.request,
-                        onApprove = { onApprovePermission(row.request.permissionId) },
-                        onDeny = { onDenyPermission(row.request.permissionId) },
+                        onApprove = { onApprovePermission(row.request.permissionId, row.taskId) },
+                        onDeny = { onDenyPermission(row.request.permissionId, row.taskId) },
                     )
                     is ChatRow.InputRequestRow -> InputRequestCardView(
                         request = row.request,
                         onAnswer = { answers ->
-                            onAnswerInputRequest(row.request.inputRequestId, answers)
+                            onAnswerInputRequest(row.request, row.taskId, answers)
                         },
                     )
                     is ChatRow.LiveOrphanRow -> LiveOrphanBubble(row)
@@ -504,6 +871,7 @@ private fun ChatMessagesPane(
                     },
                 )
             }
+        }
         }
     }
 }

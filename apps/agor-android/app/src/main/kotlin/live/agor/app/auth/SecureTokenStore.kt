@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import live.agor.app.models.DrawerSessionFilter
+import live.agor.app.network.AgorTokenStore
 import live.agor.app.voice.DEFAULT_REMOTE_WHISPER_URL
 
 /**
@@ -12,7 +13,7 @@ import live.agor.app.voice.DEFAULT_REMOTE_WHISPER_URL
  * Backed by Android Jetpack Security; survives reboot before first unlock thanks to
  * MasterKey AES_GCM defaults.
  */
-class SecureTokenStore(context: Context) {
+class SecureTokenStore(context: Context) : AgorTokenStore {
 
     private val prefs: SharedPreferences = run {
         val key = MasterKey.Builder(context)
@@ -27,19 +28,19 @@ class SecureTokenStore(context: Context) {
         )
     }
 
-    var accessToken: String?
+    override var accessToken: String?
         get() = prefs.getString(KEY_ACCESS_TOKEN, null)
         set(value) = prefs.edit().putString(KEY_ACCESS_TOKEN, value).apply()
 
-    var refreshToken: String?
+    override var refreshToken: String?
         get() = prefs.getString(KEY_REFRESH_TOKEN, null)
         set(value) = prefs.edit().putString(KEY_REFRESH_TOKEN, value).apply()
 
-    var serverUrl: String?
+    override var serverUrl: String?
         get() = prefs.getString(KEY_SERVER_URL, null)
         set(value) = prefs.edit().putString(KEY_SERVER_URL, value).apply()
 
-    var lastEmail: String?
+    override var lastEmail: String?
         get() = prefs.getString(KEY_LAST_EMAIL, null)
         set(value) = prefs.edit().putString(KEY_LAST_EMAIL, value).apply()
 
@@ -132,6 +133,64 @@ class SecureTokenStore(context: Context) {
         get() = prefs.getString(KEY_BIOMETRIC_CREDENTIAL_TYPE, null)
         set(value) = prefs.edit().putString(KEY_BIOMETRIC_CREDENTIAL_TYPE, value).apply()
 
+    fun snapshotCurrentProfile(profileId: String? = serverUrl) {
+        val id = profileId?.trim()?.trimEnd('/').orEmpty()
+        val url = serverUrl?.trim()?.trimEnd('/').orEmpty()
+        if (id.isBlank() || url.isBlank()) return
+        val hasCredential = !accessToken.isNullOrBlank() ||
+            !refreshToken.isNullOrBlank() ||
+            !savedLoginPassword.isNullOrBlank() ||
+            !savedApiKey.isNullOrBlank()
+        if (!hasCredential) return
+        saveProfileCredentials(
+            id,
+            ProfileCredentialSnapshot(
+                serverUrl = url,
+                email = lastEmail,
+                accessToken = accessToken,
+                refreshToken = refreshToken,
+                savedLoginPassword = savedLoginPassword,
+                savedApiKey = savedApiKey,
+            ),
+        )
+    }
+
+    fun saveProfileCredentials(profileId: String, snapshot: ProfileCredentialSnapshot) {
+        val id = profileId.trim().trimEnd('/')
+        if (id.isBlank()) return
+        val next = profileCredentials().toMutableMap()
+        next[id] = snapshot
+        prefs.edit()
+            .putString(KEY_PROFILE_CREDENTIALS, encodeProfileCredentialSnapshots(next))
+            .apply()
+    }
+
+    fun profileCredentials(profileId: String): ProfileCredentialSnapshot? =
+        profileCredentials()[profileId.trim().trimEnd('/')]
+
+    fun removeProfileCredentials(profileId: String) {
+        val id = profileId.trim().trimEnd('/')
+        if (id.isBlank()) return
+        val next = profileCredentials().toMutableMap()
+        next.remove(id)
+        prefs.edit()
+            .putString(KEY_PROFILE_CREDENTIALS, encodeProfileCredentialSnapshots(next))
+            .apply()
+    }
+
+    fun applyProfileCredentials(profileId: String, fallbackUrl: String, fallbackEmail: String?) {
+        val snapshot = profileCredentials(profileId)
+        serverUrl = snapshot?.serverUrl ?: fallbackUrl.trim().trimEnd('/')
+        lastEmail = snapshot?.email ?: fallbackEmail
+        accessToken = snapshot?.accessToken
+        refreshToken = snapshot?.refreshToken
+        savedLoginPassword = snapshot?.savedLoginPassword
+        savedApiKey = snapshot?.savedApiKey
+    }
+
+    private fun profileCredentials(): Map<String, ProfileCredentialSnapshot> =
+        decodeProfileCredentialSnapshots(prefs.getString(KEY_PROFILE_CREDENTIALS, null))
+
     fun clearTokensKeepUrl() {
         prefs.edit()
             .remove(KEY_ACCESS_TOKEN)
@@ -198,5 +257,6 @@ class SecureTokenStore(context: Context) {
         const val KEY_BIOMETRIC_PASSWORD_IV = "biometric_password_iv"
         const val KEY_BIOMETRIC_PASSWORD_SCHEME = "biometric_password_scheme"
         const val KEY_BIOMETRIC_CREDENTIAL_TYPE = "biometric_credential_type"
+        const val KEY_PROFILE_CREDENTIALS = "profile_credentials"
     }
 }

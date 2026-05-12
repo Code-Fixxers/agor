@@ -71,7 +71,12 @@ class HermesClient(private val tokens: SecureTokenStore) {
                 .get()
                 .build()
             http.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@use null
+                if (!resp.isSuccessful) {
+                    if (resp.code == 401 || resp.code == 403) {
+                        throw IOException(hermesHttpErrorMessage(resp.code, resp.body?.string().orEmpty().take(400)))
+                    }
+                    return@use null
+                }
                 val body = resp.body?.string().orEmpty()
                 val payload = json.decodeFromString(ModelsResponse.serializer(), body)
                 payload.data?.map { it.id }
@@ -190,7 +195,7 @@ class HermesClient(private val tokens: SecureTokenStore) {
             if (!resp.isSuccessful) {
                 val text = resp.body?.string().orEmpty().take(400)
                 AppLogger.log("Hermes chat stream HTTP ${resp.code} in ${elapsedMs(started)}ms: $text", LogLevel.WARNING, "Hermes")
-                throw IOException("Hermes ${resp.code}: $text")
+                throw IOException(hermesHttpErrorMessage(resp.code, text))
             }
             val source = resp.body?.source() ?: throw IOException("empty response")
             while (!source.exhausted()) {
@@ -297,7 +302,7 @@ class HermesClient(private val tokens: SecureTokenStore) {
             if (!resp.isSuccessful) {
                 val text = resp.body?.string().orEmpty().take(400)
                 AppLogger.log("Hermes response stream HTTP ${resp.code} in ${elapsedMs(started)}ms: $text", LogLevel.WARNING, "Hermes")
-                throw IOException("Hermes ${resp.code}: $text")
+                throw IOException(hermesHttpErrorMessage(resp.code, text))
             }
             val source = resp.body?.source() ?: throw IOException("empty response")
             var eventName: String? = null
@@ -308,7 +313,7 @@ class HermesClient(private val tokens: SecureTokenStore) {
                     line.startsWith("data:") -> {
                         val payload = line.removePrefix("data:").trim()
                         if (payload == "[DONE]") break
-                        parseResponseEvent(eventName, payload)?.let {
+                        HermesResponseEventParser.parse(eventName, payload)?.let {
                             events += 1
                             emit(it)
                         }
@@ -329,6 +334,13 @@ class HermesClient(private val tokens: SecureTokenStore) {
         if (u.isNullOrBlank()) throw IOException("Hermes URL not configured")
         if (t.isNullOrBlank()) throw IOException("Hermes token not configured")
         return u to t
+    }
+
+    private fun hermesHttpErrorMessage(code: Int, body: String): String {
+        return when (code) {
+            401, 403 -> "Hermes token expired or rejected. Update the Hermes API token in settings, then retry or resume this turn."
+            else -> "Hermes $code: $body"
+        }
     }
 
     private fun parseWebhookResponse(body: String): String {
@@ -368,60 +380,6 @@ class HermesClient(private val tokens: SecureTokenStore) {
             .put("conversation", conversationId)
             .put("input", input)
             .toString()
-    }
-
-    private fun parseResponseEvent(eventName: String?, payload: String): HermesResponseEvent? {
-        val obj = runCatching { JSONObject(payload) }.getOrNull() ?: return null
-        val type = obj.optString("type", eventName.orEmpty())
-        return when {
-            type == "response.output_text.delta" -> {
-                val delta = obj.optString("delta", obj.optString("text", ""))
-                if (delta.isBlank()) null else HermesResponseEvent.TextDelta(delta)
-            }
-            type == "response.completed" -> {
-                val response = obj.optJSONObject("response") ?: obj
-                HermesResponseEvent.Completed(
-                    responseId = response.optString("id", null),
-                    outputText = extractOutputText(response),
-                )
-            }
-            type == "response.failed" || type == "error" -> {
-                HermesResponseEvent.Failed(extractFailureMessage(obj))
-            }
-            type.contains("output_item") || type.contains("tool") || type.contains("function") -> {
-                val item = obj.optJSONObject("item")
-                val label = item?.optString("name")?.takeIf { it.isNotBlank() }
-                    ?: item?.optString("type")?.takeIf { it.isNotBlank() }
-                    ?: type
-                HermesResponseEvent.Progress(label)
-            }
-            else -> null
-        }
-    }
-
-    private fun extractOutputText(response: JSONObject): String {
-        response.optString("output_text", "").takeIf { it.isNotBlank() }?.let { return it }
-        val out = StringBuilder()
-        val output = response.optJSONArray("output") ?: return ""
-        for (i in 0 until output.length()) {
-            val item = output.optJSONObject(i) ?: continue
-            val content = item.optJSONArray("content") ?: continue
-            for (j in 0 until content.length()) {
-                val part = content.optJSONObject(j) ?: continue
-                val text = part.optString("text", part.optString("content", ""))
-                if (text.isNotBlank()) out.append(text)
-            }
-        }
-        return out.toString()
-    }
-
-    private fun extractFailureMessage(obj: JSONObject): String {
-        obj.optStringOrNull("message")?.let { return it }
-        obj.optJSONObject("error")?.optStringOrNull("message")?.let { return it }
-        val response = obj.optJSONObject("response")
-        response?.optJSONObject("error")?.optStringOrNull("message")?.let { return it }
-        extractOutputText(response ?: obj).takeIf { it.isNotBlank() }?.let { return it }
-        return obj.toString().take(400)
     }
 
     private fun isUnsupportedHistoryRoute(error: Throwable): Boolean {
@@ -713,6 +671,66 @@ class HermesClient(private val tokens: SecureTokenStore) {
 
     companion object {
         const val DEFAULT_MODEL = "hermes-agent"
+    }
+}
+
+internal object HermesResponseEventParser {
+    fun parse(eventName: String?, payload: String): HermesResponseEvent? {
+        val obj = runCatching { JSONObject(payload) }.getOrNull() ?: return null
+        val type = obj.optString("type", eventName.orEmpty())
+        return when {
+            type == "response.output_text.delta" -> {
+                val delta = obj.optString("delta", obj.optString("text", ""))
+                if (delta.isBlank()) null else HermesResponseEvent.TextDelta(delta)
+            }
+            type == "response.completed" -> {
+                val response = obj.optJSONObject("response") ?: obj
+                HermesResponseEvent.Completed(
+                    responseId = response.optString("id", null),
+                    outputText = extractOutputText(response),
+                )
+            }
+            type == "response.failed" || type == "error" -> {
+                HermesResponseEvent.Failed(extractFailureMessage(obj))
+            }
+            type.contains("output_item") || type.contains("tool") || type.contains("function") -> {
+                val item = obj.optJSONObject("item")
+                val label = item?.optString("name")?.takeIf { it.isNotBlank() }
+                    ?: item?.optString("type")?.takeIf { it.isNotBlank() }
+                    ?: type
+                HermesResponseEvent.Progress(label)
+            }
+            else -> null
+        }
+    }
+
+    private fun extractOutputText(response: JSONObject): String {
+        response.optString("output_text", "").takeIf { it.isNotBlank() }?.let { return it }
+        val out = StringBuilder()
+        val output = response.optJSONArray("output") ?: return ""
+        for (i in 0 until output.length()) {
+            val item = output.optJSONObject(i) ?: continue
+            val content = item.optJSONArray("content") ?: continue
+            for (j in 0 until content.length()) {
+                val part = content.optJSONObject(j) ?: continue
+                val text = part.optString("text", part.optString("content", ""))
+                if (text.isNotBlank()) out.append(text)
+            }
+        }
+        return out.toString()
+    }
+
+    private fun extractFailureMessage(obj: JSONObject): String {
+        obj.optStringOrNull("message")?.let { return it }
+        obj.optJSONObject("error")?.optStringOrNull("message")?.let { return it }
+        val response = obj.optJSONObject("response")
+        response?.optJSONObject("error")?.optStringOrNull("message")?.let { return it }
+        extractOutputText(response ?: obj).takeIf { it.isNotBlank() }?.let { return it }
+        return obj.toString().take(400)
+    }
+
+    private fun JSONObject.optStringOrNull(name: String): String? {
+        return if (has(name) && !isNull(name)) optString(name).takeIf { it.isNotBlank() } else null
     }
 }
 

@@ -104,6 +104,14 @@ data class ModelConfig(
     val effort: String? = null,
 )
 
+val ModelConfig.displaySummary: String
+    get() = buildList {
+        provider?.takeIf { it.isNotBlank() }?.let { add(it) }
+        model?.takeIf { it.isNotBlank() }?.let { add(it) }
+        effort?.takeIf { it.isNotBlank() }?.let { add("effort $it") }
+        thinkingMode?.takeIf { it.isNotBlank() }?.let { add(it) }
+    }.joinToString(" · ")
+
 @Immutable
 @Serializable
 data class Session(

@@ -17,9 +17,18 @@ data class MCPServer(
 )
 
 @Serializable
+data class SessionMCPServer(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("mcp_server_id") val mcpServerId: String,
+    val enabled: Boolean = true,
+    @SerialName("added_at") val addedAt: String? = null,
+)
+
+@Serializable
 data class ServerProfile(
     val id: String,
     val label: String,
     val url: String,
     val email: String? = null,
+    @SerialName("default") val isDefault: Boolean = false,
 )

@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -79,6 +80,7 @@ sealed interface SidebarRow {
         val worktreeId: String,
         val name: String,
         val branch: String?,
+        val repoName: String?,
         val isOpen: Boolean,
     ) : SidebarRow {
         override val key: String get() = "worktree-$worktreeId"
@@ -88,8 +90,9 @@ sealed interface SidebarRow {
 /**
  * Flatten a navigation snapshot into a stable, render-ready row list.
  *
- * Computes "Important" (starred sessions only) and "Needs Attention" (awaiting
- * permission/input) inline from `state` so the caller doesn't have to
+ * Computes "Important" (favorites, running, ready-for-prompt, and recent
+ * titled sessions) and "Needs Attention" (awaiting permission/input) inline
+ * from `state` so the caller doesn't have to
  * pre-compute them. Active sessions float to the top of each worktree group;
  * idle/finished follow.
  */
@@ -141,6 +144,16 @@ class SidebarRowFlattener {
         }
         add(SidebarRow.DividerRow("after-hermes"))
 
+        val searchQuery = state.searchQuery.trim()
+        if (searchQuery.isNotEmpty()) {
+            val searchResults = searchSessions(state.sessions, searchQuery)
+            add(SidebarRow.Header("Search Results", Icons.Default.Search, "h-search"))
+            for (s in searchResults) add(s.toSessionRow(state.favorites, depth = 1, keyPrefix = "search"))
+            add(SidebarRow.DividerRow("after-search"))
+            rowsByKey.keys.removeAll { it !in seenKeys }
+            return out
+        }
+
         val attention = state.sessions
             .asSequence()
             .filter { !it.isScheduled && it.status.needsAttention }
@@ -152,12 +165,10 @@ class SidebarRowFlattener {
             add(SidebarRow.DividerRow("after-attention"))
         }
 
-        val important = state.sessions
-            .asSequence()
-            .filter { state.favorites.contains(it.sessionId) }
-            .sortedByDescending { it.lastUpdated }
-            .take(20)
-            .toList()
+        val attentionIds = attention.asSequence()
+            .map { it.sessionId }
+            .toHashSet()
+        val important = importantSessions(state.sessions, state.favorites, attentionIds)
         if (important.isNotEmpty()) {
             add(SidebarRow.Header("Important", Icons.Default.Star, "h-important"))
             for (s in important) add(s.toSessionRow(state.favorites, depth = 1, keyPrefix = "imp"))
@@ -185,6 +196,7 @@ class SidebarRowFlattener {
                         worktreeId = wt.worktreeId,
                         name = wt.name,
                         branch = wt.branch,
+                        repoName = state.reposById[wt.repoId]?.name,
                         isOpen = wtOpen,
                     ),
                 )
@@ -210,6 +222,62 @@ class SidebarRowFlattener {
 
         rowsByKey.keys.removeAll { it !in seenKeys }
         return out
+    }
+
+    private fun importantSessions(
+        sessions: List<Session>,
+        favorites: Set<String>,
+        attentionIds: Set<String>,
+    ): List<Session> {
+        val sessionsById = sessions.associateBy { it.sessionId }
+        val selectedIds = LinkedHashSet<String>()
+
+        sessions
+            .asSequence()
+            .filter { it.sessionId in favorites }
+            .filter { it.sessionId !in attentionIds }
+            .filter { !it.isScheduled }
+            .sortedByDescending { it.lastUpdated }
+            .forEach { selectedIds += it.sessionId }
+
+        sessions
+            .asSequence()
+            .filter { it.status == SessionStatus.RUNNING || it.readyForPrompt == true }
+            .filter { it.sessionId !in attentionIds }
+            .filter { !it.isScheduled }
+            .filter { it.hasExplicitTitle || it.sessionId in favorites }
+            .sortedByDescending { it.lastUpdated }
+            .forEach { selectedIds += it.sessionId }
+
+        sessions
+            .asSequence()
+            .filter { it.sessionId !in attentionIds }
+            .filter { it.sessionId !in selectedIds }
+            .filter { !it.isScheduled }
+            .filter { it.hasExplicitTitle || it.sessionId in favorites }
+            .sortedByDescending { it.lastUpdated }
+            .take(3)
+            .forEach { selectedIds += it.sessionId }
+
+        return selectedIds
+            .asSequence()
+            .mapNotNull { sessionsById[it] }
+            .sortedByDescending { it.lastUpdated }
+            .take(20)
+            .toList()
+    }
+
+    private fun searchSessions(sessions: List<Session>, query: String): List<Session> {
+        return sessions
+            .asSequence()
+            .filter { !it.isScheduled }
+            .filter {
+                it.displayTitle.contains(query, ignoreCase = true) ||
+                    it.sessionId.contains(query, ignoreCase = true)
+            }
+            .sortedByDescending { it.lastUpdated }
+            .take(30)
+            .toList()
     }
 }
 

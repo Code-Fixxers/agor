@@ -44,3 +44,17 @@ data class ThinkingChunkEvent(
     @SerialName("message_id") val messageId: String? = null,
     val text: String,
 )
+
+@Serializable
+data class ThinkingStartEvent(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("message_id") val messageId: String? = null,
+    @SerialName("task_id") val taskId: String? = null,
+    val timestamp: String? = null,
+)
+
+@Serializable
+data class ThinkingEndEvent(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("message_id") val messageId: String? = null,
+)

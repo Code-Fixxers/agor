@@ -31,9 +31,15 @@ class AuthService(
         val url = tokens.serverUrl
         val token = tokens.accessToken
         if (url.isNullOrEmpty()) {
+            val defaultProfile = profiles.profiles.first().firstOrNull { it.isDefault }
+            if (defaultProfile != null) {
+                switchProfile(defaultProfile)
+                return
+            }
             _state.value = AuthState.NeedsLogin
             return
         }
+        migrateLegacyProfileIfNeeded(url)
         client.setBaseUrl(url)
         if (biometricStore.canUnlock) {
             tokens.clearTokensKeepUrl()
@@ -115,6 +121,7 @@ class AuthService(
         tokens.savedApiKey = null
         _user.value = result.user
         _state.value = AuthState.Authenticated
+        tokens.snapshotCurrentProfile(resolved)
         // Save profile
         runCatching {
             val list = profiles.profiles.first()
@@ -141,10 +148,56 @@ class AuthService(
             ?: throw AgorClient.HttpException(0, "Could not reach server at $rawUrl", "")
         client.setBaseUrl(resolved)
         val result = client.loginWithApiKey(apiKey)
+        tokens.lastEmail = result.user.email
         tokens.savedApiKey = apiKey
         tokens.savedLoginPassword = null
         _user.value = result.user
         _state.value = AuthState.Authenticated
+        tokens.snapshotCurrentProfile(resolved)
+        runCatching {
+            val list = profiles.profiles.first()
+            profiles.upsert(
+                live.agor.app.models.ServerProfile(
+                    id = resolved,
+                    label = result.user.email ?: result.user.name,
+                    url = resolved,
+                    email = result.user.email,
+                ),
+                list,
+            )
+        }.onFailure {
+            AppLogger.log(
+                "Failed to persist API-key server profile: ${it.message}",
+                LogLevel.WARNING,
+                "Auth",
+            )
+        }
+    }
+
+    suspend fun switchProfile(profile: live.agor.app.models.ServerProfile) {
+        tokens.snapshotCurrentProfile()
+        tokens.applyProfileCredentials(profile.id, profile.url, profile.email)
+        client.setBaseUrl(profile.url)
+        _user.value = null
+
+        val restored = runCatching {
+            client.me()
+        }.onSuccess { user ->
+            _user.value = user
+            _state.value = AuthState.Authenticated
+            tokens.snapshotCurrentProfile(profile.id)
+        }.onFailure {
+            AppLogger.log("profile token restore failed: ${it.message}", LogLevel.WARNING, "Auth")
+        }.isSuccess
+        if (restored) return
+
+        tokens.clearTokensKeepUrl()
+        _state.value = if (restoreWithSavedLogin(profile.url)) {
+            tokens.snapshotCurrentProfile(profile.id)
+            AuthState.Authenticated
+        } else {
+            AuthState.NeedsLogin
+        }
     }
 
     /** Clears tokens but keeps URL + email so the login form pre-fills. */
@@ -162,6 +215,16 @@ class AuthService(
 
     private fun normalizeUrl(input: String): String = input.trim().trimEnd('/')
     private fun normalizeEmailForLogin(input: String): String = input.trim()
+
+    private suspend fun migrateLegacyProfileIfNeeded(url: String) {
+        runCatching {
+            val current = profiles.profiles.first()
+            val migrated = migrateLegacyServerProfile(current, url, tokens.lastEmail)
+            if (migrated != current) profiles.save(migrated)
+        }.onFailure {
+            AppLogger.log("legacy profile migration failed: ${it.message}", LogLevel.WARNING, "Auth")
+        }
+    }
 
     private suspend fun restoreWithSavedLogin(url: String): Boolean {
         val apiKey = tokens.savedApiKey

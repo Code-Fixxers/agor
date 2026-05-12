@@ -32,7 +32,7 @@ class WhisperLiveKitClient(
         onFailure: (String) -> Unit = {},
     ): WhisperLiveKitStream {
         val stream = WhisperLiveKitStream(
-            url = liveListenUrl(),
+            url = whisperLiveKitAsrUrl(baseUrl),
             bearer = bearer,
             http = http,
             onTranscript = onTranscript,
@@ -42,17 +42,17 @@ class WhisperLiveKitClient(
         stream.open()
         return stream
     }
+}
 
-    private fun liveListenUrl(): String {
-        val wsBase = when {
-            baseUrl.startsWith("https://", ignoreCase = true) -> "wss://" + baseUrl.drop("https://".length)
-            baseUrl.startsWith("http://", ignoreCase = true) -> "ws://" + baseUrl.drop("http://".length)
-            baseUrl.startsWith("ws://", ignoreCase = true) || baseUrl.startsWith("wss://", ignoreCase = true) -> baseUrl
-            else -> "ws://$baseUrl"
-        }
-        return "$wsBase/v1/listen?encoding=linear16&sample_rate=${AudioCapture.SAMPLE_RATE}" +
-            "&channels=1&interim_results=true&vad_events=true&punctuate=true"
+fun whisperLiveKitAsrUrl(rawBaseUrl: String): String {
+    val baseUrl = rawBaseUrl.trim().trimEnd('/')
+    val wsBase = when {
+        baseUrl.startsWith("https://", ignoreCase = true) -> "wss://" + baseUrl.drop("https://".length)
+        baseUrl.startsWith("http://", ignoreCase = true) -> "ws://" + baseUrl.drop("http://".length)
+        baseUrl.startsWith("ws://", ignoreCase = true) || baseUrl.startsWith("wss://", ignoreCase = true) -> baseUrl
+        else -> "ws://$baseUrl"
     }
+    return "$wsBase/asr"
 }
 
 class WhisperLiveKitStream internal constructor(
