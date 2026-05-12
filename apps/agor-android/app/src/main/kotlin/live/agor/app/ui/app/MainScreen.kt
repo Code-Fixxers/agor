@@ -329,7 +329,7 @@ private fun EmptyHome(
 }
 
 @Composable
-private fun UpdatePrompt(state: UpdateViewModel.State, vm: UpdateViewModel) {
+internal fun UpdatePrompt(state: UpdateViewModel.State, vm: UpdateViewModel) {
     when (state) {
         is UpdateViewModel.State.Available -> AlertDialog(
             onDismissRequest = vm::dismiss,

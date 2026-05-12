@@ -220,11 +220,12 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun DiagnosticsRow(
+internal fun DiagnosticsRow(
     currentSessionId: String?,
     authState: AuthState,
     connectionState: ConnectionState,
     baseUrl: String,
+    allowSendToSession: Boolean = true,
 ) {
     val container = LocalAppContainer.current
     val context = LocalContext.current
@@ -319,8 +320,10 @@ private fun DiagnosticsRow(
     TextButton(onClick = ::shareLogs, modifier = Modifier.fillMaxWidth().testTag("settings-export-logs")) {
         Text("Download logs")
     }
-    TextButton(onClick = ::sendLogsToSession, modifier = Modifier.fillMaxWidth().testTag("settings-send-logs")) {
-        Text("Send logs to current session")
+    if (allowSendToSession) {
+        TextButton(onClick = ::sendLogsToSession, modifier = Modifier.fillMaxWidth().testTag("settings-send-logs")) {
+            Text("Send logs to current session")
+        }
     }
     TextButton(onClick = ::clearLogs, modifier = Modifier.fillMaxWidth().testTag("settings-clear-logs")) {
         Text("Clear logs")
@@ -580,7 +583,7 @@ private fun DrawerSessionFilterRow(onChanged: () -> Unit) {
 }
 
 @Composable
-private fun WhisperServerRow() {
+internal fun WhisperServerRow() {
     val container = LocalAppContainer.current
     var whisperUrl by remember {
         mutableStateOf(container.tokenStore.remoteWhisperUrl ?: DEFAULT_REMOTE_WHISPER_URL)
@@ -882,7 +885,7 @@ private fun BiometricLoginRow(defaultEmail: String?) {
 }
 
 @Composable
-private fun GithubTokenRow() {
+internal fun GithubTokenRow() {
     val container = LocalAppContainer.current
     var token by remember { mutableStateOf(container.tokenStore.githubToken.orEmpty()) }
     var saved by remember { mutableStateOf(false) }
@@ -948,7 +951,7 @@ private fun GithubTokenRow() {
  * — scoped to the screen, the ViewModel disappears when the user navigates back.
  */
 @Composable
-private fun UpdateRow() {
+internal fun UpdateRow() {
     val container = LocalAppContainer.current
     val vm: UpdateViewModel = viewModel(
         key = "update",

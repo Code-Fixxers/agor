@@ -20,4 +20,4 @@ else
   git clone --depth 1 --branch "$WHISPER_REF" "$WHISPER_REPO" "$TARGET"
 fi
 
-echo "Done. Run ./gradlew :app:assembleDebug to rebuild with on-device transcription."
+echo "Done. Run ./gradlew :app:assembleHermesAgorDebug to rebuild with on-device transcription."

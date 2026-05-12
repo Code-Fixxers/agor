@@ -19,7 +19,9 @@ class AgorApplication : Application(), ImageLoaderFactory {
         super.onCreate()
         container.crashLogs.install()
         registerNotificationChannels()
-        SessionTransitionPollWorker.schedule(this)
+        if (ProductMode.current.agorEnabled) {
+            SessionTransitionPollWorker.schedule(this)
+        }
     }
 
     private fun registerNotificationChannels() {
@@ -36,14 +38,16 @@ class AgorApplication : Application(), ImageLoaderFactory {
         }
         nm.createNotificationChannel(voice)
 
-        val sessions = NotificationChannel(
-            NotificationChannels.SESSIONS,
-            getString(R.string.session_channel_name),
-            NotificationManager.IMPORTANCE_DEFAULT,
-        ).apply {
-            description = getString(R.string.session_channel_description)
+        if (ProductMode.current.agorEnabled) {
+            val sessions = NotificationChannel(
+                NotificationChannels.SESSIONS,
+                getString(R.string.session_channel_name),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = getString(R.string.session_channel_description)
+            }
+            nm.createNotificationChannel(sessions)
         }
-        nm.createNotificationChannel(sessions)
 
         val hermes = NotificationChannel(
             NotificationChannels.HERMES,

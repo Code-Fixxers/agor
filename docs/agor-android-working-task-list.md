@@ -1,7 +1,7 @@
 # Agor Android Native Client Working Task List
 
 Status: working backlog for `cfx/android-hermes-client`
-Last audited: 2026-05-11
+Last audited: 2026-05-12
 
 This document tracks the current Android implementation against:
 
@@ -21,6 +21,7 @@ Legend:
 - [x] Android is a real native client: Gradle, Compose, Material 3, REST, Socket.IO, local persistence, chat, file browsing, prompt attachments, prompt dictation, Hermes, notifications, and APK updates exist.
 - [x] Android is already better than the original iOS baseline in several places: API-key login, biometric API-key unlock, Hermes orchestration, Silero ONNX VAD, WhisperLiveKit streaming transcription, local Whisper fallback, in-app APK updates, and Hermes voice/TTS.
 - [x] The highest-value parity work is implemented: task-centric chat loading, full regular-session voice mode, background recovery, crash logs, and broader QA coverage.
+- [x] Android now ships as two side-by-side product variants: Hermes+Agor (`live.agor.app`) and Hermes-only (`live.agor.hermes`).
 
 ## Platform, Build, and Packaging
 
@@ -32,6 +33,8 @@ Legend:
 - [x] Includes NDK/CMake wiring for local whisper.cpp support.
 - [x] Includes BuildConfig values for version, git SHA, and update metadata.
 - [x] Includes an in-app APK update checker/downloader/installer.
+- [x] Adds `hermesAgor` and `hermesOnly` product flavors with separate application IDs, app labels, update channels, and APK artifacts.
+- [x] Keeps legacy `assembleDebug` and `testDebugUnitTest` aliases mapped to debug flavor tasks for developer compatibility.
 - [x] Tighten cleartext networking policy for debug/dev versus production. Main/release denies cleartext and debug overlays the local-development policy.
 - [x] Add release validation notes for signing, update compatibility, and install-permission UX.
 
@@ -93,6 +96,7 @@ Legend:
 - [x] Add post-send delayed refresh of tasks/latest messages to cover missed socket events.
 - [x] Add explicit near-bottom auto-scroll behavior that avoids fighting manual scrolling.
 - [x] The top bar has menu, title, plan-mode badge, status, rename, stop, files, archive, MCP Servers, reset session, Session Settings, and close.
+- [x] Collapsed task headers surface non-completed terminal and active statuses, including failed tasks, so collapsed failed work remains visible.
 - [x] Add create-new-session-on-worktree flow.
 - [x] Add reset-session flow that archives the current session and creates a new idle session on the same worktree.
 - [x] Show plan-mode badge and explanatory read-only banner when `permission_config.mode == plan`.
@@ -255,6 +259,7 @@ Legend:
 - [x] Hermes foreground service queues prompts per session and survives screen changes.
 - [x] Hermes can import/sync stored remote conversations when supported by the server.
 - [x] Hermes voice and TTS are substantially ahead of the original iOS spec.
+- [x] Hermes-only app shell connects directly to Hermes without Agor authentication, Agor sockets, Agor session polling, or Agor drawer/navigation.
 - [x] Add Hermes empty/error states for partially configured servers and expired tokens.
 - [x] Add explicit retry/resume controls for failed Hermes turns.
 - [x] Add tests for Hermes streaming parsing, queued prompts, and session persistence.
@@ -282,6 +287,8 @@ Legend:
 - [x] Add file upload and `{filepath}` notification tests.
 - [x] Add lifecycle tests or manual QA script for background/foreground recovery.
 - [x] Add UI smoke tests or manual QA script for login, drawer navigation, chat prompt, attachments, file browser, settings, Hermes, and voice permission flow.
+- [x] Add product-mode tests for Hermes+Agor versus Hermes-only behavior.
+- [x] Add task-header status tests for failed collapsed tasks.
 
 ## Recommended Implementation Order
 

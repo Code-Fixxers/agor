@@ -126,7 +126,7 @@ jobs:
         # `gitShortSha()` helper shells out to `git` at configuration time, which the
         # configuration cache forbids. The Nix path has the same flag — keep them aligned.
         run: |
-          ./gradlew :app:assembleDebug \
+          ./gradlew :app:assembleHermesAgorDebug :app:assembleHermesOnlyDebug \
             --no-daemon --stacktrace --no-configuration-cache \
             -PversionCode="$VERSION_CODE" \
             -PversionName="$VERSION_NAME"
@@ -138,17 +138,29 @@ jobs:
           SHORT_SHA: ${{ steps.version.outputs.short_sha }}
         run: |
           set -euo pipefail
-          SRC=app/build/outputs/apk/debug/app-debug.apk
-          DEST="agor-android-debug-${SHORT_SHA}.apk"
-          cp "$SRC" "$DEST"
-          ls -la "$DEST"
-          echo "apk_path=apps/agor-android/$DEST" >> "$GITHUB_OUTPUT"
+          AGOR_SRC=app/build/outputs/apk/hermesAgor/debug/app-hermes-agor-debug.apk
+          HERMES_SRC=app/build/outputs/apk/hermesOnly/debug/app-hermes-only-debug.apk
+          AGOR_DEST="agor-android-debug-${SHORT_SHA}.apk"
+          HERMES_DEST="hermes-android-debug-${SHORT_SHA}.apk"
+          cp "$AGOR_SRC" "$AGOR_DEST"
+          cp "$HERMES_SRC" "$HERMES_DEST"
+          ls -la "$AGOR_DEST" "$HERMES_DEST"
+          echo "apk_path=apps/agor-android/$AGOR_DEST" >> "$GITHUB_OUTPUT"
+          echo "hermes_apk_path=apps/agor-android/$HERMES_DEST" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: agor-android-debug-${{ steps.version.outputs.short_sha }}
           path: ${{ steps.rename.outputs.apk_path }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Hermes APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-android-debug-${{ steps.version.outputs.short_sha }}
+          path: ${{ steps.rename.outputs.hermes_apk_path }}
           if-no-files-found: error
           retention-days: 7
 
@@ -209,6 +221,52 @@ jobs:
             "$STABLE_APK" \
             "$MANIFEST"
 
+      - name: Publish rolling hermes-android-latest release
+        if: github.ref == 'refs/heads/cfx/android-hermes-client' || github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHORT_SHA: ${{ steps.version.outputs.short_sha }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          APK_PATH: ${{ steps.rename.outputs.hermes_apk_path }}
+        run: |
+          set -euo pipefail
+          TAG="hermes-android-latest"
+          NOTES=$(cat <<EOF
+          Rolling Hermes-only debug build — overwritten on every push.
+
+          - commit: \`${SHORT_SHA}\`
+          - versionCode: \`${VERSION_CODE}\`
+          - versionName: \`${VERSION_NAME}\`
+
+          The Hermes-only in-app updater reads this tag; the underlying commit advances on every push.
+          EOF
+          )
+
+          git tag -f "$TAG"
+          git push origin "refs/tags/$TAG" --force
+
+          gh release delete "$TAG" --yes --cleanup-tag=false 2>/dev/null || true
+          STABLE_APK="$(dirname "$APK_PATH")/hermes-android-debug.apk"
+          cp "$APK_PATH" "$STABLE_APK"
+          APK_SIZE=$(stat -c%s "$STABLE_APK")
+          MANIFEST="$(dirname "$APK_PATH")/hermes-android-latest.json"
+          cat > "$MANIFEST" <<EOF
+          {
+            "versionCode": ${VERSION_CODE},
+            "versionName": "${VERSION_NAME}",
+            "commit": "${SHORT_SHA}",
+            "apkUrl": "https://github.com/Code-Fixxers/agor/releases/download/hermes-android-latest/hermes-android-debug.apk",
+            "sizeBytes": ${APK_SIZE}
+          }
+          EOF
+          gh release create "$TAG" \
+            --title "Hermes Android debug — $SHORT_SHA" \
+            --notes "$NOTES" \
+            --prerelease \
+            "$STABLE_APK" \
+            "$MANIFEST"
+
       - name: Summary
         env:
           SHORT_SHA: ${{ steps.version.outputs.short_sha }}
@@ -216,14 +274,15 @@ jobs:
           VERSION_NAME: ${{ steps.version.outputs.version_name }}
         run: |
           {
-            echo "### Agor Android debug APK"
+            echo "### Android debug APKs"
             echo ""
             echo "- Commit: \`${SHORT_SHA}\`"
             echo "- versionCode: \`${VERSION_CODE}\`"
             echo "- versionName: \`${VERSION_NAME}\`"
             echo "- Whisper.cpp on-device transcription: \`${WITH_WHISPER}\`"
             echo ""
-            echo "Direct download (rolling): https://github.com/Code-Fixxers/agor/releases/download/android-latest/agor-android-debug.apk"
+            echo "Agor direct download (rolling): https://github.com/Code-Fixxers/agor/releases/download/android-latest/agor-android-debug.apk"
+            echo "Hermes direct download (rolling): https://github.com/Code-Fixxers/agor/releases/download/hermes-android-latest/hermes-android-debug.apk"
             echo ""
             echo "Or in-app: open Settings → **Check for updates**."
           } >> "$GITHUB_STEP_SUMMARY"

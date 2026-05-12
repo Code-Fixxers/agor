@@ -69,6 +69,7 @@ android {
     compileSdk = 35
     buildToolsVersion = "35.0.0"
     ndkVersion = "27.1.12297006"
+    flavorDimensions += "product"
 
     defaultConfig {
         applicationId = "live.agor.app"
@@ -98,6 +99,7 @@ android {
             "UPDATE_APK_URL",
             "\"https://github.com/Code-Fixxers/agor/releases/download/android-latest/agor-android-debug.apk\"",
         )
+        manifestPlaceholders["agorDeepLinkHost"] = "agor.live"
 
         externalNativeBuild {
             cmake {
@@ -111,6 +113,53 @@ android {
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+    }
+
+    productFlavors {
+        create("hermesAgor") {
+            dimension = "product"
+            applicationId = "live.agor.app"
+            manifestPlaceholders["agorDeepLinkHost"] = "agor.live"
+            buildConfigField("boolean", "AGOR_ENABLED", "true")
+            buildConfigField("String", "PRODUCT_MODE", "\"hermes-agor\"")
+            buildConfigField(
+                "String",
+                "UPDATE_RELEASE_URL",
+                "\"https://api.github.com/repos/Code-Fixxers/agor/releases/tags/android-latest\"",
+            )
+            buildConfigField(
+                "String",
+                "UPDATE_MANIFEST_URL",
+                "\"https://github.com/Code-Fixxers/agor/releases/download/android-latest/agor-android-latest.json\"",
+            )
+            buildConfigField(
+                "String",
+                "UPDATE_APK_URL",
+                "\"https://github.com/Code-Fixxers/agor/releases/download/android-latest/agor-android-debug.apk\"",
+            )
+        }
+        create("hermesOnly") {
+            dimension = "product"
+            applicationId = "live.agor.hermes"
+            manifestPlaceholders["agorDeepLinkHost"] = "hermes.agor.local"
+            buildConfigField("boolean", "AGOR_ENABLED", "false")
+            buildConfigField("String", "PRODUCT_MODE", "\"hermes-only\"")
+            buildConfigField(
+                "String",
+                "UPDATE_RELEASE_URL",
+                "\"https://api.github.com/repos/Code-Fixxers/agor/releases/tags/hermes-android-latest\"",
+            )
+            buildConfigField(
+                "String",
+                "UPDATE_MANIFEST_URL",
+                "\"https://github.com/Code-Fixxers/agor/releases/download/hermes-android-latest/hermes-android-latest.json\"",
+            )
+            buildConfigField(
+                "String",
+                "UPDATE_APK_URL",
+                "\"https://github.com/Code-Fixxers/agor/releases/download/hermes-android-latest/hermes-android-debug.apk\"",
+            )
         }
     }
 
@@ -170,6 +219,23 @@ android {
         }
         jniLibs {
             useLegacyPackaging = false
+        }
+    }
+}
+
+afterEvaluate {
+    if (tasks.findByName("assembleDebug") == null) {
+        tasks.register("assembleDebug") {
+            group = "build"
+            description = "Compatibility alias for assembleHermesAgorDebug."
+            dependsOn("assembleHermesAgorDebug")
+        }
+    }
+    if (tasks.findByName("testDebugUnitTest") == null) {
+        tasks.register("testDebugUnitTest") {
+            group = "verification"
+            description = "Compatibility alias for testHermesAgorDebugUnitTest."
+            dependsOn("testHermesAgorDebugUnitTest")
         }
     }
 }

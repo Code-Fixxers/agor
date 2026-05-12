@@ -259,6 +259,10 @@ class MainActivity : FragmentActivity() {
 
     private fun handleNativeLoginIntent(intent: Intent?) {
         if (intent?.action != ACTION_NATIVE_LOGIN) return
+        if (!ProductMode.current.agorEnabled) {
+            AppLogger.log("Native Agor login ignored in Hermes-only product", LogLevel.INFO, "Auth")
+            return
+        }
         if (!BuildConfig.DEBUG) {
             AppLogger.log("Native login intent rejected: debug builds only", LogLevel.WARNING, "Auth")
             return
@@ -291,6 +295,9 @@ class MainActivity : FragmentActivity() {
         apiKey: String?,
         shouldConnectSocket: Boolean = true,
     ) {
+        if (!ProductMode.current.agorEnabled) {
+            throw IllegalStateException("Agor login is unavailable in the Hermes-only app")
+        }
         if (serverUrl.isNullOrBlank()) {
             throw IllegalArgumentException("Native login rejected: missing server URL")
         }
@@ -384,7 +391,7 @@ class MainActivity : FragmentActivity() {
     private fun handleEntryIntent(intent: Intent?) {
         if (intent == null) return
         val sessionId = intent.getStringExtra(AgorNotificationManager.EXTRA_SESSION_ID)
-        if (!sessionId.isNullOrBlank()) {
+        if (!sessionId.isNullOrBlank() && ProductMode.current.agorEnabled) {
             container.requestOpenSession(sessionId)
         }
         val hermesSessionId = intent.getStringExtra(AgorNotificationManager.EXTRA_HERMES_SESSION_ID)

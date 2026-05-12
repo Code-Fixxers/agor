@@ -130,9 +130,9 @@
             echo "🔨 Building debug APK with Gradle..."
             cd "$APP_DIR"
             chmod +x ./gradlew
-            ./gradlew :app:assembleDebug --no-daemon --stacktrace --no-configuration-cache
+            ./gradlew :app:assembleHermesAgorDebug --no-daemon --stacktrace --no-configuration-cache
 
-            APK_SRC="$APP_DIR/app/build/outputs/apk/debug/app-debug.apk"
+            APK_SRC="$APP_DIR/app/build/outputs/apk/hermesAgor/debug/app-hermes-agor-debug.apk"
             if [ ! -f "$APK_SRC" ]; then
               echo "❌ Expected APK not produced at $APK_SRC"
               exit 1
@@ -325,7 +325,8 @@ NPMRC
               echo "   To build the debug APK:"
               echo "     cd apps/agor-android"
               echo "     bash scripts/sync-whisper.sh   # optional, on-device transcription"
-              echo "     ./gradlew :app:assembleDebug"
+              echo "     ./gradlew :app:assembleHermesAgorDebug"
+              echo "     ./gradlew :app:assembleHermesOnlyDebug"
               echo ""
               echo "   Or one-shot from anywhere in the repo:"
               echo "     nix run .#build-agor-android-apk"

@@ -50,10 +50,13 @@ whisper.cpp, and the ignored `ggml-base.en.bin` model artifact unless
 
 ```bash
 cd apps/agor-android
-./gradlew :app:assembleDebug
+./gradlew :app:assembleHermesAgorDebug
+
+# Or build the standalone Hermes app:
+./gradlew :app:assembleHermesOnlyDebug
 
 # Install over USB
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/hermesAgor/debug/app-hermes-agor-debug.apk
 
 # Or use the wrapper:
 ./deploy.sh
@@ -61,6 +64,21 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 For the emulator, Agor's daemon at `http://localhost:3030` on the host is reachable
 from the emulator at `http://10.0.2.2:3030`.
+
+### Product variants
+
+The Android module publishes two side-by-side product flavors:
+
+| Flavor | Package | Label | Purpose |
+|---|---|---|---|
+| `hermesAgor` | `live.agor.app` | Agor | Full app: Agor daemon login, boards, worktrees, sessions, plus Hermes orchestration. |
+| `hermesOnly` | `live.agor.hermes` | Hermes | Standalone Hermes client: connects directly to Hermes/OpenAI-compatible endpoints and does not bootstrap Agor auth, sockets, navigation polling, or session recovery workers. |
+
+Debug builds keep the usual `.debug` suffix, so both variants can be installed
+next to release builds and next to each other. The legacy `assembleDebug` and
+`testDebugUnitTest` Gradle aliases intentionally point at `hermesAgor` for
+developer convenience; use explicit flavor task names when validating both
+products.
 
 ### Network policy
 
@@ -84,7 +102,7 @@ nix run .#build-agor-android-apk
 # Or drop into a dev shell with all toolchains on PATH
 nix develop .#android
 cd apps/agor-android
-./gradlew :app:assembleDebug
+./gradlew :app:assembleHermesAgorDebug
 ```
 
 Set `SKIP_WHISPER=1` before `nix run` to skip vendoring `whisper.cpp` (faster
@@ -169,7 +187,7 @@ scripts/sync-whisper.sh
 scripts/fetch-whisper-model.sh base.en
 
 # Rebuild — the NDK toolchain will pick up the source tree
-./gradlew :app:assembleDebug
+./gradlew :app:assembleHermesAgorDebug
 ```
 
 If `SKIP_WHISPER=1` is set or the local assets are otherwise unavailable, the

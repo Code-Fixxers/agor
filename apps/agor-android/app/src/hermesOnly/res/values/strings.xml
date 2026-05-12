@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Hermes</string>
+    <string name="voice_channel_name">Hermes Voice</string>
+    <string name="voice_notification_title">Hermes voice mode</string>
+</resources>

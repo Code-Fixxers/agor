@@ -17,9 +17,9 @@ if [ "$DEVICE_COUNT" = "0" ]; then
   exit 1
 fi
 
-./gradlew :app:assembleDebug
+./gradlew :app:assembleHermesAgorDebug
 
-APK="app/build/outputs/apk/debug/app-debug.apk"
+APK="app/build/outputs/apk/hermesAgor/debug/app-hermes-agor-debug.apk"
 if [ ! -f "$APK" ]; then
   echo "Build succeeded but $APK not found."
   exit 1
