@@ -8,6 +8,8 @@ import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.content.ContentFactory
 import live.agor.jetbrains.client.AgorApiClient
+import live.agor.jetbrains.client.AgorPermissionRequest
+import live.agor.jetbrains.client.AgorPermissionScope
 import live.agor.jetbrains.client.AgorSession
 import live.agor.jetbrains.client.AgorSocketClient
 import live.agor.jetbrains.client.AgorSnapshot
@@ -138,7 +140,44 @@ private class AgorToolWindow(private val project: Project) {
         panel.add(JButton("Stop").apply {
             addActionListener { runClientAction { stopSession(session.sessionId) } }
         })
+        snapshot.permissionRequests
+            .filter { it.sessionId == session.sessionId }
+            .forEach { panel.add(permissionPanel(session.sessionId, it)) }
         replaceInspector(panel)
+    }
+
+    private fun permissionPanel(sessionId: String, permission: AgorPermissionRequest): JPanel {
+        val panel = detailPanel(
+            "Permission Required",
+            permission.toolName,
+            listOf(
+                "Request: ${permission.requestId}",
+                "Task: ${permission.taskId ?: "-"}",
+                "Input: ${permission.toolInputJson}",
+            ),
+        )
+        panel.add(JButton("Approve Once").apply {
+            addActionListener {
+                runClientAction {
+                    decidePermission(sessionId, permission.requestId, permission.taskId, true, AgorPermissionScope.ONCE)
+                }
+            }
+        })
+        panel.add(JButton("Approve Project").apply {
+            addActionListener {
+                runClientAction {
+                    decidePermission(sessionId, permission.requestId, permission.taskId, true, AgorPermissionScope.PROJECT)
+                }
+            }
+        })
+        panel.add(JButton("Deny").apply {
+            addActionListener {
+                runClientAction {
+                    decidePermission(sessionId, permission.requestId, permission.taskId, false, AgorPermissionScope.ONCE)
+                }
+            }
+        })
+        return panel
     }
 
     private fun runClientAction(action: AgorApiClient.() -> Unit) {

@@ -30,7 +30,12 @@ class AgorApiClient(
             SessionDto::class.java,
             mapOf("archived" to "false", "\$limit" to "250"),
         ).map { it.toModel() }
-        return AgorSnapshot(boards, worktrees, sessions)
+        val permissionRequests = getList(
+            "/messages",
+            MessageDto::class.java,
+            mapOf("type" to "permission_request", "\$limit" to "250"),
+        ).mapNotNull { it.toPermissionRequest(gson) }
+        return AgorSnapshot(boards, worktrees, sessions, permissionRequests)
     }
 
     fun promptSession(sessionId: String, prompt: String) {
@@ -41,10 +46,25 @@ class AgorApiClient(
         postJson("/sessions/${sessionId.encodePath()}/stop", "{}")
     }
 
-    fun decidePermission(sessionId: String, messageId: String, decision: String) {
+    fun decidePermission(
+        sessionId: String,
+        requestId: String,
+        taskId: String?,
+        allow: Boolean,
+        scope: AgorPermissionScope = AgorPermissionScope.ONCE,
+    ) {
+        val reason = if (allow) "Approved by JetBrains" else "Denied by JetBrains"
         postJson(
             "/sessions/${sessionId.encodePath()}/permission-decision",
-            """{"messageId":${messageId.json()},"decision":${decision.json()}}""",
+            buildString {
+                append("""{"requestId":${requestId.json()}""")
+                if (!taskId.isNullOrBlank()) append(""","taskId":${taskId.json()}""")
+                append(""","allow":$allow""")
+                append(""","reason":${reason.json()}""")
+                append(""","remember":${scope != AgorPermissionScope.ONCE}""")
+                append(""","scope":${scope.wireName.json()}""")
+                append(""","decidedBy":"jetbrains"}""")
+            },
         )
     }
 
@@ -129,6 +149,32 @@ class AgorApiClient(
             },
         )
     }
+
+    private data class MessageDto(
+        @SerializedName("message_id") val messageId: String?,
+        @SerializedName("session_id") val sessionId: String?,
+        @SerializedName("task_id") val taskId: String?,
+        val type: String?,
+        val content: JsonObject?,
+    ) {
+        fun toPermissionRequest(gson: Gson): AgorPermissionRequest? {
+            if (type != "permission_request") return null
+            val contentObj = content ?: return null
+            val status = contentObj.string("status")
+            if (status != "pending") return null
+            val requestId = contentObj.string("request_id") ?: return null
+            val resolvedTaskId = contentObj.string("task_id") ?: taskId
+            val toolInput = contentObj.get("tool_input") ?: JsonObject()
+            return AgorPermissionRequest(
+                messageId = messageId.orEmpty(),
+                sessionId = sessionId.orEmpty(),
+                taskId = resolvedTaskId,
+                requestId = requestId,
+                toolName = contentObj.string("tool_name") ?: "Tool",
+                toolInputJson = gson.toJson(toolInput),
+            )
+        }
+    }
 }
 
 private class JdkAgorHttpTransport(
@@ -155,3 +201,8 @@ private fun String.json(): String =
         }
         append('"')
     }
+
+private fun JsonObject.string(key: String): String? {
+    val value = get(key) ?: return null
+    return if (value.isJsonPrimitive && value.asJsonPrimitive.isString) value.asString else null
+}

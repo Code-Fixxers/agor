@@ -30,8 +30,25 @@ data class AgorSession(
     val status: AgorSessionStatus,
 )
 
+enum class AgorPermissionScope(val wireName: String) {
+    ONCE("once"),
+    PROJECT("project"),
+    USER("user"),
+    LOCAL("local"),
+}
+
+data class AgorPermissionRequest(
+    val messageId: String,
+    val sessionId: String,
+    val taskId: String?,
+    val requestId: String,
+    val toolName: String,
+    val toolInputJson: String,
+)
+
 data class AgorSnapshot(
     val boards: List<AgorBoard> = emptyList(),
     val worktrees: List<AgorWorktree> = emptyList(),
     val sessions: List<AgorSession> = emptyList(),
+    val permissionRequests: List<AgorPermissionRequest> = emptyList(),
 )

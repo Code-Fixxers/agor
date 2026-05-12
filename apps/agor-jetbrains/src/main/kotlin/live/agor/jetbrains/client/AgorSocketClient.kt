@@ -29,6 +29,9 @@ class AgorSocketClient(
             on("tasks patched") { onAgorEvent() }
             on("messages created") { onAgorEvent() }
             on("messages patched") { onAgorEvent() }
+            on("messages permission_resolved") { onAgorEvent() }
+            on("sessions permission:request") { onAgorEvent() }
+            on("sessions permission:timeout") { onAgorEvent() }
             connect()
         }
     }
