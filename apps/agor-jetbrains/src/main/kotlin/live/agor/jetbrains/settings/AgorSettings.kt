@@ -14,9 +14,6 @@ import com.intellij.openapi.components.Storage
 class AgorSettings : PersistentStateComponent<AgorSettings.StateData> {
     data class StateData(
         var agorUrl: String = "http://localhost:3030",
-        var hermesUrl: String = "http://localhost:8642",
-        var hermesModel: String = "hermes",
-        var hermesProxyPath: String = "hermes-acp-proxy",
     )
 
     private var state = StateData()
@@ -30,10 +27,6 @@ class AgorSettings : PersistentStateComponent<AgorSettings.StateData> {
     var agorToken: String?
         get() = PasswordSafe.instance.getPassword(credentialAttributes("agor-token"))
         set(value) = PasswordSafe.instance.set(credentialAttributes("agor-token"), value?.let { Credentials("", it) })
-
-    var hermesToken: String?
-        get() = PasswordSafe.instance.getPassword(credentialAttributes("hermes-token"))
-        set(value) = PasswordSafe.instance.set(credentialAttributes("hermes-token"), value?.let { Credentials("", it) })
 
     companion object {
         fun getInstance(): AgorSettings =

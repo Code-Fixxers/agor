@@ -11,6 +11,7 @@
       agorJetbrainsHomeManagerModule = import ./nix/home-manager/agor-jetbrains.nix {
         inherit self;
       };
+      hermesAcpHomeManagerModule = import ./nix/home-manager/hermes-acp.nix;
     in
     flake-utils.lib.eachDefaultSystem (system:
       let
@@ -173,17 +174,6 @@
           '';
         };
 
-        hermesAcpProxyScript = pkgs.writeShellApplication {
-          name = "hermes-acp-proxy";
-          runtimeInputs = with pkgs; [
-            nodejs_22
-          ];
-          text = ''
-            set -euo pipefail
-            exec node "${self}/apps/hermes-acp-proxy/standalone/hermes-acp-proxy.mjs" "$@"
-          '';
-        };
-
         buildAgorJetbrainsPluginScript = pkgs.writeShellApplication {
           name = "build-agor-jetbrains-plugin";
           runtimeInputs = with pkgs; [
@@ -313,7 +303,6 @@ NPMRC
           publish-agor-live-wrapper = publishScript;
           build-agor-android-apk = buildAgorAndroidApkScript;
           agor-android-smoke = agorAndroidSmokeScript;
-          hermes-acp-proxy = hermesAcpProxyScript;
           build-agor-jetbrains-plugin = buildAgorJetbrainsPluginScript;
           default = runScript;
         };
@@ -338,10 +327,6 @@ NPMRC
           agor-android-smoke = {
             type = "app";
             program = "${agorAndroidSmokeScript}/bin/agor-android-smoke";
-          };
-          hermes-acp-proxy = {
-            type = "app";
-            program = "${hermesAcpProxyScript}/bin/hermes-acp-proxy";
           };
           build-agor-jetbrains-plugin = {
             type = "app";
@@ -393,6 +378,7 @@ NPMRC
       }) // {
         homeManagerModules = {
           agor-jetbrains = agorJetbrainsHomeManagerModule;
+          hermes-acp = hermesAcpHomeManagerModule;
           default = agorJetbrainsHomeManagerModule;
         };
       };

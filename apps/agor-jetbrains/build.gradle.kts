@@ -23,7 +23,7 @@ intellijPlatform {
             sinceBuild = "253"
         }
         changeNotes = """
-            Initial Agor + Hermes integration.
+            Initial Agor navigator integration.
         """.trimIndent()
     }
 }

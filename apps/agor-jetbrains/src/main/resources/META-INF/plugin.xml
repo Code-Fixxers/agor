@@ -4,8 +4,7 @@
     <name>Agor</name>
     <vendor email="hello@agor.live" url="https://agor.live">Agor</vendor>
     <description><![CDATA[
-        <p><b>Agor</b> brings Agor boards, worktrees, sessions, and Hermes handoff actions into JetBrains IDEs.</p>
-        <p>Hermes chat runs through JetBrains' native ACP agent support; this plugin provides the Agor navigator and session controls.</p>
+        <p><b>Agor</b> brings Agor boards, worktrees, sessions, permissions, and quick actions into JetBrains IDEs.</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

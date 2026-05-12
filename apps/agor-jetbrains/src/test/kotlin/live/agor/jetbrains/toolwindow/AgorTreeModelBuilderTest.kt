@@ -14,14 +14,14 @@ class AgorTreeModelBuilderTest {
             boards = listOf(AgorBoard("board-1", "Platform")),
             worktrees = listOf(AgorWorktree("wt-1", "board-1", "agor-jetbrains", "feature/jetbrains", "/tmp/agor")),
             sessions = listOf(
-                AgorSession("session-1", "wt-1", "Hermes bridge", "claude-code", AgorSessionStatus.RUNNING),
+                AgorSession("session-1", "wt-1", "Agent bridge", "claude-code", AgorSessionStatus.RUNNING),
                 AgorSession("session-2", "wt-1", "Navigator", "codex", AgorSessionStatus.IDLE),
             ),
         )
 
         assertEquals("Platform", rows[0].label)
         assertEquals("agor-jetbrains", rows[0].children[0].label)
-        assertEquals(listOf("Hermes bridge", "Navigator"), rows[0].children[0].children.map { it.label })
+        assertEquals(listOf("Agent bridge", "Navigator"), rows[0].children[0].children.map { it.label })
     }
 
     @Test

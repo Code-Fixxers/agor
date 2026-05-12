@@ -10,9 +10,7 @@ class AgorSettingsConfigurable : SearchableConfigurable {
     private val settings = AgorSettings.getInstance()
     private var panel: DialogPanel? = null
     private var agorTokenDraft: String = ""
-    private var hermesTokenDraft: String = ""
     private var originalAgorToken: String = ""
-    private var originalHermesToken: String = ""
 
     override fun getId(): String = "live.agor.jetbrains.settings"
 
@@ -30,35 +28,18 @@ class AgorSettingsConfigurable : SearchableConfigurable {
                     passwordField().bindText(::agorTokenDraft)
                 }
             }
-            group("Hermes ACP") {
-                row("Gateway URL or IP") {
-                    textField().bindText(state::hermesUrl)
-                }
-                row("Token") {
-                    passwordField().bindText(::hermesTokenDraft)
-                }
-                row("Model") {
-                    textField().bindText(state::hermesModel)
-                }
-                row("Proxy path") {
-                    textField().bindText(state::hermesProxyPath)
-                }
-            }
         }
         return panel as DialogPanel
     }
 
     override fun isModified(): Boolean =
         panel?.isModified() == true ||
-            agorTokenDraft != originalAgorToken ||
-            hermesTokenDraft != originalHermesToken
+            agorTokenDraft != originalAgorToken
 
     override fun apply() {
         panel?.apply()
         settings.agorToken = agorTokenDraft.ifBlank { null }
-        settings.hermesToken = hermesTokenDraft.ifBlank { null }
         originalAgorToken = agorTokenDraft
-        originalHermesToken = hermesTokenDraft
     }
 
     override fun reset() {
@@ -72,8 +53,6 @@ class AgorSettingsConfigurable : SearchableConfigurable {
 
     private fun loadTokenDrafts() {
         agorTokenDraft = settings.agorToken.orEmpty()
-        hermesTokenDraft = settings.hermesToken.orEmpty()
         originalAgorToken = agorTokenDraft
-        originalHermesToken = hermesTokenDraft
     }
 }

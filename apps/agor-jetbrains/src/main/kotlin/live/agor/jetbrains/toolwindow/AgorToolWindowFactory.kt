@@ -4,7 +4,6 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.content.ContentFactory
@@ -68,16 +67,6 @@ private class AgorToolWindow(private val project: Project) {
         val toolbar = JPanel()
         toolbar.add(JButton("Refresh").apply { addActionListener { refresh() } })
         toolbar.add(JButton("Settings").apply { addActionListener { showSettings() } })
-        toolbar.add(JButton("Hermes AI Chat").apply {
-            toolTipText = "Select Hermes in JetBrains AI Chat. ACP is configured by Home Manager or ~/.jetbrains/acp.json."
-            addActionListener {
-                Messages.showInfoMessage(
-                    project,
-                    "Open JetBrains AI Chat and select the Hermes ACP agent.",
-                    "Hermes ACP",
-                )
-            }
-        })
 
         val split = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, JScrollPane(tree), inspector)
         split.resizeWeight = 0.42
