@@ -19,7 +19,7 @@ fi
 
 ./gradlew :app:assembleHermesAgorDebug
 
-APK="app/build/outputs/apk/hermesAgor/debug/app-hermes-agor-debug.apk"
+APK="app/build/outputs/apk/hermesAgor/debug/app-hermesAgor-debug.apk"
 if [ ! -f "$APK" ]; then
   echo "Build succeeded but $APK not found."
   exit 1

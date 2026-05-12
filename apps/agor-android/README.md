@@ -56,7 +56,7 @@ cd apps/agor-android
 ./gradlew :app:assembleHermesOnlyDebug
 
 # Install over USB
-adb install -r app/build/outputs/apk/hermesAgor/debug/app-hermes-agor-debug.apk
+adb install -r app/build/outputs/apk/hermesAgor/debug/app-hermesAgor-debug.apk
 
 # Or use the wrapper:
 ./deploy.sh

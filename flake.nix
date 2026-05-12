@@ -132,7 +132,7 @@
             chmod +x ./gradlew
             ./gradlew :app:assembleHermesAgorDebug --no-daemon --stacktrace --no-configuration-cache
 
-            APK_SRC="$APP_DIR/app/build/outputs/apk/hermesAgor/debug/app-hermes-agor-debug.apk"
+            APK_SRC="$APP_DIR/app/build/outputs/apk/hermesAgor/debug/app-hermesAgor-debug.apk"
             if [ ! -f "$APK_SRC" ]; then
               echo "❌ Expected APK not produced at $APK_SRC"
               exit 1

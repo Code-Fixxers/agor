@@ -138,8 +138,8 @@ jobs:
           SHORT_SHA: ${{ steps.version.outputs.short_sha }}
         run: |
           set -euo pipefail
-          AGOR_SRC=app/build/outputs/apk/hermesAgor/debug/app-hermes-agor-debug.apk
-          HERMES_SRC=app/build/outputs/apk/hermesOnly/debug/app-hermes-only-debug.apk
+          AGOR_SRC=app/build/outputs/apk/hermesAgor/debug/app-hermesAgor-debug.apk
+          HERMES_SRC=app/build/outputs/apk/hermesOnly/debug/app-hermesOnly-debug.apk
           AGOR_DEST="agor-android-debug-${SHORT_SHA}.apk"
           HERMES_DEST="hermes-android-debug-${SHORT_SHA}.apk"
           cp "$AGOR_SRC" "$AGOR_DEST"
