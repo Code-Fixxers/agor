@@ -15,11 +15,16 @@
           bash
           coreutils
           findutils
+          git
           gnugrep
           gnused
+          gnumake
           jq
           nodejs_22
+          pkg-config
           pnpm
+          python3
+          stdenv.cc
         ];
 
         buildScript = pkgs.writeShellApplication {
@@ -83,7 +88,7 @@
               exit 1
             fi
 
-            if [ -z "${NPM_TOKEN:-}" ]; then
+            if [ -z "''${NPM_TOKEN:-}" ]; then
               echo "❌ NPM_TOKEN is not set."
               echo "Export your token first, e.g.:"
               echo "  export NPM_TOKEN=..."
@@ -100,7 +105,7 @@
             trap cleanup EXIT
 
             cat > "$TMP_NPMRC" <<NPMRC
-//registry.npmjs.org/:_authToken=${NPM_TOKEN}
+//registry.npmjs.org/:_authToken=''${NPM_TOKEN}
 always-auth=true
 NPMRC
 
@@ -141,11 +146,12 @@ NPMRC
         };
 
         devShells.default = pkgs.mkShell {
-          packages = with pkgs; [
-            nodejs_22
-            pnpm
-            jq
-          ];
+          packages = sharedRuntimeInputs;
+
+          shellHook = ''
+            export npm_config_python="${pkgs.python3}/bin/python3"
+            echo "Agor dev shell: node $(node --version), pnpm $(pnpm --version)"
+          '';
         };
       });
 }

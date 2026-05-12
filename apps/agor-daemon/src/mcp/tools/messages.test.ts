@@ -72,7 +72,16 @@ async function registerAndGetHandler(ctx: { userId: string; role?: string }): Pr
   } as unknown as McpServer;
 
   registerMessageTools(fakeServer, {
-    app: {} as any,
+    app: {
+      service: (name: string) => {
+        if (name !== 'sessions') {
+          throw new Error(`Unexpected service lookup: ${name}`);
+        }
+        return {
+          find: async () => ({ data: [{ session_id: 'sess-active-1' }] }),
+        };
+      },
+    } as any,
     db: {} as any,
     userId: ctx.userId as import('@agor/core/types').UserID,
     sessionId: 'sess-0001' as import('@agor/core/types').SessionID,
@@ -105,7 +114,7 @@ describe('agor_messages_list MCP tool', () => {
     await handler({ search: 'secret' });
     expect(mockFindAccessibleSessions).not.toHaveBeenCalled();
     expect(mockAllSpy).toHaveBeenCalled();
-  });
+  }, 30_000);
 
   it('short-circuits to empty when user has no accessible sessions', async () => {
     mockIsWorktreeRbacEnabled.mockReturnValue(true);

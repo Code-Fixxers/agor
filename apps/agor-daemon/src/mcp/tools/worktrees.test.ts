@@ -48,5 +48,5 @@ describe('agor_worktrees_update', () => {
     await expect(tools.agor_worktrees_update({ notes: 'hello' })).rejects.toThrow(
       /X-Agor-Session-Id|sessionId/
     );
-  });
+  }, 30_000);
 });

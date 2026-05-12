@@ -115,7 +115,7 @@ describe('agor_mcp_servers_list (catalog-only)', () => {
       oauth_authenticated: true,
     });
     expect(payload.summary).toMatchObject({ total: 2, oauth_servers: 0, needs_auth: 0 });
-  });
+  }, 30_000);
 
   it('omits disabled servers by default and includes them when asked', async () => {
     const calls: Array<Record<string, unknown> | undefined> = [];

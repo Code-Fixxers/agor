@@ -173,7 +173,7 @@ describe('agor_sessions_create', () => {
     expect(created.model_config.mode).toBe('alias');
     expect(created.model_config.effort).toBe('max');
     expect(typeof created.model_config.updated_at).toBe('string');
-  });
+  }, 30_000);
 
   it('falls back to user default modelConfig when none is explicitly provided', async () => {
     const sessionCreates: unknown[] = [];

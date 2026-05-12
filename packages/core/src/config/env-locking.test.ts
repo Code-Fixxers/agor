@@ -369,7 +369,7 @@ describe('env-locking', () => {
       expect(fn1EndIdx).toBeLessThan(fn2StartIdx);
     });
 
-    it('should allow parallel access for different users', async () => {
+    it('should serialize process.env access for different users', async () => {
       const executionLog: string[] = [];
 
       vi.mocked(resolverModule.resolveUserEnvironment)
@@ -387,19 +387,17 @@ describe('env-locking', () => {
         withUserEnvironment('user-2' as UserID, mockDb as Database, () => fn('user-2')),
       ]);
 
-      // Both should run concurrently
+      // Both should run without overlapping process.env mutation.
       expect(executionLog).toContain('user-1-start');
       expect(executionLog).toContain('user-2-start');
       expect(executionLog).toContain('user-1-end');
       expect(executionLog).toContain('user-2-end');
 
-      // Check that they overlap (interleaved execution)
-      const _user1StartIdx = executionLog.indexOf('user-1-start');
+      // process.env is process-global, so even different users must serialize.
       const user2StartIdx = executionLog.indexOf('user-2-start');
       const user1EndIdx = executionLog.indexOf('user-1-end');
 
-      // user2 should start before user1 ends
-      expect(user2StartIdx).toBeLessThan(user1EndIdx);
+      expect(user1EndIdx).toBeLessThan(user2StartIdx);
     });
   });
 });

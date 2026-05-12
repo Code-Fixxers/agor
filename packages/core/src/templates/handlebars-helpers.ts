@@ -40,6 +40,8 @@ let helpersRegistered = false;
  * the caller wants to use the bare `Handlebars.compile()` API.
  */
 export function registerHandlebarsHelpers(): void {
+  helpersRegistered = true;
+
   // ===== Arithmetic Helpers =====
 
   /**
@@ -268,6 +270,10 @@ export function renderTemplate(
     registerHandlebarsHelpers();
   }
   try {
+    if (!helpersRegistered) {
+      registerHandlebarsHelpers();
+    }
+
     const template = Handlebars.compile(templateString);
     return template(context);
   } catch (error) {

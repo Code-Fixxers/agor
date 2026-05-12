@@ -3,13 +3,14 @@ import type { UserID } from '../types';
 import { resolveUserEnvironment } from './env-resolver';
 
 /**
- * Per-user locks to prevent process.env race conditions
+ * Process-wide lock to prevent process.env race conditions.
  *
- * When multiple queries run concurrently, they could overwrite each other's
- * environment variables in the shared process.env object. This lock mechanism
- * ensures only one operation at a time can augment process.env for a given user.
+ * process.env is shared across the whole Node process, so per-user locks are
+ * not sufficient: two different users can still overwrite each other's env
+ * while async work is in flight. Any code path that mutates process.env must be
+ * serialized globally.
  */
-const userEnvLocks = new Map<UserID, Promise<void>>();
+let envLock: Promise<void> = Promise.resolve();
 
 /**
  * Execute a function with user environment variables augmented in process.env
@@ -33,18 +34,14 @@ export async function withUserEnvironment<T>(
   db: Database,
   fn: () => Promise<T>
 ): Promise<T> {
-  // Wait for any existing lock for this user
-  const existingLock = userEnvLocks.get(userId);
-  if (existingLock) {
-    await existingLock;
-  }
-
-  // Create new lock promise
-  let releaseLock: () => void;
+  const previousLock = envLock;
+  let releaseLock!: () => void;
   const lock = new Promise<void>((resolve) => {
     releaseLock = resolve;
   });
-  userEnvLocks.set(userId, lock);
+  envLock = lock;
+
+  await previousLock;
 
   try {
     // Resolve user environment
@@ -71,8 +68,10 @@ export async function withUserEnvironment<T>(
     }
   } finally {
     // Release lock for next operation
-    releaseLock!();
-    userEnvLocks.delete(userId);
+    releaseLock();
+    if (envLock === lock) {
+      envLock = Promise.resolve();
+    }
   }
 }
 
