@@ -268,6 +268,10 @@ EOF
             echo "  UI:     http://127.0.0.1:$UI_PORT"
             echo ""
 
+            echo "Applying database migrations for isolated test DB..."
+            pnpm agor db migrate --yes
+            echo ""
+
             if curl -fsS "http://127.0.0.1:$DAEMON_PORT/health" >/dev/null 2>&1; then
               echo "Port $DAEMON_PORT already has an Agor daemon responding. Pick another --daemon-port." >&2
               exit 1
@@ -311,8 +315,26 @@ EOF
               exit 1
             fi
 
-            pnpm --filter agor-ui dev -- --host 127.0.0.1 --port "$UI_PORT" > "$LOG_DIR/ui.log" 2>&1 &
+            pnpm --filter agor-ui exec vite --host 127.0.0.1 --port "$UI_PORT" --strictPort > "$LOG_DIR/ui.log" 2>&1 &
             ui_pid="$!"
+
+            for _ in $(seq 1 60); do
+              if curl -fsS "http://127.0.0.1:$UI_PORT" >/dev/null 2>&1; then
+                break
+              fi
+              if ! kill -0 "$ui_pid" 2>/dev/null; then
+                echo "UI exited early. Log:"
+                tail -100 "$LOG_DIR/ui.log" || true
+                exit 1
+              fi
+              sleep 1
+            done
+
+            if ! curl -fsS "http://127.0.0.1:$UI_PORT" >/dev/null 2>&1; then
+              echo "UI did not become reachable within 60 seconds. Log:"
+              tail -100 "$LOG_DIR/ui.log" || true
+              exit 1
+            fi
 
             echo "Ready."
             echo "  Open: http://127.0.0.1:$UI_PORT"

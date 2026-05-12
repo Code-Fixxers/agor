@@ -42,4 +42,5 @@ yarn-error.log*
 
 # Agor specific
 .agor/
+.agor-local/
 apps/agor-desktop/out/
