@@ -373,6 +373,13 @@ export async function registerServices(ctx: RegisterServicesContext): Promise<Re
   app.use('/copilot-models', createCopilotModelsService(db));
   app.service('/copilot-models').hooks({ before: { find: [ctx.requireAuth] } });
 
+  app.use('/config/junie-models', {
+    // biome-ignore lint/suspicious/noExplicitAny: Feathers service payload is validated by config service
+    async create(data: any) {
+      return await configService.loadJunieModels(data);
+    },
+  });
+
   const worktreeRepository = new WorktreeRepository(db);
   const { UsersRepository, SessionRepository } = await import('@agor/core/db');
   const usersRepository = new UsersRepository(db);

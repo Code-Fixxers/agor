@@ -45,6 +45,47 @@ function maskCredentials(config: AgorConfig): AgorConfig {
   };
 }
 
+function resolveJunieModelsUrl(baseUrl: string): string {
+  const normalized = baseUrl.trim().replace(/\/+$/, '');
+  if (!normalized) {
+    throw new Error('Junie LiteLLM base URL is required');
+  }
+
+  if (normalized.endsWith('/v1/models')) return normalized;
+  if (normalized.endsWith('/v1/chat/completions')) {
+    return `${normalized.slice(0, -'/chat/completions'.length)}/models`;
+  }
+  if (normalized.endsWith('/v1/responses')) {
+    return `${normalized.slice(0, -'/responses'.length)}/models`;
+  }
+  if (normalized.endsWith('/v1')) return `${normalized}/models`;
+  return `${normalized}/v1/models`;
+}
+
+export async function fetchJunieModels(baseUrl: string, apiKey: string): Promise<string[]> {
+  const response = await fetch(resolveJunieModelsUrl(baseUrl), {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to load Junie models: ${response.status} ${response.statusText}`);
+  }
+
+  const body = (await response.json()) as { data?: unknown };
+  if (!Array.isArray(body.data)) {
+    throw new Error('Failed to load Junie models: gateway response did not contain a data array');
+  }
+
+  return body.data
+    .map((model) => (model && typeof model === 'object' ? (model as { id?: unknown }).id : null))
+    .filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+}
+
 /**
  * Config service class
  */
@@ -137,6 +178,31 @@ export class ConfigService {
       source: result.source === 'none' ? 'native' : result.source,
       useNativeAuth: result.useNativeAuth,
       ...(result.decryptionFailed && { decryptionFailed: true }),
+    };
+  }
+
+  async loadJunieModels(data: { litellmBaseUrl?: string; apiKey?: string }): Promise<{
+    models: string[];
+  }> {
+    const config = await loadConfig();
+    const litellmBaseUrl = data.litellmBaseUrl?.trim() || config.junie?.litellmBaseUrl?.trim();
+    if (!litellmBaseUrl) {
+      throw new Error('Junie LiteLLM base URL is required');
+    }
+
+    const apiKey =
+      data.apiKey?.trim() ||
+      (
+        await resolveApiKey('JUNIE_LITELLM_API_KEY', {
+          db: this.db,
+        })
+      ).apiKey;
+    if (!apiKey) {
+      throw new Error('Junie LiteLLM API key is not configured');
+    }
+
+    return {
+      models: await fetchJunieModels(litellmBaseUrl, apiKey),
     };
   }
 
