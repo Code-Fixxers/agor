@@ -15,6 +15,7 @@ import {
 } from '@ant-design/icons';
 import {
   Alert,
+  AutoComplete,
   Button,
   Form,
   Input,
@@ -32,6 +33,23 @@ import { ApiKeyFields, type ApiKeyStatus } from '../ApiKeyFields';
 
 export interface AgenticToolsSectionProps {
   client: AgorClient | null;
+}
+
+type JunieModelsResponse = {
+  models?: string[];
+};
+
+function buildJunieModelOptions(models: string[], selectedModels: string[]) {
+  const values = new Set<string>();
+  for (const model of selectedModels) {
+    const trimmed = model.trim();
+    if (trimmed) values.add(trimmed);
+  }
+  for (const model of models) {
+    const trimmed = model.trim();
+    if (trimmed) values.add(trimmed);
+  }
+  return [...values].map((model) => ({ value: model, label: model }));
 }
 
 // Helper component for API key tabs
@@ -123,6 +141,8 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
   const [junieLiteLLMBaseUrl, setJunieLiteLLMBaseUrl] = useState('');
   const [junieDefaultModel, setJunieDefaultModel] = useState('');
   const [junieFasterModel, setJunieFasterModel] = useState('');
+  const [junieModels, setJunieModels] = useState<string[]>([]);
+  const [loadingJunieModels, setLoadingJunieModels] = useState(false);
   const [junieApiType, setJunieApiType] = useState<'OpenAIResponses' | 'OpenAICompletion'>(
     'OpenAICompletion'
   );
@@ -352,6 +372,35 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
     }
   };
 
+  const handleLoadJunieModels = async () => {
+    if (!client) return;
+
+    const litellmBaseUrl = junieLiteLLMBaseUrl.trim();
+    if (!litellmBaseUrl) {
+      showError('Junie LiteLLM base URL cannot be empty');
+      return;
+    }
+
+    try {
+      setLoadingJunieModels(true);
+      const result = (await client.service('config/junie-models').create({
+        litellmBaseUrl,
+      })) as JunieModelsResponse;
+      const models = Array.isArray(result.models) ? result.models : [];
+      setJunieModels(models);
+      if (models.length === 0) {
+        showError('Gateway returned no models');
+      } else {
+        showSuccess(`Loaded ${models.length} Junie models`);
+      }
+    } catch (err) {
+      console.error('Failed to load Junie models:', err);
+      showError(err instanceof Error ? err.message : 'Failed to load Junie models');
+    } finally {
+      setLoadingJunieModels(false);
+    }
+  };
+
   // Test OpenCode connection
   const handleTestOpenCodeConnection = async () => {
     if (!client) return;
@@ -393,6 +442,10 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
 
   const codexHomeChanged = codexHome !== initialCodexHome;
   const loading = loadingKeys || loadingOpencode || loadingCodexConfig || loadingJunieConfig;
+  const junieModelOptions = buildJunieModelOptions(junieModels, [
+    junieDefaultModel,
+    junieFasterModel,
+  ]);
 
   if (loading) {
     return (
@@ -544,24 +597,41 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
                     extra="Gateway root URL. Agor appends the Junie profile endpoint for the selected API type."
                     required
                   >
-                    <Input
-                      value={junieLiteLLMBaseUrl}
-                      onChange={(event) => setJunieLiteLLMBaseUrl(event.target.value)}
-                      placeholder="https://litellm.example.com"
-                    />
+                    <Space.Compact style={{ width: '100%' }}>
+                      <Input
+                        value={junieLiteLLMBaseUrl}
+                        onChange={(event) => setJunieLiteLLMBaseUrl(event.target.value)}
+                        placeholder="https://litellm.example.com"
+                      />
+                      <Button onClick={handleLoadJunieModels} loading={loadingJunieModels}>
+                        Load models
+                      </Button>
+                    </Space.Compact>
                   </Form.Item>
                   <Form.Item label="Default model" required>
-                    <Input
+                    <AutoComplete
+                      options={junieModelOptions}
                       value={junieDefaultModel}
-                      onChange={(event) => setJunieDefaultModel(event.target.value)}
+                      onChange={setJunieDefaultModel}
                       placeholder="gpt-5.2"
+                      filterOption={(inputValue, option) =>
+                        String(option?.value ?? '')
+                          .toLowerCase()
+                          .includes(inputValue.toLowerCase())
+                      }
                     />
                   </Form.Item>
                   <Form.Item label="Faster model">
-                    <Input
+                    <AutoComplete
+                      options={junieModelOptions}
                       value={junieFasterModel}
-                      onChange={(event) => setJunieFasterModel(event.target.value)}
+                      onChange={setJunieFasterModel}
                       placeholder="gpt-5.4-mini"
+                      filterOption={(inputValue, option) =>
+                        String(option?.value ?? '')
+                          .toLowerCase()
+                          .includes(inputValue.toLowerCase())
+                      }
                     />
                   </Form.Item>
                   <Form.Item label="LiteLLM API type">

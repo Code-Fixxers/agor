@@ -1,6 +1,17 @@
 import type { AgorClient, AgorConfig } from '@agor-live/client';
 import { InfoCircleOutlined, WarningOutlined } from '@ant-design/icons';
-import { Alert, Button, Divider, Input, Select, Space, Spin, Typography, theme } from 'antd';
+import {
+  Alert,
+  AutoComplete,
+  Button,
+  Divider,
+  Input,
+  Select,
+  Space,
+  Spin,
+  Typography,
+  theme,
+} from 'antd';
 import { useEffect, useState } from 'react';
 import { ApiKeyFields, type ApiKeyStatus } from '../ApiKeyFields';
 
@@ -8,6 +19,23 @@ const { Text, Link } = Typography;
 
 export interface AgenticToolsTabProps {
   client: AgorClient | null;
+}
+
+type JunieModelsResponse = {
+  models?: string[];
+};
+
+function buildJunieModelOptions(models: string[], selectedModels: string[]) {
+  const values = new Set<string>();
+  for (const model of selectedModels) {
+    const trimmed = model.trim();
+    if (trimmed) values.add(trimmed);
+  }
+  for (const model of models) {
+    const trimmed = model.trim();
+    if (trimmed) values.add(trimmed);
+  }
+  return [...values].map((model) => ({ value: model, label: model }));
 }
 
 export const AgenticToolsTab: React.FC<AgenticToolsTabProps> = ({ client }) => {
@@ -34,6 +62,8 @@ export const AgenticToolsTab: React.FC<AgenticToolsTabProps> = ({ client }) => {
     executable: '',
   });
   const [junieSettingsInput, setJunieSettingsInput] = useState(junieSettings);
+  const [junieModels, setJunieModels] = useState<string[]>([]);
+  const [loadingJunieModels, setLoadingJunieModels] = useState(false);
 
   // Load current config on mount
   useEffect(() => {
@@ -207,6 +237,34 @@ export const AgenticToolsTab: React.FC<AgenticToolsTabProps> = ({ client }) => {
     }
   };
 
+  const handleLoadJunieModels = async () => {
+    if (!client) return;
+
+    const litellmBaseUrl = junieSettingsInput.litellmBaseUrl.trim();
+    if (!litellmBaseUrl) {
+      setError('Junie LiteLLM base URL cannot be empty');
+      return;
+    }
+
+    try {
+      setLoadingJunieModels(true);
+      setError(null);
+      const result = (await client.service('config/junie-models').create({
+        litellmBaseUrl,
+      })) as JunieModelsResponse;
+      const models = Array.isArray(result.models) ? result.models : [];
+      setJunieModels(models);
+      if (models.length === 0) {
+        setError('Gateway returned no models');
+      }
+    } catch (err) {
+      console.error('Failed to load Junie models:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load Junie models');
+    } finally {
+      setLoadingJunieModels(false);
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ textAlign: 'center', padding: token.paddingLG }}>
@@ -214,6 +272,11 @@ export const AgenticToolsTab: React.FC<AgenticToolsTabProps> = ({ client }) => {
       </div>
     );
   }
+
+  const junieModelOptions = buildJunieModelOptions(junieModels, [
+    junieSettingsInput.defaultModel,
+    junieSettingsInput.fasterModel,
+  ]);
 
   return (
     <div style={{ padding: token.paddingMD }}>
@@ -280,25 +343,40 @@ export const AgenticToolsTab: React.FC<AgenticToolsTabProps> = ({ client }) => {
         </Text>
 
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <Input
-            placeholder="LiteLLM base URL, e.g. https://litellm.example.com"
-            value={junieSettingsInput.litellmBaseUrl}
-            onChange={(e) =>
-              setJunieSettingsInput((prev) => ({ ...prev, litellmBaseUrl: e.target.value }))
-            }
-          />
-          <Input
+          <Space.Compact style={{ width: '100%' }}>
+            <Input
+              placeholder="LiteLLM base URL, e.g. https://litellm.example.com"
+              value={junieSettingsInput.litellmBaseUrl}
+              onChange={(e) =>
+                setJunieSettingsInput((prev) => ({ ...prev, litellmBaseUrl: e.target.value }))
+              }
+            />
+            <Button onClick={handleLoadJunieModels} loading={loadingJunieModels}>
+              Load models
+            </Button>
+          </Space.Compact>
+          <AutoComplete
+            options={junieModelOptions}
             placeholder="Default model, e.g. gpt-5.4"
             value={junieSettingsInput.defaultModel}
-            onChange={(e) =>
-              setJunieSettingsInput((prev) => ({ ...prev, defaultModel: e.target.value }))
+            onChange={(defaultModel) =>
+              setJunieSettingsInput((prev) => ({ ...prev, defaultModel }))
+            }
+            filterOption={(inputValue, option) =>
+              String(option?.value ?? '')
+                .toLowerCase()
+                .includes(inputValue.toLowerCase())
             }
           />
-          <Input
+          <AutoComplete
+            options={junieModelOptions}
             placeholder="Faster model (optional), e.g. gpt-5.4-mini"
             value={junieSettingsInput.fasterModel}
-            onChange={(e) =>
-              setJunieSettingsInput((prev) => ({ ...prev, fasterModel: e.target.value }))
+            onChange={(fasterModel) => setJunieSettingsInput((prev) => ({ ...prev, fasterModel }))}
+            filterOption={(inputValue, option) =>
+              String(option?.value ?? '')
+                .toLowerCase()
+                .includes(inputValue.toLowerCase())
             }
           />
           <Select
