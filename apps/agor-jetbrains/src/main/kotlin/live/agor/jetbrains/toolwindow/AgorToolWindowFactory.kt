@@ -16,6 +16,7 @@ import live.agor.jetbrains.client.AgorSocketClient
 import live.agor.jetbrains.client.AgorSnapshot
 import live.agor.jetbrains.client.AgorWorktree
 import live.agor.jetbrains.settings.AgorSettings
+import live.agor.jetbrains.settings.AgorSettingsDialog
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.event.MouseAdapter
@@ -66,6 +67,7 @@ private class AgorToolWindow(private val project: Project) {
 
         val toolbar = JPanel()
         toolbar.add(JButton("Refresh").apply { addActionListener { refresh() } })
+        toolbar.add(JButton("Settings").apply { addActionListener { showSettings() } })
         toolbar.add(JButton("Hermes AI Chat").apply {
             toolTipText = "Select Hermes in JetBrains AI Chat. ACP is configured by Home Manager or ~/.jetbrains/acp.json."
             addActionListener {
@@ -214,13 +216,14 @@ private class AgorToolWindow(private val project: Project) {
     }
 
     private fun showConnectionError(error: Throwable) {
-        replaceInspector(
-            detailPanel(
-                "Agor",
-                "Connection unavailable",
-                listOf(error.userFacingMessage("Could not load Agor")),
-            ),
+        val panel = detailPanel(
+            "Agor",
+            "Connection unavailable",
+            listOf(error.userFacingMessage("Could not load Agor")),
         )
+        panel.add(JButton("Configure").apply { addActionListener { showSettings() } })
+        panel.add(JButton("Retry").apply { addActionListener { refresh() } })
+        replaceInspector(panel)
     }
 
     private fun showActionError(error: Throwable) {
@@ -231,6 +234,15 @@ private class AgorToolWindow(private val project: Project) {
                 listOf(error.userFacingMessage("Agor action failed")),
             ),
         )
+    }
+
+    private fun showSettings() {
+        if (AgorSettingsDialog(project).showAndGet()) {
+            socketClient?.disconnect()
+            socketClient = null
+            socketConnectionKey = null
+            refresh()
+        }
     }
 
     private fun detailPanel(kicker: String, title: String, lines: List<String>): JPanel {
