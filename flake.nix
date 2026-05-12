@@ -221,8 +221,8 @@ daemon:
   port: $DAEMON_PORT
   public_url: http://127.0.0.1:$DAEMON_PORT
   base_url: http://127.0.0.1:$DAEMON_PORT
-  allowAnonymous: true
-  requireAuth: false
+  allowAnonymous: false
+  requireAuth: true
   instanceLabel: Local Test
   instanceDescription: Isolated flake test environment at $STATE_DIR
 ui:
@@ -234,6 +234,10 @@ database:
     path: $DB_FILE
 paths:
   data_home: $DATA_HOME
+security:
+  cors:
+    origins:
+      - http://127.0.0.1:$UI_PORT
 execution:
   worktree_rbac: false
   unix_user_mode: simple
@@ -253,6 +257,7 @@ EOF
             export AGOR_DATA_HOME="$DATA_HOME"
             export AGOR_DB_DIALECT=sqlite
             export AGOR_DB_PATH="file:$DB_FILE"
+            export DATABASE_URL="file:$DB_FILE"
             export PORT="$DAEMON_PORT"
             export UI_PORT="$UI_PORT"
             export VITE_DAEMON_URL="http://127.0.0.1:$DAEMON_PORT"
@@ -270,6 +275,10 @@ EOF
 
             echo "Applying database migrations for isolated test DB..."
             pnpm agor db migrate --yes
+            echo ""
+
+            echo "Ensuring default local admin exists..."
+            pnpm agor user create-admin
             echo ""
 
             if curl -fsS "http://127.0.0.1:$DAEMON_PORT/health" >/dev/null 2>&1; then
