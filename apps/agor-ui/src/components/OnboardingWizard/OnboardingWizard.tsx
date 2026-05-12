@@ -110,6 +110,8 @@ export interface OnboardingWizardProps {
     ANTHROPIC_API_KEY?: boolean;
     OPENAI_API_KEY?: boolean;
     GEMINI_API_KEY?: boolean;
+    COPILOT_GITHUB_TOKEN?: boolean;
+    JUNIE_LITELLM_API_KEY?: boolean;
   };
 }
 
@@ -153,6 +155,8 @@ function apiKeyNameForAgent(agent: AgenticToolName): string {
       return 'GEMINI_API_KEY';
     case 'copilot':
       return 'COPILOT_GITHUB_TOKEN';
+    case 'junie':
+      return 'JUNIE_LITELLM_API_KEY';
     case 'opencode':
       return 'ANTHROPIC_API_KEY';
     default:
@@ -170,6 +174,8 @@ function apiKeyPlaceholder(agent: AgenticToolName): string {
       return 'AIza...';
     case 'copilot':
       return 'ghp_...';
+    case 'junie':
+      return 'sk-...';
     default:
       return 'sk-ant-...';
   }
@@ -181,6 +187,7 @@ const AGENT_LABELS: Record<AgenticToolName, string> = {
   gemini: 'Gemini',
   opencode: 'OpenCode',
   copilot: 'GitHub Copilot',
+  junie: 'Junie',
 };
 
 /**
@@ -213,6 +220,7 @@ const AGENT_KEY_CONSOLES: Record<AgenticToolName, { label: string; url: string }
   codex: { label: 'platform.openai.com', url: 'https://platform.openai.com/api-keys' },
   gemini: { label: 'aistudio.google.com', url: 'https://aistudio.google.com/apikey' },
   copilot: { label: 'github.com/features/copilot', url: 'https://github.com/features/copilot' },
+  junie: { label: 'LiteLLM docs', url: 'https://docs.litellm.ai/' },
   opencode: null,
 };
 
@@ -292,6 +300,11 @@ export function OnboardingWizard({
     user?.env_vars?.COPILOT_GITHUB_TOKEN ||
     (systemCredentials as Record<string, unknown>)?.COPILOT_GITHUB_TOKEN
   );
+  const hasJunieLiteLLMKey = !!(
+    user?.api_keys?.JUNIE_LITELLM_API_KEY ||
+    user?.env_vars?.JUNIE_LITELLM_API_KEY ||
+    (systemCredentials as Record<string, unknown>)?.JUNIE_LITELLM_API_KEY
+  );
 
   const hasKeyForAgent = (agent: AgenticToolName): boolean => {
     switch (agent) {
@@ -303,6 +316,8 @@ export function OnboardingWizard({
         return hasGeminiKey;
       case 'copilot':
         return hasCopilotToken;
+      case 'junie':
+        return hasJunieLiteLLMKey;
       case 'opencode':
         return hasAnthropicKey || hasOpenAIKey || hasGeminiKey;
       default:
@@ -1097,6 +1112,7 @@ export function OnboardingWizard({
               { value: 'gemini', label: 'Gemini' },
               { value: 'copilot', label: 'GitHub Copilot' },
               { value: 'opencode', label: 'OpenCode' },
+              { value: 'junie', label: 'Junie' },
             ]}
             style={{ width: '100%' }}
           />

@@ -50,6 +50,7 @@ export class UsersRepository implements BaseRepository<User, Partial<User>> {
             OPENAI_API_KEY: !!row.data.api_keys.OPENAI_API_KEY,
             GEMINI_API_KEY: !!row.data.api_keys.GEMINI_API_KEY,
             COPILOT_GITHUB_TOKEN: !!row.data.api_keys.COPILOT_GITHUB_TOKEN,
+            JUNIE_LITELLM_API_KEY: !!row.data.api_keys.JUNIE_LITELLM_API_KEY,
           }
         : undefined,
       // Convert stored env vars to presence + scope metadata (never exposes secrets).
@@ -315,7 +316,7 @@ export class UsersRepository implements BaseRepository<User, Partial<User>> {
    */
   async getApiKey(
     userId: string,
-    service: 'anthropic' | 'openai' | 'gemini' | 'copilot'
+    service: 'anthropic' | 'openai' | 'gemini' | 'copilot' | 'junie'
   ): Promise<string | null> {
     const row = await this.getRawRow(userId);
     if (!row || !row.data.api_keys) {
@@ -328,6 +329,7 @@ export class UsersRepository implements BaseRepository<User, Partial<User>> {
       openai: 'OPENAI_API_KEY',
       gemini: 'GEMINI_API_KEY',
       copilot: 'COPILOT_GITHUB_TOKEN',
+      junie: 'JUNIE_LITELLM_API_KEY',
     } as const;
 
     const encryptedKey = row.data.api_keys[keyMap[service]];
@@ -352,7 +354,7 @@ export class UsersRepository implements BaseRepository<User, Partial<User>> {
    */
   async setApiKey(
     userId: string,
-    service: 'anthropic' | 'openai' | 'gemini' | 'copilot',
+    service: 'anthropic' | 'openai' | 'gemini' | 'copilot' | 'junie',
     apiKey: string
   ): Promise<void> {
     const fullId = await this.resolveId(userId);
@@ -368,6 +370,7 @@ export class UsersRepository implements BaseRepository<User, Partial<User>> {
       openai: 'OPENAI_API_KEY',
       gemini: 'GEMINI_API_KEY',
       copilot: 'COPILOT_GITHUB_TOKEN',
+      junie: 'JUNIE_LITELLM_API_KEY',
     } as const;
 
     // Encrypt the API key
@@ -405,7 +408,7 @@ export class UsersRepository implements BaseRepository<User, Partial<User>> {
    */
   async deleteApiKey(
     userId: string,
-    service: 'anthropic' | 'openai' | 'gemini' | 'copilot'
+    service: 'anthropic' | 'openai' | 'gemini' | 'copilot' | 'junie'
   ): Promise<void> {
     const fullId = await this.resolveId(userId);
     const row = await this.getRawRow(fullId);
@@ -420,6 +423,7 @@ export class UsersRepository implements BaseRepository<User, Partial<User>> {
       openai: 'OPENAI_API_KEY',
       gemini: 'GEMINI_API_KEY',
       copilot: 'COPILOT_GITHUB_TOKEN',
+      junie: 'JUNIE_LITELLM_API_KEY',
     } as const;
 
     // Remove the key

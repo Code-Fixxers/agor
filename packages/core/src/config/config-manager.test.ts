@@ -477,6 +477,18 @@ describe('getConfigValue', () => {
     expect(apiKey).toBe('test-key-123');
   });
 
+  it('should handle Junie LiteLLM credentials key', async () => {
+    const config = createConfigData({
+      credentials: {
+        JUNIE_LITELLM_API_KEY: 'junie-litellm-key',
+      },
+    });
+    await saveConfig(config);
+
+    const apiKey = await getConfigValue('credentials.JUNIE_LITELLM_API_KEY');
+    expect(apiKey).toBe('junie-litellm-key');
+  });
+
   it('should handle boolean values', async () => {
     const config = createConfigData();
     await saveConfig(config);

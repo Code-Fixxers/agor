@@ -483,6 +483,7 @@ export function getCredential(
     | 'ANTHROPIC_BASE_URL'
     | 'OPENAI_API_KEY'
     | 'GEMINI_API_KEY'
+    | 'JUNIE_LITELLM_API_KEY'
 ): string | undefined {
   try {
     const config = loadConfigSync();

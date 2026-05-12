@@ -80,6 +80,23 @@ describe('PromptPayloadSchema', () => {
     expect(() => PromptPayloadSchema.parse(payload)).toThrow();
   });
 
+  it('should parse prompt payload for Junie', () => {
+    const payload = {
+      command: 'prompt',
+      sessionToken: 'jwt-token-here',
+      params: {
+        sessionId: '550e8400-e29b-41d4-a716-446655440000',
+        taskId: '550e8400-e29b-41d4-a716-446655440001',
+        prompt: 'Hello Junie!',
+        tool: 'junie',
+        cwd: '/home/user/project',
+      },
+    };
+
+    const result = PromptPayloadSchema.parse(payload);
+    expect(result.params.tool).toBe('junie');
+  });
+
   it('should reject missing required fields', () => {
     const payload = {
       command: 'prompt',

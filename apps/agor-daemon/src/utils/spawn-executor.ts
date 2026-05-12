@@ -280,6 +280,7 @@ function spawnExecutorLocal(payload: Record<string, unknown>, options: SpawnExec
           OPENAI_API_KEY: env.OPENAI_API_KEY,
           GEMINI_API_KEY: env.GEMINI_API_KEY,
           GOOGLE_API_KEY: env.GOOGLE_API_KEY,
+          JUNIE_LITELLM_API_KEY: env.JUNIE_LITELLM_API_KEY,
         }).filter(([_, v]) => v !== undefined)
       )
     : { ...env, DAEMON_URL: daemonUrl };

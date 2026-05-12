@@ -13,7 +13,19 @@ import {
   LoadingOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
-import { Alert, Button, Form, Input, Space, Spin, Switch, Tabs, Tooltip, theme } from 'antd';
+import {
+  Alert,
+  Button,
+  Form,
+  Input,
+  Select,
+  Space,
+  Spin,
+  Switch,
+  Tabs,
+  Tooltip,
+  theme,
+} from 'antd';
 import { useEffect, useState } from 'react';
 import { useThemedMessage } from '../../utils/message';
 import { ApiKeyFields, type ApiKeyStatus } from '../ApiKeyFields';
@@ -90,6 +102,7 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
     OPENAI_API_KEY: false,
     GEMINI_API_KEY: false,
     COPILOT_GITHUB_TOKEN: false,
+    JUNIE_LITELLM_API_KEY: false,
   });
 
   // OpenCode state
@@ -104,6 +117,15 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
   const [initialCodexHome, setInitialCodexHome] = useState(defaultCodexHome);
   const [loadingCodexConfig, setLoadingCodexConfig] = useState(true);
   const [savingCodexHome, setSavingCodexHome] = useState(false);
+  const [loadingJunieConfig, setLoadingJunieConfig] = useState(true);
+  const [savingJunieConfig, setSavingJunieConfig] = useState(false);
+  const [junieExecutable, setJunieExecutable] = useState('junie');
+  const [junieLiteLLMBaseUrl, setJunieLiteLLMBaseUrl] = useState('');
+  const [junieDefaultModel, setJunieDefaultModel] = useState('');
+  const [junieFasterModel, setJunieFasterModel] = useState('');
+  const [junieApiType, setJunieApiType] = useState<'OpenAIResponses' | 'OpenAICompletion'>(
+    'OpenAIResponses'
+  );
 
   // Load API keys configuration
   useEffect(() => {
@@ -123,6 +145,7 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
           OPENAI_API_KEY: !!config?.OPENAI_API_KEY,
           GEMINI_API_KEY: !!config?.GEMINI_API_KEY,
           COPILOT_GITHUB_TOKEN: !!(config as Record<string, unknown>)?.COPILOT_GITHUB_TOKEN,
+          JUNIE_LITELLM_API_KEY: !!(config as Record<string, unknown>)?.JUNIE_LITELLM_API_KEY,
         });
       } catch (err) {
         console.error('Failed to load API keys:', err);
@@ -183,6 +206,41 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
     };
 
     loadCodex();
+  }, [client]);
+
+  // Load Junie configuration
+  useEffect(() => {
+    if (!client) return;
+
+    const loadJunie = async () => {
+      try {
+        setLoadingJunieConfig(true);
+        const config = (await client.service('config').get('junie')) as {
+          executable?: string;
+          litellmBaseUrl?: string;
+          defaultModel?: string;
+          fasterModel?: string;
+          apiType?: 'OpenAIResponses' | 'OpenAICompletion';
+        } | null;
+
+        setJunieExecutable(config?.executable || 'junie');
+        setJunieLiteLLMBaseUrl(config?.litellmBaseUrl || '');
+        setJunieDefaultModel(config?.defaultModel || '');
+        setJunieFasterModel(config?.fasterModel || '');
+        setJunieApiType(config?.apiType || 'OpenAIResponses');
+      } catch (err) {
+        console.error('Failed to load Junie config:', err);
+        setJunieExecutable('junie');
+        setJunieLiteLLMBaseUrl('');
+        setJunieDefaultModel('');
+        setJunieFasterModel('');
+        setJunieApiType('OpenAIResponses');
+      } finally {
+        setLoadingJunieConfig(false);
+      }
+    };
+
+    loadJunie();
   }, [client]);
 
   // Save API key
@@ -259,6 +317,41 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
     }
   };
 
+  const handleSaveJunieConfig = async () => {
+    if (!client) return;
+
+    const litellmBaseUrl = junieLiteLLMBaseUrl.trim();
+    const defaultModel = junieDefaultModel.trim();
+
+    if (!litellmBaseUrl) {
+      showError('Junie LiteLLM base URL cannot be empty');
+      return;
+    }
+    if (!defaultModel) {
+      showError('Junie default model cannot be empty');
+      return;
+    }
+
+    try {
+      setSavingJunieConfig(true);
+      await client.service('config').patch(null, {
+        junie: {
+          executable: junieExecutable.trim() || 'junie',
+          litellmBaseUrl,
+          defaultModel,
+          fasterModel: junieFasterModel.trim() || null,
+          apiType: junieApiType,
+        },
+      });
+      showSuccess('Junie settings saved');
+    } catch (err) {
+      console.error('Failed to save Junie config:', err);
+      showError(err instanceof Error ? err.message : 'Failed to save Junie settings');
+    } finally {
+      setSavingJunieConfig(false);
+    }
+  };
+
   // Test OpenCode connection
   const handleTestOpenCodeConnection = async () => {
     if (!client) return;
@@ -299,7 +392,7 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
   };
 
   const codexHomeChanged = codexHome !== initialCodexHome;
-  const loading = loadingKeys || loadingOpencode || loadingCodexConfig;
+  const loading = loadingKeys || loadingOpencode || loadingCodexConfig || loadingJunieConfig;
 
   if (loading) {
     return (
@@ -411,6 +504,83 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
                 onClear={handleClearKey}
                 onClearError={() => setKeysError(null)}
               />
+            ),
+          },
+          {
+            key: 'junie',
+            label: 'Junie',
+            children: (
+              <div
+                style={{
+                  paddingTop: token.paddingMD,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: token.marginXL,
+                }}
+              >
+                <ApiKeyTabContent
+                  keyField="JUNIE_LITELLM_API_KEY"
+                  keyStatus={keyStatus}
+                  keysError={keysError}
+                  savingKeys={savingKeys}
+                  onSave={handleSaveKey}
+                  onClear={handleClearKey}
+                  onClearError={() => setKeysError(null)}
+                />
+
+                <Form layout="vertical">
+                  <Form.Item
+                    label="Junie executable"
+                    extra="Command Agor runs for Junie headless sessions."
+                  >
+                    <Input
+                      value={junieExecutable}
+                      onChange={(event) => setJunieExecutable(event.target.value)}
+                      placeholder="junie"
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    label="LiteLLM base URL"
+                    extra="Gateway root URL. Agor appends the Junie profile endpoint for the selected API type."
+                    required
+                  >
+                    <Input
+                      value={junieLiteLLMBaseUrl}
+                      onChange={(event) => setJunieLiteLLMBaseUrl(event.target.value)}
+                      placeholder="https://litellm.example.com"
+                    />
+                  </Form.Item>
+                  <Form.Item label="Default model" required>
+                    <Input
+                      value={junieDefaultModel}
+                      onChange={(event) => setJunieDefaultModel(event.target.value)}
+                      placeholder="gpt-5.2"
+                    />
+                  </Form.Item>
+                  <Form.Item label="Faster model">
+                    <Input
+                      value={junieFasterModel}
+                      onChange={(event) => setJunieFasterModel(event.target.value)}
+                      placeholder="gpt-5.4-mini"
+                    />
+                  </Form.Item>
+                  <Form.Item label="LiteLLM API type">
+                    <Select value={junieApiType} onChange={setJunieApiType}>
+                      <Select.Option value="OpenAIResponses">OpenAI Responses</Select.Option>
+                      <Select.Option value="OpenAICompletion">
+                        OpenAI Chat Completions
+                      </Select.Option>
+                    </Select>
+                  </Form.Item>
+                  <Button
+                    type="primary"
+                    onClick={handleSaveJunieConfig}
+                    loading={savingJunieConfig}
+                  >
+                    Save Junie settings
+                  </Button>
+                </Form>
+              </div>
             ),
           },
           {

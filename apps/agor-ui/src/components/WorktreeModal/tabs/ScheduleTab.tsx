@@ -119,7 +119,7 @@ export const ScheduleTab: React.FC<ScheduleTabProps> = ({
       const scheduleConfig = {
         timezone: 'UTC',
         prompt_template: promptTemplate,
-        agentic_tool: agenticTool as 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot',
+        agentic_tool: agenticTool as AgenticToolName,
         retention: retention,
         allow_concurrent_runs: allowConcurrentRuns,
         permission_mode: formValues.permissionMode,

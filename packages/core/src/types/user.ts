@@ -92,6 +92,7 @@ export interface DefaultAgenticConfig {
   gemini?: DefaultAgenticToolConfig;
   opencode?: DefaultAgenticToolConfig;
   copilot?: DefaultAgenticToolConfig;
+  junie?: DefaultAgenticToolConfig;
 }
 
 /**
@@ -183,6 +184,7 @@ export interface User extends BaseUserFields {
     OPENAI_API_KEY?: boolean;
     GEMINI_API_KEY?: boolean;
     COPILOT_GITHUB_TOKEN?: boolean;
+    JUNIE_LITELLM_API_KEY?: boolean;
   };
   // Environment variable status with scope (never exposes actual values).
   // Map from env var name → presence/scope metadata. For v0.5 the only validated
@@ -264,6 +266,7 @@ export interface UpdateUserInput extends Partial<BaseUserFields> {
     OPENAI_API_KEY?: string | null;
     GEMINI_API_KEY?: string | null;
     COPILOT_GITHUB_TOKEN?: string | null;
+    JUNIE_LITELLM_API_KEY?: string | null;
   };
   // Environment variables for update (accepts plaintext, encrypted before storage).
   // `null` clears the variable. A plain `string` creates/updates the value and leaves

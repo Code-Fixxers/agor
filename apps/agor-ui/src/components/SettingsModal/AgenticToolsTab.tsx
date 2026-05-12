@@ -1,6 +1,6 @@
 import type { AgorClient, AgorConfig } from '@agor-live/client';
 import { InfoCircleOutlined, WarningOutlined } from '@ant-design/icons';
-import { Alert, Button, Divider, Input, Space, Spin, Typography, theme } from 'antd';
+import { Alert, Button, Divider, Input, Select, Space, Spin, Typography, theme } from 'antd';
 import { useEffect, useState } from 'react';
 import { ApiKeyFields, type ApiKeyStatus } from '../ApiKeyFields';
 
@@ -20,11 +20,20 @@ export const AgenticToolsTab: React.FC<AgenticToolsTabProps> = ({ client }) => {
     OPENAI_API_KEY: false,
     GEMINI_API_KEY: false,
     COPILOT_GITHUB_TOKEN: false,
+    JUNIE_LITELLM_API_KEY: false,
   });
   const [baseUrl, setBaseUrl] = useState<string>('');
   const [baseUrlInput, setBaseUrlInput] = useState<string>('');
   const [authTokenSet, setAuthTokenSet] = useState(false);
   const [authTokenInput, setAuthTokenInput] = useState<string>('');
+  const [junieSettings, setJunieSettings] = useState({
+    litellmBaseUrl: '',
+    defaultModel: '',
+    fasterModel: '',
+    apiType: 'OpenAIResponses',
+    executable: '',
+  });
+  const [junieSettingsInput, setJunieSettingsInput] = useState(junieSettings);
 
   // Load current config on mount
   useEffect(() => {
@@ -46,6 +55,7 @@ export const AgenticToolsTab: React.FC<AgenticToolsTabProps> = ({ client }) => {
           OPENAI_API_KEY: !!config?.OPENAI_API_KEY,
           GEMINI_API_KEY: !!config?.GEMINI_API_KEY,
           COPILOT_GITHUB_TOKEN: !!config?.COPILOT_GITHUB_TOKEN,
+          JUNIE_LITELLM_API_KEY: !!config?.JUNIE_LITELLM_API_KEY,
         });
 
         // Load base URL if set
@@ -54,6 +64,19 @@ export const AgenticToolsTab: React.FC<AgenticToolsTabProps> = ({ client }) => {
 
         // Load auth token status (masked, so just check if set)
         setAuthTokenSet(!!config?.ANTHROPIC_AUTH_TOKEN);
+
+        const junie = ((await client.service('config').get('junie')) || {}) as Partial<
+          typeof junieSettings
+        >;
+        const loadedJunieSettings = {
+          litellmBaseUrl: junie.litellmBaseUrl || '',
+          defaultModel: junie.defaultModel || '',
+          fasterModel: junie.fasterModel || '',
+          apiType: junie.apiType || 'OpenAIResponses',
+          executable: junie.executable || '',
+        };
+        setJunieSettings(loadedJunieSettings);
+        setJunieSettingsInput(loadedJunieSettings);
       } catch (err) {
         console.error('Failed to load config:', err);
         setError(err instanceof Error ? err.message : 'Failed to load configuration');
@@ -158,6 +181,32 @@ export const AgenticToolsTab: React.FC<AgenticToolsTabProps> = ({ client }) => {
     setAuthTokenInput('');
   };
 
+  const handleSaveJunieSettings = async () => {
+    if (!client) return;
+
+    try {
+      setSaving((prev) => ({ ...prev, JUNIE_SETTINGS: true }));
+      setError(null);
+
+      await client.service('config').patch(null, {
+        junie: {
+          litellmBaseUrl: junieSettingsInput.litellmBaseUrl.trim() || undefined,
+          defaultModel: junieSettingsInput.defaultModel.trim() || undefined,
+          fasterModel: junieSettingsInput.fasterModel.trim() || undefined,
+          apiType: junieSettingsInput.apiType as 'OpenAIResponses' | 'OpenAICompletion',
+          executable: junieSettingsInput.executable.trim() || undefined,
+        },
+      });
+      setJunieSettings(junieSettingsInput);
+    } catch (err) {
+      console.error('Failed to save Junie settings:', err);
+      setError(err instanceof Error ? err.message : 'Failed to save Junie settings');
+      throw err;
+    } finally {
+      setSaving((prev) => ({ ...prev, JUNIE_SETTINGS: false }));
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ textAlign: 'center', padding: token.paddingLG }}>
@@ -219,6 +268,64 @@ export const AgenticToolsTab: React.FC<AgenticToolsTabProps> = ({ client }) => {
         onClear={handleClear}
         saving={saving}
       />
+
+      <Divider />
+
+      <div style={{ marginTop: token.marginLG }}>
+        <Text strong style={{ display: 'block', marginBottom: token.marginXS }}>
+          Junie LiteLLM Settings
+        </Text>
+        <Text type="secondary" style={{ display: 'block', marginBottom: token.marginMD }}>
+          Configure Junie headless mode to use your LiteLLM gateway with a separate BYOK token.
+        </Text>
+
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Input
+            placeholder="LiteLLM base URL, e.g. https://litellm.example.com"
+            value={junieSettingsInput.litellmBaseUrl}
+            onChange={(e) =>
+              setJunieSettingsInput((prev) => ({ ...prev, litellmBaseUrl: e.target.value }))
+            }
+          />
+          <Input
+            placeholder="Default model, e.g. gpt-5.4"
+            value={junieSettingsInput.defaultModel}
+            onChange={(e) =>
+              setJunieSettingsInput((prev) => ({ ...prev, defaultModel: e.target.value }))
+            }
+          />
+          <Input
+            placeholder="Faster model (optional), e.g. gpt-5.4-mini"
+            value={junieSettingsInput.fasterModel}
+            onChange={(e) =>
+              setJunieSettingsInput((prev) => ({ ...prev, fasterModel: e.target.value }))
+            }
+          />
+          <Select
+            value={junieSettingsInput.apiType}
+            onChange={(apiType) => setJunieSettingsInput((prev) => ({ ...prev, apiType }))}
+            options={[
+              { value: 'OpenAIResponses', label: 'OpenAI Responses (recommended)' },
+              { value: 'OpenAICompletion', label: 'OpenAI Chat Completions' },
+            ]}
+          />
+          <Input
+            placeholder="Junie executable (optional, default: junie)"
+            value={junieSettingsInput.executable}
+            onChange={(e) =>
+              setJunieSettingsInput((prev) => ({ ...prev, executable: e.target.value }))
+            }
+          />
+          <Button
+            type="primary"
+            onClick={handleSaveJunieSettings}
+            loading={saving.JUNIE_SETTINGS}
+            disabled={JSON.stringify(junieSettingsInput) === JSON.stringify(junieSettings)}
+          >
+            Save Junie Settings
+          </Button>
+        </Space>
+      </div>
 
       <Divider />
 

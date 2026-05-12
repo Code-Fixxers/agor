@@ -10,6 +10,7 @@ export interface ApiKeyStatus {
   OPENAI_API_KEY: boolean;
   GEMINI_API_KEY: boolean;
   COPILOT_GITHUB_TOKEN: boolean;
+  JUNIE_LITELLM_API_KEY: boolean;
 }
 
 export interface ApiKeyFieldsProps {
@@ -61,6 +62,13 @@ const KEY_CONFIGS: KeyFieldConfig[] = [
     description: '(Copilot)',
     placeholder: 'ghp_...',
     docUrl: 'https://github.com/settings/tokens',
+  },
+  {
+    field: 'JUNIE_LITELLM_API_KEY',
+    label: 'Junie LiteLLM API Key',
+    description: '(Junie)',
+    placeholder: 'sk-...',
+    docUrl: 'https://docs.litellm.ai/',
   },
 ];
 

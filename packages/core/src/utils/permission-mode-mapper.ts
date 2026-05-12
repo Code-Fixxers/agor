@@ -9,6 +9,7 @@
  * - Claude Code: default, acceptEdits, bypassPermissions, plan, dontAsk
  * - Gemini: default, autoEdit, yolo
  * - Codex: ask, auto, on-failure, allow-all
+ * - Junie: default
  *
  * See: context/explorations/mcp-session-management.md for full specification
  */
@@ -116,6 +117,10 @@ export function mapPermissionMode(
         default:
           return 'auto'; // Safe default
       }
+
+    case 'junie':
+      // Junie headless mode currently exposes no equivalent approval matrix.
+      return 'default';
 
     default:
       // Unknown tool - return mode as-is

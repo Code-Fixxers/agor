@@ -19,6 +19,7 @@ export interface InitializedCredentials {
   anthropicBaseUrl?: string;
   geminiApiKey?: string;
   copilotGithubToken?: string;
+  junieLiteLLMApiKey?: string;
 }
 
 /**
@@ -171,6 +172,30 @@ export function initializeCopilotGithubToken(
 }
 
 /**
+ * Initialize Junie LiteLLM API key
+ *
+ * Priority: config.yaml > env var
+ */
+export function initializeJunieLiteLLMApiKey(
+  config: { credentials?: CredentialsConfig },
+  envApiKey: string | undefined
+): string | undefined {
+  if (config.credentials?.JUNIE_LITELLM_API_KEY && !envApiKey) {
+    process.env.JUNIE_LITELLM_API_KEY = config.credentials.JUNIE_LITELLM_API_KEY;
+    console.log('✅ Set JUNIE_LITELLM_API_KEY from config for Junie');
+  }
+
+  const apiKey = config.credentials?.JUNIE_LITELLM_API_KEY || envApiKey;
+  if (!apiKey) {
+    console.log('ℹ️  No JUNIE_LITELLM_API_KEY found - Junie agent will require BYOK setup');
+    console.log('   To use Junie: agor config set credentials.JUNIE_LITELLM_API_KEY <token>');
+    console.log('   Or set JUNIE_LITELLM_API_KEY environment variable');
+  }
+
+  return apiKey;
+}
+
+/**
  * Initialize all AI service credentials
  *
  * Convenience function to initialize all supported API keys at once.
@@ -192,5 +217,6 @@ export function initializeCredentials(config: {
       process.env.GH_TOKEN,
       process.env.GITHUB_TOKEN
     ),
+    junieLiteLLMApiKey: initializeJunieLiteLLMApiKey(config, process.env.JUNIE_LITELLM_API_KEY),
   };
 }

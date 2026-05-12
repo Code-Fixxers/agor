@@ -70,6 +70,7 @@ interface UpdateUserData {
     ANTHROPIC_API_KEY?: string | null;
     OPENAI_API_KEY?: string | null;
     GEMINI_API_KEY?: string | null;
+    JUNIE_LITELLM_API_KEY?: string | null;
   };
   // Environment variables for update (accepts plaintext, encrypted before storage)
   env_vars?: Record<string, string | null>; // { "GITHUB_TOKEN": "ghp_...", "NPM_TOKEN": null }
@@ -374,7 +375,12 @@ export class UsersService {
    */
   async getApiKey(
     userId: UserID,
-    keyName: 'ANTHROPIC_API_KEY' | 'OPENAI_API_KEY' | 'GEMINI_API_KEY'
+    keyName:
+      | 'ANTHROPIC_API_KEY'
+      | 'OPENAI_API_KEY'
+      | 'GEMINI_API_KEY'
+      | 'COPILOT_GITHUB_TOKEN'
+      | 'JUNIE_LITELLM_API_KEY'
   ): Promise<string | undefined> {
     const row = await select(this.db).from(users).where(eq(users.user_id, userId)).one();
 
@@ -469,6 +475,8 @@ export class UsersService {
             ANTHROPIC_API_KEY: !!data.api_keys.ANTHROPIC_API_KEY,
             OPENAI_API_KEY: !!data.api_keys.OPENAI_API_KEY,
             GEMINI_API_KEY: !!data.api_keys.GEMINI_API_KEY,
+            COPILOT_GITHUB_TOKEN: !!data.api_keys.COPILOT_GITHUB_TOKEN,
+            JUNIE_LITELLM_API_KEY: !!data.api_keys.JUNIE_LITELLM_API_KEY,
           }
         : undefined,
       // Return env var metadata (presence + scope), NOT actual values
@@ -545,6 +553,7 @@ class UsersServiceWithAuth extends UsersService {
             ANTHROPIC_API_KEY: !!data.api_keys.ANTHROPIC_API_KEY,
             OPENAI_API_KEY: !!data.api_keys.OPENAI_API_KEY,
             GEMINI_API_KEY: !!data.api_keys.GEMINI_API_KEY,
+            JUNIE_LITELLM_API_KEY: !!data.api_keys.JUNIE_LITELLM_API_KEY,
           }
         : undefined,
       env_vars: envVarMetadata,

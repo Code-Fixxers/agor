@@ -74,6 +74,7 @@ describe('isSecretEnvKey matches the keys spawn-executor cares about', () => {
     'OPENAI_API_KEY',
     'GEMINI_API_KEY',
     'GOOGLE_API_KEY',
+    'JUNIE_LITELLM_API_KEY',
   ];
 
   for (const key of relevantKeys) {

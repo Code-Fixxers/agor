@@ -20,8 +20,8 @@ export interface ModelConfig {
 export interface ModelSelectorProps {
   value?: ModelConfig;
   onChange?: (config: ModelConfig) => void;
-  agent?: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot'; // Kept as 'agent' for backwards compat in prop name
-  agentic_tool?: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot';
+  agent?: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot' | 'junie'; // Kept as 'agent' for backwards compat in prop name
+  agentic_tool?: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot' | 'junie';
 }
 
 // Codex model options (derived from @agor/core metadata)
@@ -61,6 +61,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   const COPILOT_MODEL_OPTIONS = [
     { id: 'default', label: 'Default', description: 'Use Copilot default model' },
   ];
+  const JUNIE_MODEL_OPTIONS = [
+    { id: 'default', label: 'Default', description: 'Use Junie default LiteLLM model' },
+  ];
 
   const modelList =
     effectiveTool === 'codex'
@@ -71,7 +74,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           ? [] // OpenCode doesn't use this list
           : effectiveTool === 'copilot'
             ? COPILOT_MODEL_OPTIONS
-            : AVAILABLE_CLAUDE_MODEL_ALIASES;
+            : effectiveTool === 'junie'
+              ? JUNIE_MODEL_OPTIONS
+              : AVAILABLE_CLAUDE_MODEL_ALIASES;
 
   // Determine initial mode based on whether the value is in the aliases list
   // If no value provided, default to 'alias' mode (recommended)
@@ -118,6 +123,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       } else if (effectiveTool === 'gemini') {
         defaultModel = 'gemini-2.5-flash';
       } else if (effectiveTool === 'copilot') {
+        defaultModel = 'default';
+      } else if (effectiveTool === 'junie') {
         defaultModel = 'default';
       } else {
         // claude-code (opencode is handled earlier in the component)
@@ -187,7 +194,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                       ? 'e.g., gemini-2.5-pro'
                       : effectiveTool === 'copilot'
                         ? 'e.g., gpt-4o or claude-3.5-sonnet'
-                        : 'e.g., claude-opus-4-20250514' // claude-code (opencode handled earlier)
+                        : effectiveTool === 'junie'
+                          ? 'e.g., gpt-5.4 or litellm-model-alias'
+                          : 'e.g., claude-opus-4-20250514' // claude-code (opencode handled earlier)
                 }
                 style={{ width: '100%', minWidth: 400 }}
               />
@@ -201,7 +210,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                         ? 'https://ai.google.dev/gemini-api/docs/models'
                         : effectiveTool === 'copilot'
                           ? 'https://github.com/features/copilot'
-                          : 'https://platform.claude.com/docs/en/about-claude/models' // claude-code (opencode handled earlier)
+                          : effectiveTool === 'junie'
+                            ? 'https://docs.litellm.ai/'
+                            : 'https://platform.claude.com/docs/en/about-claude/models' // claude-code (opencode handled earlier)
                   }
                   target="_blank"
                   rel="noopener noreferrer"

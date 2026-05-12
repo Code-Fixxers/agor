@@ -49,6 +49,7 @@ const MODEL_LABELS: Record<string, string> = {
   gemini: 'Gemini Model',
   opencode: 'OpenCode LLM Provider',
   copilot: 'Copilot Model',
+  junie: 'Junie LiteLLM Model',
 };
 
 export const AgenticToolConfigForm: React.FC<AgenticToolConfigFormProps> = ({

@@ -65,7 +65,14 @@ const GitUrlSchema = z.string().refine(isGitUrl, {
 /**
  * Tool types supported by the prompt command
  */
-export const ToolTypeSchema = z.enum(['claude-code', 'gemini', 'codex', 'opencode', 'copilot']);
+export const ToolTypeSchema = z.enum([
+  'claude-code',
+  'gemini',
+  'codex',
+  'opencode',
+  'copilot',
+  'junie',
+]);
 export type ToolType = z.infer<typeof ToolTypeSchema>;
 
 /**

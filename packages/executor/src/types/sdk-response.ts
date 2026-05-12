@@ -102,6 +102,15 @@ export type CopilotSdkResponse = import('../sdk-handlers/copilot/normalizer.js')
 export type OpenCodeSdkResponse = unknown;
 
 // ============================================================================
+// Junie CLI Response
+// ============================================================================
+
+/**
+ * Junie CLI Response - JSON output plus process metadata
+ */
+export type JunieSdkResponse = import('../sdk-handlers/junie/types.js').JunieRawResponse;
+
+// ============================================================================
 // Union Type - All Raw SDK Responses
 // ============================================================================
 
@@ -114,7 +123,8 @@ export type RawSdkResponse =
   | CodexSdkResponse
   | GeminiSdkResponse
   | CopilotSdkResponse
-  | OpenCodeSdkResponse;
+  | OpenCodeSdkResponse
+  | JunieSdkResponse;
 
 // ============================================================================
 // Legacy/Deprecated Types (for backward compatibility)

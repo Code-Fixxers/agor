@@ -71,7 +71,7 @@ export const sessions = sqliteTable(
       ],
     }).notNull(),
     agentic_tool: text('agentic_tool', {
-      enum: ['claude-code', 'codex', 'gemini', 'opencode', 'copilot'],
+      enum: ['claude-code', 'codex', 'gemini', 'opencode', 'copilot', 'junie'],
     }).notNull(),
     board_id: text('board_id', { length: 36 }), // NULL = no board
 
@@ -621,7 +621,7 @@ export const worktrees = sqliteTable(
         schedule?: {
           timezone: string; // IANA timezone (default: 'UTC')
           prompt_template: string; // Handlebars template
-          agentic_tool: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot';
+          agentic_tool: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot' | 'junie';
           retention: number; // How many sessions to keep (0 = keep forever)
           permission_mode?: string; // Permission mode for spawned sessions
           model_config?: {
@@ -725,6 +725,7 @@ export const users = sqliteTable(
           OPENAI_API_KEY?: string; // Encrypted with AES-256-GCM
           GEMINI_API_KEY?: string; // Encrypted with AES-256-GCM
           COPILOT_GITHUB_TOKEN?: string; // Encrypted with AES-256-GCM
+          JUNIE_LITELLM_API_KEY?: string; // Encrypted with AES-256-GCM
         };
         // Encrypted environment variables with scope metadata.
         //

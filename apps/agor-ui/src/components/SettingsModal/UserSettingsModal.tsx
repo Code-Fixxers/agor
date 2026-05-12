@@ -78,6 +78,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
   const [geminiForm] = Form.useForm();
   const [opencodeForm] = Form.useForm();
   const [copilotForm] = Form.useForm();
+  const [junieForm] = Form.useForm();
   const [audioForm] = Form.useForm();
 
   // API key management state
@@ -86,6 +87,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     OPENAI_API_KEY: false,
     GEMINI_API_KEY: false,
     COPILOT_GITHUB_TOKEN: false,
+    JUNIE_LITELLM_API_KEY: false,
   });
   const [savingApiKeys, setSavingApiKeys] = useState<Record<string, boolean>>({});
 
@@ -100,6 +102,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     gemini: false,
     opencode: false,
     copilot: false,
+    junie: false,
   });
 
   // Initialize forms when user changes or modal opens
@@ -122,6 +125,9 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       claudeForm.setFieldsValue(getFormValuesFromConfig('claude-code', defaults?.['claude-code']));
       codexForm.setFieldsValue(getFormValuesFromConfig('codex', defaults?.codex));
       geminiForm.setFieldsValue(getFormValuesFromConfig('gemini', defaults?.gemini));
+      opencodeForm.setFieldsValue(getFormValuesFromConfig('opencode', defaults?.opencode));
+      copilotForm.setFieldsValue(getFormValuesFromConfig('copilot', defaults?.copilot));
+      junieForm.setFieldsValue(getFormValuesFromConfig('junie', defaults?.junie));
 
       // Initialize audio form with user's preferences
       const audioPrefs = userData.preferences?.audio;
@@ -133,7 +139,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
           audioPrefs?.minDurationSeconds ?? DEFAULT_AUDIO_PREFERENCES.minDurationSeconds,
       });
     },
-    [form, claudeForm, codexForm, geminiForm, audioForm]
+    [form, claudeForm, codexForm, geminiForm, opencodeForm, copilotForm, junieForm, audioForm]
   );
 
   // Initialize when modal opens with user data
@@ -154,6 +160,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         OPENAI_API_KEY: !!user.api_keys.OPENAI_API_KEY,
         GEMINI_API_KEY: !!user.api_keys.GEMINI_API_KEY,
         COPILOT_GITHUB_TOKEN: !!user.api_keys.COPILOT_GITHUB_TOKEN,
+        JUNIE_LITELLM_API_KEY: !!user.api_keys.JUNIE_LITELLM_API_KEY,
       });
     } else {
       setUserApiKeyStatus({
@@ -161,6 +168,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         OPENAI_API_KEY: false,
         GEMINI_API_KEY: false,
         COPILOT_GITHUB_TOKEN: false,
+        JUNIE_LITELLM_API_KEY: false,
       });
     }
 
@@ -177,6 +185,9 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     claudeForm.resetFields();
     codexForm.resetFields();
     geminiForm.resetFields();
+    opencodeForm.resetFields();
+    copilotForm.resetFields();
+    junieForm.resetFields();
     setActiveTab('general');
     onClose();
   };
@@ -333,6 +344,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       gemini: geminiForm,
       opencode: opencodeForm,
       copilot: copilotForm,
+      junie: junieForm,
     };
 
     try {
@@ -365,6 +377,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       gemini: geminiForm,
       opencode: opencodeForm,
       copilot: copilotForm,
+      junie: junieForm,
     };
 
     formMap[tool].setFieldsValue(getClearedFormValues(tool));
@@ -416,6 +429,8 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       case 'codex':
       case 'gemini':
       case 'opencode':
+      case 'copilot':
+      case 'junie':
         await handleAgenticConfigSave(activeTab as AgenticToolName);
         break;
     }
@@ -480,6 +495,16 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         {
           key: 'opencode',
           label: 'OpenCode',
+          icon: <RobotOutlined />,
+        },
+        {
+          key: 'copilot',
+          label: 'Copilot',
+          icon: <RobotOutlined />,
+        },
+        {
+          key: 'junie',
+          label: 'Junie',
           icon: <RobotOutlined />,
         },
       ],
@@ -624,7 +649,8 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       case 'codex':
       case 'gemini':
       case 'opencode':
-      case 'copilot': {
+      case 'copilot':
+      case 'junie': {
         const toolName = activeTab as AgenticToolName;
         const formMap = {
           'claude-code': claudeForm,
@@ -632,6 +658,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
           gemini: geminiForm,
           opencode: opencodeForm,
           copilot: copilotForm,
+          junie: junieForm,
         };
         const currentForm = formMap[toolName];
         const displayNames: Record<AgenticToolName, string> = {
@@ -640,6 +667,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
           gemini: 'Gemini',
           opencode: 'OpenCode',
           copilot: 'Copilot',
+          junie: 'Junie',
         };
         return (
           <>
@@ -677,6 +705,8 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       codex: 'Codex',
       gemini: 'Gemini',
       opencode: 'OpenCode',
+      copilot: 'Copilot',
+      junie: 'Junie',
     };
     return titles[activeTab] || 'User Settings';
   };
@@ -709,7 +739,11 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
                     ? savingAgenticConfig.gemini
                     : activeTab === 'opencode'
                       ? savingAgenticConfig.opencode
-                      : false
+                      : activeTab === 'copilot'
+                        ? savingAgenticConfig.copilot
+                        : activeTab === 'junie'
+                          ? savingAgenticConfig.junie
+                          : false
             }
           >
             Save

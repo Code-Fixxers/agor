@@ -1236,6 +1236,7 @@ function AppContent() {
         onStartEnvironment={handleStartEnvironment}
         onStopEnvironment={handleStopEnvironment}
         onNukeEnvironment={handleNukeEnvironment}
+        onExecuteScheduleNow={handleExecuteScheduleNow}
         onCreateUser={handleCreateUser}
         onUpdateUser={handleUpdateUser}
         onDeleteUser={handleDeleteUser}

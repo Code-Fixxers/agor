@@ -354,11 +354,7 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
           .string()
           .optional()
           .describe('Optional when current session has a bound worktree'),
-        issueUrl: z
-          .string()
-          .nullable()
-          .optional()
-          .describe('Issue URL (http(s)). null to clear.'),
+        issueUrl: z.string().nullable().optional().describe('Issue URL (http(s)). null to clear.'),
         pullRequestUrl: z
           .string()
           .nullable()
@@ -725,7 +721,13 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
 
         if (renderedPrompt) {
           // Determine agent from trigger config
-          const validAgents: AgenticToolName[] = ['claude-code', 'codex', 'gemini', 'opencode'];
+          const validAgents: AgenticToolName[] = [
+            'claude-code',
+            'codex',
+            'gemini',
+            'opencode',
+            'junie',
+          ];
           const rawAgent = zone.trigger!.agent;
           const agenticTool: AgenticToolName =
             rawAgent && validAgents.includes(rawAgent) ? rawAgent : 'claude-code';
