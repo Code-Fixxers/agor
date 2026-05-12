@@ -9,6 +9,7 @@ import java.net.http.HttpClient
 import java.net.http.HttpHeaders
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.net.http.HttpTimeoutException
 import java.util.Optional
 import javax.net.ssl.SSLSession
 
@@ -33,6 +34,44 @@ class AgorApiClientTest {
         assertEquals(AgorSessionStatus.RUNNING, snapshot.sessions.single().status)
         assertTrue(transport.requests.all { it.headers().firstValue("authorization").orElse(null) == "Bearer token-123" })
         assertTrue(transport.requests[2].uri().rawQuery.contains("%24limit=250"))
+    }
+
+    @Test
+    fun `normalizes bare host settings to http URLs`() {
+        val transport = RecordingTransport(
+            responses = ArrayDeque(
+                listOf(
+                    response("""{"data":[]}"""),
+                    response("""{"data":[]}"""),
+                    response("""{"data":[]}"""),
+                    response("""{"data":[]}"""),
+                ),
+            ),
+        )
+
+        AgorApiClient("100.101.157.56:3030", "token-123", transport).loadSnapshot()
+
+        assertEquals("http://100.101.157.56:3030/boards", transport.requests.first().uri().toString())
+    }
+
+    @Test
+    fun `uses HTTP 1_1 and request timeout for remote daemon compatibility`() {
+        val transport = RecordingTransport(
+            responses = ArrayDeque(
+                listOf(
+                    response("""{"data":[]}"""),
+                    response("""{"data":[]}"""),
+                    response("""{"data":[]}"""),
+                    response("""{"data":[]}"""),
+                ),
+            ),
+        )
+
+        AgorApiClient("http://100.101.157.56:3030", "token-123", transport).loadSnapshot()
+
+        val request = transport.requests.first()
+        assertEquals(HttpClient.Version.HTTP_1_1, request.version().orElseThrow())
+        assertTrue(request.timeout().orElseThrow().seconds > 0)
     }
 
     @Test
@@ -134,6 +173,17 @@ class AgorApiClientTest {
         assertTrue(message.contains("Could not connect to Agor at http://localhost:3030"))
         assertTrue(message.contains("Start the Agor daemon"))
         assertTrue(!message.contains("HTTP/1.1 header parser received no bytes"))
+    }
+
+    @Test
+    fun `maps HTTP response timeouts to daemon not responding error`() {
+        val message = runCatching {
+            AgorApiClient("http://100.101.157.56:3030", null, FailingTransport(HttpTimeoutException("request timed out")))
+                .loadSnapshot()
+        }.exceptionOrNull()?.message.orEmpty()
+
+        assertTrue(message.contains("Agor accepted the TCP connection at http://100.101.157.56:3030"))
+        assertTrue(message.contains("did not return an HTTP response"))
     }
 
     @Test

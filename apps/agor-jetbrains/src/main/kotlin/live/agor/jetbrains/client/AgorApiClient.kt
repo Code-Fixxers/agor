@@ -11,6 +11,8 @@ import java.net.URLEncoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.net.http.HttpTimeoutException
+import java.time.Duration
 import java.nio.charset.StandardCharsets
 
 interface AgorHttpTransport {
@@ -23,6 +25,8 @@ class AgorApiClient(
     private val http: AgorHttpTransport = JdkAgorHttpTransport(),
     private val gson: Gson = Gson(),
 ) {
+    private val normalizedBaseUrl: String = normalizeBaseUrl(baseUrl)
+
     fun loadSnapshot(): AgorSnapshot {
         val boards = getList("/boards", BoardDto::class.java).map { it.toModel() }
         val worktrees = getList("/worktrees", WorktreeDto::class.java, mapOf("archived" to "false")).map { it.toModel() }
@@ -103,6 +107,8 @@ class AgorApiClient(
     private fun sendRequest(request: HttpRequest): HttpResponse<String> =
         try {
             http.send(request)
+        } catch (error: HttpTimeoutException) {
+            throw IllegalStateException(responseTimeoutMessage(), error)
         } catch (error: IOException) {
             throw IllegalStateException(connectionErrorMessage(), error)
         } catch (error: InterruptedException) {
@@ -115,16 +121,21 @@ class AgorApiClient(
         val queryString = if (query.isEmpty()) "" else query.entries.joinToString("&", prefix = separator) {
             "${it.key.url()}=${it.value.url()}"
         }
-        val uri = runCatching { URI.create("${baseUrl.trimEnd('/')}$path$queryString") }
+        val uri = runCatching { URI.create("${normalizedBaseUrl.trimEnd('/')}$path$queryString") }
             .getOrElse { throw IllegalStateException("Invalid Agor URL: $baseUrl", it) }
         val builder = HttpRequest.newBuilder(uri)
+            .version(HttpClient.Version.HTTP_1_1)
+            .timeout(REQUEST_TIMEOUT)
             .header("accept", "application/json")
         if (!token.isNullOrBlank()) builder.header("authorization", "Bearer $token")
         return builder
     }
 
     private fun connectionErrorMessage(): String =
-        "Could not connect to Agor at ${baseUrl.trimEnd('/')}. Start the Agor daemon or update the Agor URL in Settings > Tools > Agor."
+        "Could not connect to Agor at ${normalizedBaseUrl.trimEnd('/')}. Start the Agor daemon or update the Agor URL in Settings > Tools > Agor."
+
+    private fun responseTimeoutMessage(): String =
+        "Agor accepted the TCP connection at ${normalizedBaseUrl.trimEnd('/')} but did not return an HTTP response. Verify the Agor daemon is healthy and that /health responds from this machine."
 
     private data class BoardDto(
         @SerializedName("board_id") val boardId: String?,
@@ -194,10 +205,22 @@ class AgorApiClient(
 }
 
 private class JdkAgorHttpTransport(
-    private val delegate: HttpClient = HttpClient.newHttpClient(),
+    private val delegate: HttpClient = HttpClient.newBuilder()
+        .version(HttpClient.Version.HTTP_1_1)
+        .connectTimeout(CONNECT_TIMEOUT)
+        .build(),
 ) : AgorHttpTransport {
     override fun send(request: HttpRequest): HttpResponse<String> =
         delegate.send(request, HttpResponse.BodyHandlers.ofString())
+}
+
+private val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(5)
+private val REQUEST_TIMEOUT: Duration = Duration.ofSeconds(10)
+
+private fun normalizeBaseUrl(value: String): String {
+    val trimmed = value.trim()
+    if (trimmed.isBlank()) return trimmed
+    return if (trimmed.contains("://")) trimmed else "http://$trimmed"
 }
 
 private fun String.url(): String = URLEncoder.encode(this, StandardCharsets.UTF_8)
