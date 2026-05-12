@@ -3,6 +3,7 @@ package live.agor.jetbrains.client
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpHeaders
@@ -124,6 +125,28 @@ class AgorApiClientTest {
     }
 
     @Test
+    fun `maps empty HTTP parser failures to actionable connection error`() {
+        val message = runCatching {
+            AgorApiClient("http://localhost:3030", null, FailingTransport(IOException("HTTP/1.1 header parser received no bytes")))
+                .loadSnapshot()
+        }.exceptionOrNull()?.message.orEmpty()
+
+        assertTrue(message.contains("Could not connect to Agor at http://localhost:3030"))
+        assertTrue(message.contains("Start the Agor daemon"))
+        assertTrue(!message.contains("HTTP/1.1 header parser received no bytes"))
+    }
+
+    @Test
+    fun `maps invalid Agor URLs to configuration error`() {
+        val message = runCatching {
+            AgorApiClient("not a url", null, RecordingTransport(ArrayDeque()))
+                .loadSnapshot()
+        }.exceptionOrNull()?.message
+
+        assertEquals("Invalid Agor URL: not a url", message)
+    }
+
+    @Test
     fun `posts prompt action as JSON`() {
         val transport = RecordingTransport(ArrayDeque(listOf(response("{}"))))
 
@@ -174,6 +197,14 @@ private class RecordingTransport(
     override fun send(request: HttpRequest): HttpResponse<String> {
         requests += request
         return responses.removeFirst()
+    }
+}
+
+private class FailingTransport(
+    private val error: IOException,
+) : AgorHttpTransport {
+    override fun send(request: HttpRequest): HttpResponse<String> {
+        throw error
     }
 }
 

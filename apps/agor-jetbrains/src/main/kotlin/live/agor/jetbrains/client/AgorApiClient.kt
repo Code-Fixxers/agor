@@ -5,6 +5,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.annotations.SerializedName
+import java.io.IOException
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
@@ -84,7 +85,7 @@ class AgorApiClient(
             .header("content-type", "application/json; charset=utf-8")
             .POST(HttpRequest.BodyPublishers.ofString(body))
             .build()
-        val response = http.send(request)
+        val response = sendRequest(request)
         if (response.statusCode() !in 200..299) {
             throw IllegalStateException("Agor ${response.statusCode()}: ${response.body().take(300)}")
         }
@@ -92,23 +93,38 @@ class AgorApiClient(
 
     private fun send(method: String, path: String, query: Map<String, String>): HttpResponse<String> {
         val request = requestBuilder(path, query).method(method, HttpRequest.BodyPublishers.noBody()).build()
-        val response = http.send(request)
+        val response = sendRequest(request)
         if (response.statusCode() !in 200..299) {
             throw IllegalStateException("Agor ${response.statusCode()}: ${response.body().take(300)}")
         }
         return response
     }
 
+    private fun sendRequest(request: HttpRequest): HttpResponse<String> =
+        try {
+            http.send(request)
+        } catch (error: IOException) {
+            throw IllegalStateException(connectionErrorMessage(), error)
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw IllegalStateException("Agor request was interrupted.", error)
+        }
+
     private fun requestBuilder(path: String, query: Map<String, String> = emptyMap()): HttpRequest.Builder {
         val separator = if (path.contains("?")) "&" else "?"
         val queryString = if (query.isEmpty()) "" else query.entries.joinToString("&", prefix = separator) {
             "${it.key.url()}=${it.value.url()}"
         }
-        val builder = HttpRequest.newBuilder(URI.create("${baseUrl.trimEnd('/')}$path$queryString"))
+        val uri = runCatching { URI.create("${baseUrl.trimEnd('/')}$path$queryString") }
+            .getOrElse { throw IllegalStateException("Invalid Agor URL: $baseUrl", it) }
+        val builder = HttpRequest.newBuilder(uri)
             .header("accept", "application/json")
         if (!token.isNullOrBlank()) builder.header("authorization", "Bearer $token")
         return builder
     }
+
+    private fun connectionErrorMessage(): String =
+        "Could not connect to Agor at ${baseUrl.trimEnd('/')}. Start the Agor daemon or update the Agor URL in Settings > Tools > Agor."
 
     private data class BoardDto(
         @SerializedName("board_id") val boardId: String?,

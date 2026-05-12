@@ -14,7 +14,7 @@ import com.intellij.openapi.components.Storage
 class AgorSettings : PersistentStateComponent<AgorSettings.StateData> {
     data class StateData(
         var agorUrl: String = "http://localhost:3030",
-        var hermesUrl: String = "",
+        var hermesUrl: String = "http://localhost:8642",
         var hermesModel: String = "hermes",
         var hermesProxyPath: String = "hermes-acp-proxy",
     )

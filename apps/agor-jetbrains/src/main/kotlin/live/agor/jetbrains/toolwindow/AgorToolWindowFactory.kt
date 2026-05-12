@@ -46,6 +46,7 @@ private class AgorToolWindow(private val project: Project) {
     private val inspector = JPanel(BorderLayout(8, 8))
     private var snapshot = AgorSnapshot()
     private var socketClient: AgorSocketClient? = null
+    private var socketConnectionKey: Pair<String, String?>? = null
     val component: JPanel = JPanel(BorderLayout())
 
     init {
@@ -74,13 +75,13 @@ private class AgorToolWindow(private val project: Project) {
         component.add(toolbar, BorderLayout.NORTH)
         component.add(split, BorderLayout.CENTER)
         showEmptyInspector()
-        connectSocket()
     }
 
     fun refresh() {
-        val state = settings.state
-        val client = AgorApiClient(state.agorUrl, settings.agorToken)
+        val agorUrl = settings.state.agorUrl
         ApplicationManager.getApplication().executeOnPooledThread {
+            val agorToken = settings.agorToken
+            val client = AgorApiClient(agorUrl, agorToken)
             runCatching { client.loadSnapshot() }
                 .onSuccess { loaded ->
                     SwingUtilities.invokeLater {
@@ -88,11 +89,12 @@ private class AgorToolWindow(private val project: Project) {
                         tree.model = DefaultTreeModel(toSwingTree(AgorTreeModelBuilder().build(loaded.boards, loaded.worktrees, loaded.sessions)))
                         expandAll()
                         showEmptyInspector()
+                        connectSocket(agorUrl, agorToken)
                     }
                 }
                 .onFailure { error ->
                     SwingUtilities.invokeLater {
-                        Messages.showErrorDialog(project, error.message ?: "Could not load Agor", "Agor")
+                        showConnectionError(error)
                     }
                 }
         }
@@ -181,11 +183,12 @@ private class AgorToolWindow(private val project: Project) {
     }
 
     private fun runClientAction(action: AgorApiClient.() -> Unit) {
-        val client = AgorApiClient(settings.state.agorUrl, settings.agorToken)
+        val agorUrl = settings.state.agorUrl
         ApplicationManager.getApplication().executeOnPooledThread {
+            val client = AgorApiClient(agorUrl, settings.agorToken)
             runCatching { client.action() }
                 .onSuccess { SwingUtilities.invokeLater { refresh() } }
-                .onFailure { error -> SwingUtilities.invokeLater { Messages.showErrorDialog(project, error.message ?: "Agor action failed", "Agor") } }
+                .onFailure { error -> SwingUtilities.invokeLater { Messages.showErrorDialog(project, error.userFacingMessage("Agor action failed"), "Agor") } }
         }
     }
 
@@ -195,6 +198,16 @@ private class AgorToolWindow(private val project: Project) {
 
     private fun showText(title: String, body: String) {
         replaceInspector(detailPanel(title, body, emptyList()))
+    }
+
+    private fun showConnectionError(error: Throwable) {
+        replaceInspector(
+            detailPanel(
+                "Agor",
+                "Connection unavailable",
+                listOf(error.userFacingMessage("Could not load Agor")),
+            ),
+        )
     }
 
     private fun detailPanel(kicker: String, title: String, lines: List<String>): JPanel {
@@ -228,11 +241,27 @@ private class AgorToolWindow(private val project: Project) {
         for (i in 0 until tree.rowCount) tree.expandRow(i)
     }
 
-    private fun connectSocket() {
+    private fun connectSocket(agorUrl: String, agorToken: String?) {
+        if (agorToken.isNullOrBlank()) {
+            socketClient?.disconnect()
+            socketClient = null
+            socketConnectionKey = null
+            return
+        }
+        val connectionKey = agorUrl to agorToken
+        if (socketClient != null && socketConnectionKey == connectionKey) return
+
         socketClient?.disconnect()
-        socketClient = AgorSocketClient(settings.state.agorUrl, settings.agorToken) {
+        socketConnectionKey = connectionKey
+        socketClient = AgorSocketClient(agorUrl, agorToken) {
             SwingUtilities.invokeLater { refresh() }
-        }.also { it.connect() }
+        }.also {
+            runCatching { it.connect() }
+                .onFailure { error ->
+                    socketConnectionKey = null
+                    showConnectionError(error)
+                }
+        }
     }
 }
 
@@ -242,3 +271,6 @@ private data class NodeRef(val kind: AgorTreeNodeKind, val id: String, val label
 
 private fun String.escapeHtml(): String =
     replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+private fun Throwable.userFacingMessage(fallback: String): String =
+    message?.takeIf { it.isNotBlank() } ?: fallback

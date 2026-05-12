@@ -9,8 +9,10 @@ import javax.swing.JComponent
 class AgorSettingsConfigurable : SearchableConfigurable {
     private val settings = AgorSettings.getInstance()
     private var panel: DialogPanel? = null
-    private var agorTokenDraft: String = settings.agorToken.orEmpty()
-    private var hermesTokenDraft: String = settings.hermesToken.orEmpty()
+    private var agorTokenDraft: String = ""
+    private var hermesTokenDraft: String = ""
+    private var originalAgorToken: String = ""
+    private var originalHermesToken: String = ""
 
     override fun getId(): String = "live.agor.jetbrains.settings"
 
@@ -18,17 +20,18 @@ class AgorSettingsConfigurable : SearchableConfigurable {
 
     override fun createComponent(): JComponent {
         val state = settings.state
+        loadTokenDrafts()
         panel = panel {
-            group("Agor daemon") {
-                row("URL") {
+            group("Agor") {
+                row("Server URL or IP") {
                     textField().bindText(state::agorUrl)
                 }
-                row("API token") {
+                row("User API key") {
                     passwordField().bindText(::agorTokenDraft)
                 }
             }
             group("Hermes ACP") {
-                row("URL") {
+                row("Gateway URL or IP") {
                     textField().bindText(state::hermesUrl)
                 }
                 row("Token") {
@@ -47,22 +50,30 @@ class AgorSettingsConfigurable : SearchableConfigurable {
 
     override fun isModified(): Boolean =
         panel?.isModified() == true ||
-            agorTokenDraft != settings.agorToken.orEmpty() ||
-            hermesTokenDraft != settings.hermesToken.orEmpty()
+            agorTokenDraft != originalAgorToken ||
+            hermesTokenDraft != originalHermesToken
 
     override fun apply() {
         panel?.apply()
         settings.agorToken = agorTokenDraft.ifBlank { null }
         settings.hermesToken = hermesTokenDraft.ifBlank { null }
+        originalAgorToken = agorTokenDraft
+        originalHermesToken = hermesTokenDraft
     }
 
     override fun reset() {
-        agorTokenDraft = settings.agorToken.orEmpty()
-        hermesTokenDraft = settings.hermesToken.orEmpty()
+        loadTokenDrafts()
         panel?.reset()
     }
 
     override fun disposeUIResources() {
         panel = null
+    }
+
+    private fun loadTokenDrafts() {
+        agorTokenDraft = settings.agorToken.orEmpty()
+        hermesTokenDraft = settings.hermesToken.orEmpty()
+        originalAgorToken = agorTokenDraft
+        originalHermesToken = hermesTokenDraft
     }
 }
