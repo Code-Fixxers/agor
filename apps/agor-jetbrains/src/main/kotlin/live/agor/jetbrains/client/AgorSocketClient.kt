@@ -2,6 +2,8 @@ package live.agor.jetbrains.client
 
 import io.socket.client.IO
 import io.socket.client.Socket
+import io.socket.engineio.client.transports.Polling
+import io.socket.engineio.client.transports.WebSocket
 import org.json.JSONObject
 import java.net.URI
 
@@ -19,6 +21,7 @@ class AgorSocketClient(
             .setReconnection(true)
             .setReconnectionDelay(2000)
             .setReconnectionDelayMax(30000)
+            .setTransports(arrayOf(Polling.NAME, WebSocket.NAME))
             .setExtraHeaders(mapOf("Authorization" to listOf("Bearer $token")))
             .build()
 

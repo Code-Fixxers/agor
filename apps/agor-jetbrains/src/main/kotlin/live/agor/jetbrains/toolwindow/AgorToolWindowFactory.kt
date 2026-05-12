@@ -87,7 +87,7 @@ private class AgorToolWindow(private val project: Project) {
                         tree.model = DefaultTreeModel(toSwingTree(AgorTreeModelBuilder().build(loaded.boards, loaded.worktrees, loaded.sessions)))
                         expandAll()
                         showEmptyInspector()
-                        connectSocket(agorUrl, agorToken)
+                        connectSocket(client.connectionBaseUrl(), client.currentBearerToken())
                     }
                 }
                 .onFailure { error ->

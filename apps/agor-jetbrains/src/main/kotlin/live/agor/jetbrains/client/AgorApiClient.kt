@@ -26,6 +26,8 @@ class AgorApiClient(
     private val gson: Gson = Gson(),
 ) {
     private val normalizedBaseUrl: String = normalizeBaseUrl(baseUrl)
+    private val apiKeyCredential: String? = token?.trim()?.takeIf { it.startsWith(API_KEY_PREFIX) }
+    private var resolvedBearerToken: String? = token?.trim()?.takeUnless { it.startsWith(API_KEY_PREFIX) }
 
     fun loadSnapshot(): AgorSnapshot {
         val boards = getList("/boards", BoardDto::class.java).map { it.toModel() }
@@ -42,6 +44,10 @@ class AgorApiClient(
         ).mapNotNull { it.toPermissionRequest(gson) }
         return AgorSnapshot(boards, worktrees, sessions, permissionRequests)
     }
+
+    fun connectionBaseUrl(): String = normalizedBaseUrl.trimEnd('/')
+
+    fun currentBearerToken(): String? = resolvedBearerToken
 
     fun promptSession(sessionId: String, prompt: String) {
         postJson("/sessions/${sessionId.encodePath()}/prompt", """{"prompt":${prompt.json()}}""")
@@ -104,6 +110,23 @@ class AgorApiClient(
         return response
     }
 
+    private fun ensureBearerToken() {
+        if (resolvedBearerToken?.isNotBlank() == true) return
+        val apiKey = apiKeyCredential ?: return
+        val request = requestBuilder("/authentication", authenticated = false)
+            .header("content-type", "application/json; charset=utf-8")
+            .POST(HttpRequest.BodyPublishers.ofString("""{"strategy":"api-key","apiKey":${apiKey.json()}}"""))
+            .build()
+        val response = sendRequest(request)
+        if (response.statusCode() !in 200..299) {
+            throw IllegalStateException("Agor authentication ${response.statusCode()}: ${response.body().take(300)}")
+        }
+        val root = gson.fromJson(response.body(), JsonObject::class.java)
+        val accessToken = root.string("accessToken")
+            ?: throw IllegalStateException("Agor authentication response did not include an access token.")
+        resolvedBearerToken = accessToken
+    }
+
     private fun sendRequest(request: HttpRequest): HttpResponse<String> =
         try {
             http.send(request)
@@ -116,7 +139,11 @@ class AgorApiClient(
             throw IllegalStateException("Agor request was interrupted.", error)
         }
 
-    private fun requestBuilder(path: String, query: Map<String, String> = emptyMap()): HttpRequest.Builder {
+    private fun requestBuilder(
+        path: String,
+        query: Map<String, String> = emptyMap(),
+        authenticated: Boolean = true,
+    ): HttpRequest.Builder {
         val separator = if (path.contains("?")) "&" else "?"
         val queryString = if (query.isEmpty()) "" else query.entries.joinToString("&", prefix = separator) {
             "${it.key.url()}=${it.value.url()}"
@@ -127,7 +154,11 @@ class AgorApiClient(
             .version(HttpClient.Version.HTTP_1_1)
             .timeout(REQUEST_TIMEOUT)
             .header("accept", "application/json")
-        if (!token.isNullOrBlank()) builder.header("authorization", "Bearer $token")
+        if (authenticated) {
+            ensureBearerToken()
+            val bearer = resolvedBearerToken
+            if (!bearer.isNullOrBlank()) builder.header("authorization", "Bearer $bearer")
+        }
         return builder
     }
 
@@ -216,6 +247,7 @@ private class JdkAgorHttpTransport(
 
 private val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(5)
 private val REQUEST_TIMEOUT: Duration = Duration.ofSeconds(10)
+private const val API_KEY_PREFIX = "agor_sk_"
 
 private fun normalizeBaseUrl(value: String): String {
     val trimmed = value.trim()

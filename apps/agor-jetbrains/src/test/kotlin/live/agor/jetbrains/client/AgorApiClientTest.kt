@@ -1,6 +1,7 @@
 package live.agor.jetbrains.client
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -34,6 +35,35 @@ class AgorApiClientTest {
         assertEquals(AgorSessionStatus.RUNNING, snapshot.sessions.single().status)
         assertTrue(transport.requests.all { it.headers().firstValue("authorization").orElse(null) == "Bearer token-123" })
         assertTrue(transport.requests[2].uri().rawQuery.contains("%24limit=250"))
+    }
+
+    @Test
+    fun `exchanges personal API keys for JWT before service calls`() {
+        val transport = RecordingTransport(
+            responses = ArrayDeque(
+                listOf(
+                    response("""{"accessToken":"jwt-123","refreshToken":"refresh-123","user":{"user_id":"user-1"}}"""),
+                    response("""{"data":[]}"""),
+                    response("""{"data":[]}"""),
+                    response("""{"data":[]}"""),
+                    response("""{"data":[]}"""),
+                ),
+            ),
+        )
+
+        val client = AgorApiClient("http://localhost:3030", "agor_sk_test", transport)
+
+        client.loadSnapshot()
+
+        val authRequest = transport.requests.first()
+        assertEquals("POST", authRequest.method())
+        assertEquals("/authentication", authRequest.uri().path)
+        assertFalse(authRequest.headers().firstValue("authorization").isPresent)
+        assertEquals("""{"strategy":"api-key","apiKey":"agor_sk_test"}""", authRequest.bodyText())
+        assertTrue(transport.requests.drop(1).all {
+            it.headers().firstValue("authorization").orElse(null) == "Bearer jwt-123"
+        })
+        assertEquals("jwt-123", client.currentBearerToken())
     }
 
     @Test
