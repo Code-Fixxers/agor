@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildJunieModelProfile, resolveJunieBaseUrl } from './profile.js';
 
 describe('buildJunieModelProfile', () => {
-  it('builds an OpenAI Responses profile for LiteLLM by default', () => {
+  it('builds a Chat Completions profile for LiteLLM by default', () => {
     const profile = buildJunieModelProfile({
       apiKey: 'sk-junie',
       baseUrl: 'https://litellm.example.com',
@@ -11,8 +11,8 @@ describe('buildJunieModelProfile', () => {
     });
 
     expect(profile).toEqual({
-      apiType: 'OpenAIResponses',
-      baseUrl: 'https://litellm.example.com/v1/responses',
+      apiType: 'OpenAICompletion',
+      baseUrl: 'https://litellm.example.com/v1/chat/completions',
       apiKey: 'sk-junie',
       id: 'gpt-5.4',
       primaryModel: { id: 'gpt-5.4' },
@@ -36,7 +36,7 @@ describe('buildJunieModelProfile', () => {
 
 describe('resolveJunieBaseUrl', () => {
   it('does not duplicate endpoint suffixes', () => {
-    expect(resolveJunieBaseUrl('https://litellm.example.com/v1/responses')).toBe(
+    expect(resolveJunieBaseUrl('https://litellm.example.com/v1/responses', 'OpenAIResponses')).toBe(
       'https://litellm.example.com/v1/responses'
     );
     expect(

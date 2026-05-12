@@ -238,6 +238,7 @@ EOF
             fi
             JUNIE_LITELLM_BASE_URL="''${JUNIE_LITELLM_BASE_URL:-https://llm.bitp.cz}"
             JUNIE_DEFAULT_MODEL="''${JUNIE_DEFAULT_MODEL:-qwen-3.6-27b}"
+            JUNIE_FASTER_MODEL="''${JUNIE_FASTER_MODEL:-qwen-3.5-35b-a3b}"
 
             cat > "$CONFIG_PATH" <<EOF
 daemon:
@@ -276,7 +277,8 @@ credentials:
 junie:
   litellmBaseUrl: $JUNIE_LITELLM_BASE_URL
   defaultModel: $JUNIE_DEFAULT_MODEL
-  apiType: OpenAIResponses
+  fasterModel: $JUNIE_FASTER_MODEL
+  apiType: OpenAICompletion
 EOF
 
             cd "$ROOT"
