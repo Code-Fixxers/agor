@@ -47,16 +47,80 @@ class AgorApiClient(
         return AgorSnapshot(boards, worktrees, sessions, permissionRequests)
     }
 
+    fun loadRepos(): List<AgorRepo> =
+        getList("/repos", RepoDto::class.java).map { it.toModel() }
+
     fun connectionBaseUrl(): String = normalizedBaseUrl.trimEnd('/')
 
     fun currentBearerToken(): String? = resolvedBearerToken
 
     fun promptSession(sessionId: String, prompt: String) {
-        postJson("/sessions/${sessionId.encodePath()}/prompt", """{"prompt":${prompt.json()}}""")
+        postJson("/sessions/${sessionId.encodePath()}/prompt", """{"prompt":${prompt.json()},"messageSource":"agor"}""")
     }
 
     fun stopSession(sessionId: String) {
         postJson("/sessions/${sessionId.encodePath()}/stop", "{}")
+    }
+
+    fun createSession(request: AgorCreateSessionRequest): AgorSession {
+        val created = postJsonFor(
+            "/sessions",
+            buildString {
+                append("""{"worktree_id":${request.worktreeId.json()}""")
+                append(""","agentic_tool":${request.agenticTool.json()}""")
+                append(",\"status\":\"idle\"")
+                append(""","permission_config":{"mode":${defaultPermissionMode(request.agenticTool).json()}}""")
+                if (!request.title.isNullOrBlank()) append(""","title":${request.title.json()}""")
+                if (!request.initialPrompt.isNullOrBlank()) append(""","description":${request.initialPrompt.json()}""")
+                append("}")
+            },
+            SessionDto::class.java,
+        ).toModel()
+
+        val prompt = request.initialPrompt?.trim()
+        if (!prompt.isNullOrEmpty()) promptSession(created.sessionId, prompt)
+        return created
+    }
+
+    fun createWorktree(request: AgorCreateWorktreeRequest): AgorWorktree =
+        postJsonFor(
+            "/repos/${request.repoId.encodePath()}/worktrees",
+            buildString {
+                append("""{"name":${request.name.json()}""")
+                append(""","ref":${request.name.json()}""")
+                append(",\"refType\":\"branch\"")
+                append(""","createBranch":${request.createBranch}""")
+                append(""","pullLatest":${request.pullLatest}""")
+                append(""","sourceBranch":${request.sourceBranch.json()}""")
+                if (!request.boardId.isNullOrBlank()) append(""","boardId":${request.boardId.json()}""")
+                append("}")
+            },
+            WorktreeDto::class.java,
+        ).toModel()
+
+    fun forkSession(sessionId: String, prompt: String): AgorSession {
+        val created = postJsonFor(
+            "/sessions/${sessionId.encodePath()}/fork",
+            """{"prompt":${prompt.json()}}""",
+            SessionDto::class.java,
+        ).toModel()
+        if (prompt.isNotBlank()) promptSession(created.sessionId, prompt)
+        return created
+    }
+
+    fun spawnSession(request: AgorSpawnSessionRequest): AgorSession {
+        val created = postJsonFor(
+            "/sessions/${request.parentSessionId.encodePath()}/spawn",
+            buildString {
+                append("""{"prompt":${request.prompt.json()}""")
+                if (!request.title.isNullOrBlank()) append(""","title":${request.title.json()}""")
+                if (!request.agenticTool.isNullOrBlank()) append(""","agent":${request.agenticTool.json()}""")
+                append("}")
+            },
+            SessionDto::class.java,
+        ).toModel()
+        if (request.prompt.isNotBlank()) promptSession(created.sessionId, request.prompt)
+        return created
     }
 
     fun decidePermission(
@@ -93,6 +157,15 @@ class AgorApiClient(
     }
 
     private fun postJson(path: String, body: String) {
+        postJsonResponse(path, body)
+    }
+
+    private fun <T> postJsonFor(path: String, body: String, type: Class<T>): T {
+        val response = postJsonResponse(path, body)
+        return gson.fromJson(response.body(), type)
+    }
+
+    private fun postJsonResponse(path: String, body: String): HttpResponse<String> {
         val request = requestBuilder(path)
             .header("content-type", "application/json; charset=utf-8")
             .POST(HttpRequest.BodyPublishers.ofString(body))
@@ -101,6 +174,7 @@ class AgorApiClient(
         if (response.statusCode() !in 200..299) {
             throw IllegalStateException("Agor ${response.statusCode()}: ${response.body().take(300)}")
         }
+        return response
     }
 
     private fun send(method: String, path: String, query: Map<String, String>): HttpResponse<String> {
@@ -177,14 +251,29 @@ class AgorApiClient(
         fun toModel() = AgorBoard(boardId.orEmpty(), name ?: "Untitled board")
     }
 
+    private data class RepoDto(
+        @SerializedName("repo_id") val repoId: String?,
+        val name: String?,
+        val slug: String?,
+        @SerializedName("default_branch") val defaultBranch: String?,
+    ) {
+        fun toModel() = AgorRepo(
+            repoId = repoId.orEmpty(),
+            name = name ?: slug ?: "Untitled repo",
+            slug = slug ?: name ?: "repo",
+            defaultBranch = defaultBranch,
+        )
+    }
+
     private data class WorktreeDto(
         @SerializedName("worktree_id") val worktreeId: String?,
+        @SerializedName("repo_id") val repoId: String?,
         @SerializedName("board_id") val boardId: String?,
         val name: String?,
         val ref: String?,
         val path: String?,
     ) {
-        fun toModel() = AgorWorktree(worktreeId.orEmpty(), boardId, name ?: "Untitled worktree", ref, path.orEmpty())
+        fun toModel() = AgorWorktree(worktreeId.orEmpty(), repoId, boardId, name ?: "Untitled worktree", ref, path.orEmpty())
     }
 
     private data class SessionDto(
@@ -236,6 +325,15 @@ class AgorApiClient(
         }
     }
 }
+
+private fun defaultPermissionMode(agenticTool: String): String =
+    when (agenticTool) {
+        "gemini" -> "autoEdit"
+        "codex" -> "auto"
+        "opencode" -> "autoEdit"
+        "copilot" -> "acceptEdits"
+        else -> "acceptEdits"
+    }
 
 private class JdkAgorHttpTransport(
     private val delegate: HttpClient = HttpClient.newBuilder()

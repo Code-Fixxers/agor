@@ -257,6 +257,80 @@ class AgorApiClientTest {
         assertEquals("POST", request.method())
         assertEquals("/sessions/sess/1/prompt", request.uri().path)
         assertEquals("Bearer secret", request.headers().firstValue("authorization").orElse(null))
+        assertEquals("""{"prompt":"hello\nthere","messageSource":"agor"}""", request.bodyText())
+    }
+
+    @Test
+    fun `creates sessions with Agor defaults and sends initial prompt`() {
+        val transport = RecordingTransport(
+            ArrayDeque(
+                listOf(
+                    response("""{"session_id":"sess-1","worktree_id":"wt-1","title":"Build it","agentic_tool":"codex","status":"idle"}"""),
+                    response("""{"task_id":"task-1"}"""),
+                ),
+            ),
+        )
+
+        val created = AgorApiClient("http://localhost:3030", "secret", transport).createSession(
+            AgorCreateSessionRequest("wt-1", "codex", "Build it", "ship it"),
+        )
+
+        assertEquals("sess-1", created.sessionId)
+        assertEquals("/sessions", transport.requests[0].uri().path)
+        assertEquals(
+            """{"worktree_id":"wt-1","agentic_tool":"codex","status":"idle","permission_config":{"mode":"auto"},"title":"Build it","description":"ship it"}""",
+            transport.requests[0].bodyText(),
+        )
+        assertEquals("/sessions/sess-1/prompt", transport.requests[1].uri().path)
+    }
+
+    @Test
+    fun `creates worktrees through repo scoped route`() {
+        val transport = RecordingTransport(
+            ArrayDeque(
+                listOf(
+                    response("""{"worktree_id":"wt-1","repo_id":"repo-1","board_id":"board-1","name":"feature-a","path":"/repo/feature-a","ref":"feature-a"}"""),
+                ),
+            ),
+        )
+
+        val created = AgorApiClient("http://localhost:3030", "secret", transport).createWorktree(
+            AgorCreateWorktreeRequest(
+                repoId = "repo-1",
+                boardId = "board-1",
+                name = "feature-a",
+                sourceBranch = "main",
+            ),
+        )
+
+        assertEquals("wt-1", created.worktreeId)
+        assertEquals("repo-1", created.repoId)
+        assertEquals("/repos/repo-1/worktrees", transport.requests.single().uri().path)
+        assertEquals(
+            """{"name":"feature-a","ref":"feature-a","refType":"branch","createBranch":true,"pullLatest":true,"sourceBranch":"main","boardId":"board-1"}""",
+            transport.requests.single().bodyText(),
+        )
+    }
+
+    @Test
+    fun `spawns session then prompts returned child`() {
+        val transport = RecordingTransport(
+            ArrayDeque(
+                listOf(
+                    response("""{"session_id":"child-1","worktree_id":"wt-1","title":"Child","agentic_tool":"claude-code","status":"idle"}"""),
+                    response("""{"task_id":"task-1"}"""),
+                ),
+            ),
+        )
+
+        val created = AgorApiClient("http://localhost:3030", "secret", transport).spawnSession(
+            AgorSpawnSessionRequest("parent-1", "review this", "Child", "codex"),
+        )
+
+        assertEquals("child-1", created.sessionId)
+        assertEquals("/sessions/parent-1/spawn", transport.requests[0].uri().path)
+        assertEquals("""{"prompt":"review this","title":"Child","agent":"codex"}""", transport.requests[0].bodyText())
+        assertEquals("/sessions/child-1/prompt", transport.requests[1].uri().path)
     }
 }
 

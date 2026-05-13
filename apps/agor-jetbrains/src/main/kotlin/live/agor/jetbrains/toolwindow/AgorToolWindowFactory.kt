@@ -1,23 +1,34 @@
 package live.agor.jetbrains.toolwindow
 
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.JBColor
 import com.intellij.ui.TreeSpeedSearch
+import com.intellij.ui.ColoredTreeCellRenderer
+import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
+import com.intellij.ui.treeStructure.Tree
 import com.intellij.ui.content.ContentFactory
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import live.agor.jetbrains.client.AgorApiClient
+import live.agor.jetbrains.client.AgorCreateSessionRequest
+import live.agor.jetbrains.client.AgorCreateWorktreeRequest
 import live.agor.jetbrains.client.AgorPermissionRequest
 import live.agor.jetbrains.client.AgorPermissionScope
 import live.agor.jetbrains.client.AgorSession
+import live.agor.jetbrains.client.AgorSessionStatus
 import live.agor.jetbrains.client.AgorSocketClient
+import live.agor.jetbrains.client.AgorSpawnSessionRequest
 import live.agor.jetbrains.client.AgorSnapshot
 import live.agor.jetbrains.client.AgorWorktree
 import live.agor.jetbrains.settings.AgorSettings
@@ -27,8 +38,8 @@ import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
 import java.io.File
-import javax.swing.Box
 import javax.swing.BoxLayout
+import javax.swing.Box
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JLabel
@@ -60,7 +71,7 @@ class AgorToolWindowFactory : ToolWindowFactory {
 
 private class AgorToolWindow(private val project: Project) {
     private val settings = AgorSettings.getInstance()
-    private val tree = JTree(DefaultMutableTreeNode("Agor"))
+    private val tree = Tree(DefaultMutableTreeNode("Agor"))
     private val inspector = JPanel(BorderLayout(8, 8))
     private var snapshot = AgorSnapshot()
     private var socketClient: AgorSocketClient? = null
@@ -78,30 +89,43 @@ private class AgorToolWindow(private val project: Project) {
         tree.showsRootHandles = true
         tree.border = JBUI.Borders.empty(6)
         tree.addTreeSelectionListener { showSelection() }
+        tree.cellRenderer = AgorTreeRenderer { snapshot }
         TreeSpeedSearch(tree)
 
         inspector.border = JBUI.Borders.customLine(JBColor.border(), 0, 1, 0, 0)
 
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 6)).apply {
-            border = JBUI.Borders.customLine(JBColor.border(), 0, 0, 1, 0)
-            background = UIUtil.getPanelBackground()
+        val actions = DefaultActionGroup().apply {
+            add(object : DumbAwareAction("Refresh") {
+                override fun actionPerformed(event: AnActionEvent) = refresh()
+            })
+            add(object : DumbAwareAction("New Worktree") {
+                override fun actionPerformed(event: AnActionEvent) = showNewWorktree()
+            })
+            add(object : DumbAwareAction("New Session") {
+                override fun actionPerformed(event: AnActionEvent) = selectedWorktree()?.let { showNewSession(it) } ?: showText("Agor", "Select a worktree first.")
+            })
+            addSeparator()
+            add(object : DumbAwareAction("Settings") {
+                override fun actionPerformed(event: AnActionEvent) = showSettings()
+            })
         }
-        toolbar.add(JButton("Refresh").apply { addActionListener { refresh() } })
-        toolbar.add(JButton("Settings").apply { addActionListener { showSettings() } })
+        val toolbar = ActionManager.getInstance().createActionToolbar("AgorToolbar", actions, true).apply {
+            targetComponent = component
+        }
 
         val split = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, JBScrollPane(tree), inspector).apply {
             resizeWeight = 0.36
             dividerSize = JBUI.scale(3)
             border = JBUI.Borders.empty()
         }
-        component.add(toolbar, BorderLayout.NORTH)
+        component.add(toolbar.component, BorderLayout.NORTH)
         component.add(split, BorderLayout.CENTER)
         showEmptyInspector()
     }
 
-    fun refresh() {
+    fun refresh(interactive: Boolean = true, select: AgorNodeKey? = null) {
         val agorUrl = settings.state.agorUrl
-        val selectionToRestore = selectedNodeRef()
+        val selectionToRestore = select ?: selectedNodeRef()?.key()
         val expandedToRestore = expandedNodeRefs()
         val promptFocusToRestore = focusedPromptSessionId()
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -117,7 +141,7 @@ private class AgorToolWindow(private val project: Project) {
                 .onFailure { error ->
                     SwingUtilities.invokeLater {
                         LOG.warn("Could not refresh Agor snapshot", error)
-                        showConnectionError(error)
+                        if (interactive || snapshot == AgorSnapshot()) showConnectionError(error)
                     }
                 }
         }
@@ -125,7 +149,7 @@ private class AgorToolWindow(private val project: Project) {
 
     private fun renderSnapshot(
         loaded: AgorSnapshot,
-        selectionToRestore: AgorNodeRef?,
+        selectionToRestore: AgorNodeKey?,
         expandedToRestore: Set<AgorNodeKey>,
         promptFocusToRestore: String?,
     ) {
@@ -158,16 +182,39 @@ private class AgorToolWindow(private val project: Project) {
             is AgorNodeRef -> when (value.kind) {
                 AgorTreeNodeKind.WORKTREE -> snapshot.worktrees.firstOrNull { it.worktreeId == value.id }?.let { showWorktree(it) }
                 AgorTreeNodeKind.SESSION -> snapshot.sessions.firstOrNull { it.sessionId == value.id }?.let { showSession(it) }
-                AgorTreeNodeKind.BOARD -> showText("Board", value.label)
+                AgorTreeNodeKind.BOARD -> showBoard(value.id, value.label)
             }
             else -> showEmptyInspector()
         }
     }
 
-    private fun showWorktree(worktree: AgorWorktree) {
-        val panel = detailPanel("Worktree", worktree.name, listOf("Branch/ref: ${worktree.ref ?: "-"}", "Path: ${worktree.path}"))
+    private fun showBoard(boardId: String, name: String) {
+        val worktreeCount = snapshot.worktrees.count { it.boardId == boardId || (boardId == "unassigned" && it.boardId.isNullOrBlank()) }
+        val sessionCount = snapshot.sessions.count { session ->
+            snapshot.worktrees.any { it.worktreeId == session.worktreeId && (it.boardId == boardId || (boardId == "unassigned" && it.boardId.isNullOrBlank())) }
+        }
+        val panel = detailPanel("Board", name, listOf("Worktrees: $worktreeCount", "Sessions: $sessionCount"))
         panel.add(Box.createVerticalStrut(JBUI.scale(14)))
         panel.add(buttonRow(
+            JButton("New Worktree").apply { addActionListener { showNewWorktree(boardId.takeUnless { it == "unassigned" }) } },
+        ))
+        replaceInspector(panel)
+    }
+
+    private fun showWorktree(worktree: AgorWorktree) {
+        val sessions = snapshot.sessions.filter { it.worktreeId == worktree.worktreeId }
+        val panel = detailPanel(
+            "Worktree",
+            worktree.name,
+            listOf(
+                "Branch/ref: ${worktree.ref ?: "-"}",
+                "Sessions: ${sessions.size}",
+                "Path: ${worktree.path}",
+            ),
+        )
+        panel.add(Box.createVerticalStrut(JBUI.scale(14)))
+        panel.add(buttonRow(
+            JButton("New Session").apply { addActionListener { showNewSession(worktree) } },
             JButton("Open Path").apply {
                 addActionListener {
                     val file = File(worktree.path)
@@ -218,11 +265,19 @@ private class AgorToolWindow(private val project: Project) {
             JButton("Send").apply {
                 addActionListener {
                     val text = prompt.text.trim()
-                    if (text.isNotEmpty()) runClientAction { promptSession(session.sessionId, text) }
+                    if (text.isNotEmpty()) runClientAction(AgorNodeKey(AgorTreeNodeKind.SESSION, session.sessionId)) {
+                        promptSession(session.sessionId, text)
+                    }
                 }
             },
             JButton("Stop").apply {
                 addActionListener { runClientAction { stopSession(session.sessionId) } }
+            },
+            JButton("Fork").apply {
+                addActionListener { showForkSession(session) }
+            },
+            JButton("Spawn").apply {
+                addActionListener { showSpawnSession(session) }
             },
         ))
         snapshot.permissionRequests
@@ -275,14 +330,108 @@ private class AgorToolWindow(private val project: Project) {
         return panel
     }
 
-    private fun runClientAction(action: AgorApiClient.() -> Unit) {
+    private fun showNewWorktree(selectedBoardId: String? = selectedBoardId()) {
+        val agorUrl = settings.state.agorUrl
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val client = AgorApiClient(agorUrl, settings.agorToken)
+            runCatching { client.loadRepos() }
+                .onSuccess { repos ->
+                    SwingUtilities.invokeLater {
+                        val dialog = AgorNewWorktreeDialog(project, repos, snapshot.boards, selectedBoardId)
+                        if (dialog.showAndGet()) {
+                            val input = dialog.input()
+                            runClientAction(AgorNodeKey(AgorTreeNodeKind.BOARD, input.boardId ?: "unassigned")) {
+                                val created = createWorktree(
+                                    AgorCreateWorktreeRequest(
+                                        repoId = input.repoId,
+                                        boardId = input.boardId,
+                                        name = input.name,
+                                        sourceBranch = input.sourceBranch,
+                                        createBranch = input.createBranch,
+                                        pullLatest = input.pullLatest,
+                                    ),
+                                )
+                                refreshSelectionAfterAction = AgorNodeKey(AgorTreeNodeKind.WORKTREE, created.worktreeId)
+                            }
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    SwingUtilities.invokeLater {
+                        LOG.warn("Could not load Agor repos", error)
+                        showActionError(error)
+                    }
+                }
+        }
+    }
+
+    private var refreshSelectionAfterAction: AgorNodeKey? = null
+
+    private fun showNewSession(worktree: AgorWorktree) {
+        val dialog = AgorNewSessionDialog(project, promptRequired = false, titleText = "New Agor Session")
+        if (!dialog.showAndGet()) return
+        val input = dialog.input()
+        runClientAction(AgorNodeKey(AgorTreeNodeKind.WORKTREE, worktree.worktreeId)) {
+            val created = createSession(
+                AgorCreateSessionRequest(
+                    worktreeId = worktree.worktreeId,
+                    agenticTool = input.agenticTool,
+                    title = input.title,
+                    initialPrompt = input.prompt,
+                ),
+            )
+            refreshSelectionAfterAction = AgorNodeKey(AgorTreeNodeKind.SESSION, created.sessionId)
+        }
+    }
+
+    private fun showForkSession(session: AgorSession) {
+        val dialog = AgorNewSessionDialog(
+            project,
+            promptRequired = true,
+            titleText = "Fork Agor Session",
+            defaultAgent = session.agenticTool,
+            agentEnabled = false,
+        )
+        if (!dialog.showAndGet()) return
+        val prompt = dialog.input().prompt.orEmpty()
+        runClientAction(AgorNodeKey(AgorTreeNodeKind.SESSION, session.sessionId)) {
+            val created = forkSession(session.sessionId, prompt)
+            refreshSelectionAfterAction = AgorNodeKey(AgorTreeNodeKind.SESSION, created.sessionId)
+        }
+    }
+
+    private fun showSpawnSession(session: AgorSession) {
+        val dialog = AgorNewSessionDialog(project, promptRequired = true, titleText = "Spawn Agor Session", defaultAgent = session.agenticTool)
+        if (!dialog.showAndGet()) return
+        val input = dialog.input()
+        runClientAction(AgorNodeKey(AgorTreeNodeKind.SESSION, session.sessionId)) {
+            val created = spawnSession(
+                AgorSpawnSessionRequest(
+                    parentSessionId = session.sessionId,
+                    prompt = input.prompt.orEmpty(),
+                    title = input.title,
+                    agenticTool = input.agenticTool,
+                ),
+            )
+            refreshSelectionAfterAction = AgorNodeKey(AgorTreeNodeKind.SESSION, created.sessionId)
+        }
+    }
+
+    private fun runClientAction(selectFallback: AgorNodeKey? = null, action: AgorApiClient.() -> Unit) {
         val agorUrl = settings.state.agorUrl
         ApplicationManager.getApplication().executeOnPooledThread {
             val client = AgorApiClient(agorUrl, settings.agorToken)
             runCatching { client.action() }
-                .onSuccess { SwingUtilities.invokeLater { refresh() } }
+                .onSuccess {
+                    SwingUtilities.invokeLater {
+                        val selection = refreshSelectionAfterAction ?: selectFallback
+                        refreshSelectionAfterAction = null
+                        refresh(select = selection)
+                    }
+                }
                 .onFailure { error ->
                     SwingUtilities.invokeLater {
+                        refreshSelectionAfterAction = null
                         LOG.warn("Agor action failed", error)
                         showActionError(error)
                     }
@@ -291,7 +440,26 @@ private class AgorToolWindow(private val project: Project) {
     }
 
     private fun showEmptyInspector() {
-        showText("Agor", "Select a worktree or session.")
+        val activeSessions = snapshot.sessions.count { it.status == AgorSessionStatus.RUNNING || it.status == AgorSessionStatus.QUEUED }
+        val pendingPermissions = snapshot.permissionRequests.size
+        replaceInspector(
+            detailPanel(
+                "Agor",
+                "Workspace",
+                listOf(
+                    "Boards: ${snapshot.boards.size}",
+                    "Worktrees: ${snapshot.worktrees.size}",
+                    "Sessions: ${snapshot.sessions.size}",
+                    "Active: $activeSessions",
+                    "Pending permissions: $pendingPermissions",
+                ),
+            ).apply {
+                add(Box.createVerticalStrut(JBUI.scale(14)))
+                add(buttonRow(
+                    JButton("New Worktree").apply { addActionListener { showNewWorktree() } },
+                ))
+            },
+        )
     }
 
     private fun showText(title: String, body: String) {
@@ -425,10 +593,30 @@ private class AgorToolWindow(private val project: Project) {
         socketRefreshTimer?.stop()
         socketRefreshTimer = Timer(750) {
             socketRefreshTimer = null
-            refresh()
+            refresh(interactive = false)
         }.apply {
             isRepeats = false
             start()
+        }
+    }
+
+    private fun selectedWorktree(): AgorWorktree? {
+        val ref = selectedNodeRef() ?: return null
+        return when (ref.kind) {
+            AgorTreeNodeKind.WORKTREE -> snapshot.worktrees.firstOrNull { it.worktreeId == ref.id }
+            AgorTreeNodeKind.SESSION -> snapshot.sessions.firstOrNull { it.sessionId == ref.id }
+                ?.let { session -> snapshot.worktrees.firstOrNull { it.worktreeId == session.worktreeId } }
+            AgorTreeNodeKind.BOARD -> null
+        }
+    }
+
+    private fun selectedBoardId(): String? {
+        val ref = selectedNodeRef() ?: return null
+        return when (ref.kind) {
+            AgorTreeNodeKind.BOARD -> ref.id.takeUnless { it == "unassigned" }
+            AgorTreeNodeKind.WORKTREE -> snapshot.worktrees.firstOrNull { it.worktreeId == ref.id }?.boardId
+            AgorTreeNodeKind.SESSION -> snapshot.sessions.firstOrNull { it.sessionId == ref.id }
+                ?.let { session -> snapshot.worktrees.firstOrNull { it.worktreeId == session.worktreeId }?.boardId }
         }
     }
 
@@ -464,6 +652,58 @@ internal data class AgorNodeRef(val kind: AgorTreeNodeKind, val id: String, val 
 internal data class AgorNodeKey(val kind: AgorTreeNodeKind, val id: String)
 
 internal fun AgorNodeRef.key(): AgorNodeKey = AgorNodeKey(kind, id)
+
+private class AgorTreeRenderer(
+    private val snapshotProvider: () -> AgorSnapshot,
+) : ColoredTreeCellRenderer() {
+    override fun customizeCellRenderer(
+        tree: JTree,
+        value: Any?,
+        selected: Boolean,
+        expanded: Boolean,
+        leaf: Boolean,
+        row: Int,
+        hasFocus: Boolean,
+    ) {
+        val node = value as? DefaultMutableTreeNode
+        val ref = node?.userObject as? AgorNodeRef
+        if (ref == null) {
+            append(value?.toString().orEmpty())
+            return
+        }
+
+        val snapshot = snapshotProvider()
+        append(ref.label, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+        when (ref.kind) {
+            AgorTreeNodeKind.BOARD -> {
+                val worktreeCount = snapshot.worktrees.count {
+                    it.boardId == ref.id || (ref.id == "unassigned" && it.boardId.isNullOrBlank())
+                }
+                append("  $worktreeCount worktrees", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+            }
+            AgorTreeNodeKind.WORKTREE -> {
+                val worktree = snapshot.worktrees.firstOrNull { it.worktreeId == ref.id }
+                val sessions = snapshot.sessions.filter { it.worktreeId == ref.id }
+                val active = sessions.count { it.status == AgorSessionStatus.RUNNING || it.status == AgorSessionStatus.QUEUED }
+                if (!worktree?.ref.isNullOrBlank()) append("  ${worktree?.ref}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                if (active > 0) append("  $active active", SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+            }
+            AgorTreeNodeKind.SESSION -> {
+                val session = snapshot.sessions.firstOrNull { it.sessionId == ref.id }
+                val permissionCount = snapshot.permissionRequests.count { it.sessionId == ref.id }
+                if (session != null) append("  ${session.status.name.lowercase()}", statusAttributes(session.status))
+                if (permissionCount > 0) append("  permission", SimpleTextAttributes.ERROR_ATTRIBUTES)
+            }
+        }
+    }
+
+    private fun statusAttributes(status: AgorSessionStatus): SimpleTextAttributes =
+        when (status) {
+            AgorSessionStatus.RUNNING, AgorSessionStatus.QUEUED -> SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES
+            AgorSessionStatus.FAILED -> SimpleTextAttributes.ERROR_ATTRIBUTES
+            else -> SimpleTextAttributes.GRAYED_ATTRIBUTES
+        }
+}
 
 internal fun findNodePath(root: DefaultMutableTreeNode, target: AgorNodeRef): TreePath? {
     return findNodePath(root, target.key())

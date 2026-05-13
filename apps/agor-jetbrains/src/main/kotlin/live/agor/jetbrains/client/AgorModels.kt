@@ -5,8 +5,16 @@ data class AgorBoard(
     val name: String,
 )
 
+data class AgorRepo(
+    val repoId: String,
+    val name: String,
+    val slug: String,
+    val defaultBranch: String?,
+)
+
 data class AgorWorktree(
     val worktreeId: String,
+    val repoId: String?,
     val boardId: String?,
     val name: String,
     val ref: String?,
@@ -51,4 +59,27 @@ data class AgorSnapshot(
     val worktrees: List<AgorWorktree> = emptyList(),
     val sessions: List<AgorSession> = emptyList(),
     val permissionRequests: List<AgorPermissionRequest> = emptyList(),
+)
+
+data class AgorCreateSessionRequest(
+    val worktreeId: String,
+    val agenticTool: String,
+    val title: String?,
+    val initialPrompt: String?,
+)
+
+data class AgorCreateWorktreeRequest(
+    val repoId: String,
+    val boardId: String?,
+    val name: String,
+    val sourceBranch: String,
+    val createBranch: Boolean = true,
+    val pullLatest: Boolean = true,
+)
+
+data class AgorSpawnSessionRequest(
+    val parentSessionId: String,
+    val prompt: String,
+    val title: String?,
+    val agenticTool: String?,
 )

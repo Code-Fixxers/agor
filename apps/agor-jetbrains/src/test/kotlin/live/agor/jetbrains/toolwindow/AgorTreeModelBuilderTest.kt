@@ -12,7 +12,7 @@ class AgorTreeModelBuilderTest {
     fun `groups worktrees under boards and sessions under worktrees`() {
         val rows = AgorTreeModelBuilder().build(
             boards = listOf(AgorBoard("board-1", "Platform")),
-            worktrees = listOf(AgorWorktree("wt-1", "board-1", "agor-jetbrains", "feature/jetbrains", "/tmp/agor")),
+            worktrees = listOf(AgorWorktree("wt-1", "repo-1", "board-1", "agor-jetbrains", "feature/jetbrains", "/tmp/agor")),
             sessions = listOf(
                 AgorSession("session-1", "wt-1", "Agent bridge", "claude-code", AgorSessionStatus.RUNNING),
                 AgorSession("session-2", "wt-1", "Navigator", "codex", AgorSessionStatus.IDLE),
@@ -28,7 +28,7 @@ class AgorTreeModelBuilderTest {
     fun `places orphan worktrees under unassigned board`() {
         val rows = AgorTreeModelBuilder().build(
             boards = emptyList(),
-            worktrees = listOf(AgorWorktree("wt-1", null, "scratch", "main", "/tmp/scratch")),
+            worktrees = listOf(AgorWorktree("wt-1", "repo-1", null, "scratch", "main", "/tmp/scratch")),
             sessions = emptyList(),
         )
 
