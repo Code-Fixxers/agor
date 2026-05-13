@@ -14,12 +14,14 @@ import { ClaudeCodeNormalizer } from './claude/normalizer.js';
 import { CodexNormalizer } from './codex/normalizer.js';
 import { CopilotNormalizer } from './copilot/normalizer.js';
 import { GeminiNormalizer } from './gemini/normalizer.js';
+import { JunieNormalizer } from './junie/normalizer.js';
 
 // Singleton instances (normalizers are stateless, so one instance is fine)
 const claudeNormalizer = new ClaudeCodeNormalizer();
 const codexNormalizer = new CodexNormalizer();
 const copilotNormalizer = new CopilotNormalizer();
 const geminiNormalizer = new GeminiNormalizer();
+const junieNormalizer = new JunieNormalizer();
 
 /**
  * Normalize raw SDK response to common format
@@ -29,7 +31,7 @@ const geminiNormalizer = new GeminiNormalizer();
  * @returns Normalized data with consistent structure, or undefined if normalization fails
  */
 export function normalizeRawSdkResponse(
-  agenticTool: 'claude-code' | 'codex' | 'gemini' | 'opencode' | string,
+  agenticTool: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot' | 'junie' | string,
   rawSdkResponse: unknown
 ): NormalizedSdkData | undefined {
   if (!rawSdkResponse) {
@@ -62,6 +64,11 @@ export function normalizeRawSdkResponse(
         // OpenCode doesn't have a normalizer yet - return undefined
         console.debug('[Normalizer] OpenCode normalizer not implemented yet');
         return undefined;
+
+      case 'junie':
+        return junieNormalizer.normalize(
+          rawSdkResponse as Parameters<typeof junieNormalizer.normalize>[0]
+        );
 
       default:
         console.warn(`[Normalizer] Unknown agentic tool: ${agenticTool}`);

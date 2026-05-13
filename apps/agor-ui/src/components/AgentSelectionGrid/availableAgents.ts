@@ -40,4 +40,11 @@ export const AVAILABLE_AGENTS: AgenticToolOption[] = [
     description: 'GitHub Copilot agentic runtime',
     beta: true,
   },
+  {
+    id: 'junie',
+    name: 'Junie',
+    icon: 'J',
+    description: 'JetBrains Junie via OpenAI-compatible BYOK',
+    beta: true,
+  },
 ];

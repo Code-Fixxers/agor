@@ -19,6 +19,7 @@ export interface InitializedCredentials {
   anthropicBaseUrl?: string;
   geminiApiKey?: string;
   copilotGithubToken?: string;
+  junieOpenAICompatibleApiKey?: string;
 }
 
 /**
@@ -82,7 +83,7 @@ export function initializeAnthropicAuthToken(
  * Initialize Anthropic base URL for proxy/custom endpoint support
  *
  * Priority: config.yaml > env var
- * Used for LiteLLM proxies, AWS Bedrock, Claude Enterprise, or compatible APIs.
+ * Used for proxies, AWS Bedrock, Claude Enterprise, or compatible APIs.
  *
  * @param config - Application config object with credentials
  * @param envBaseUrl - ANTHROPIC_BASE_URL from process.env
@@ -171,6 +172,35 @@ export function initializeCopilotGithubToken(
 }
 
 /**
+ * Initialize Junie OpenAI-compatible API key
+ *
+ * Priority: config.yaml > env var.
+ */
+export function initializeJunieOpenAICompatibleApiKey(
+  config: { credentials?: CredentialsConfig },
+  envApiKey: string | undefined
+): string | undefined {
+  if (config.credentials?.JUNIE_OPENAI_COMPATIBLE_API_KEY && !envApiKey) {
+    process.env.JUNIE_OPENAI_COMPATIBLE_API_KEY =
+      config.credentials.JUNIE_OPENAI_COMPATIBLE_API_KEY;
+    console.log('✅ Set JUNIE_OPENAI_COMPATIBLE_API_KEY from config for Junie');
+  }
+
+  const apiKey = config.credentials?.JUNIE_OPENAI_COMPATIBLE_API_KEY || envApiKey;
+  if (!apiKey) {
+    console.log(
+      'ℹ️  No JUNIE_OPENAI_COMPATIBLE_API_KEY found - Junie agent will require BYOK setup'
+    );
+    console.log(
+      '   To use Junie: agor config set credentials.JUNIE_OPENAI_COMPATIBLE_API_KEY <token>'
+    );
+    console.log('   Or set JUNIE_OPENAI_COMPATIBLE_API_KEY environment variable');
+  }
+
+  return apiKey;
+}
+
+/**
  * Initialize all AI service credentials
  *
  * Convenience function to initialize all supported API keys at once.
@@ -191,6 +221,10 @@ export function initializeCredentials(config: {
       process.env.COPILOT_GITHUB_TOKEN,
       process.env.GH_TOKEN,
       process.env.GITHUB_TOKEN
+    ),
+    junieOpenAICompatibleApiKey: initializeJunieOpenAICompatibleApiKey(
+      config,
+      process.env.JUNIE_OPENAI_COMPATIBLE_API_KEY
     ),
   };
 }

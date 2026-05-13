@@ -3119,6 +3119,13 @@ export async function registerRoutes(ctx: RegisterRoutesContext): Promise<void> 
             ),
             OPENAI_API_KEY: !!(config.credentials?.OPENAI_API_KEY || process.env.OPENAI_API_KEY),
             GEMINI_API_KEY: !!(config.credentials?.GEMINI_API_KEY || process.env.GEMINI_API_KEY),
+            COPILOT_GITHUB_TOKEN: !!(
+              config.credentials?.COPILOT_GITHUB_TOKEN || process.env.COPILOT_GITHUB_TOKEN
+            ),
+            JUNIE_OPENAI_COMPATIBLE_API_KEY: !!(
+              config.credentials?.JUNIE_OPENAI_COMPATIBLE_API_KEY ||
+              process.env.JUNIE_OPENAI_COMPATIBLE_API_KEY
+            ),
           },
         },
         services: servicesConfig,

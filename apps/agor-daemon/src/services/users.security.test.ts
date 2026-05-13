@@ -81,3 +81,25 @@ describe('UsersService — git token env var hardening', () => {
     ).resolves.toBeDefined();
   });
 });
+
+describe('UsersService — Junie API keys', () => {
+  dbTest(
+    'stores Junie OpenAI-compatible API key encrypted and exposes status only',
+    async ({ db }) => {
+      const service = new UsersService(db);
+      const id = await makeUser(service);
+
+      const patched = await service.patch(id, {
+        agentic_tools: {
+          junie: { JUNIE_OPENAI_COMPATIBLE_API_KEY: 'sk-junie-openai-compatible' },
+        },
+      });
+
+      expect(patched.agentic_tools?.junie?.JUNIE_OPENAI_COMPATIBLE_API_KEY).toBe(true);
+      expect(JSON.stringify(patched)).not.toContain('sk-junie-openai-compatible');
+      await expect(
+        service.getToolConfigField(id, 'junie', 'JUNIE_OPENAI_COMPATIBLE_API_KEY')
+      ).resolves.toBe('sk-junie-openai-compatible');
+    }
+  );
+});

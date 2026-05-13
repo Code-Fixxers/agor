@@ -79,6 +79,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
   const [geminiForm] = Form.useForm();
   const [opencodeForm] = Form.useForm();
   const [copilotForm] = Form.useForm();
+  const [junieForm] = Form.useForm();
   const [audioForm] = Form.useForm();
 
   // Per-tool credential presence state, keyed `${tool}.${field}` for spinner
@@ -90,6 +91,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     gemini: {},
     opencode: {},
     copilot: {},
+    junie: {},
   });
   const [savingToolField, setSavingToolField] = useState<Record<string, boolean>>({});
 
@@ -104,6 +106,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     gemini: false,
     opencode: false,
     copilot: false,
+    junie: false,
   });
 
   // Initialize forms when user changes or modal opens
@@ -126,6 +129,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       claudeForm.setFieldsValue(getFormValuesFromConfig('claude-code', defaults?.['claude-code']));
       codexForm.setFieldsValue(getFormValuesFromConfig('codex', defaults?.codex));
       geminiForm.setFieldsValue(getFormValuesFromConfig('gemini', defaults?.gemini));
+      junieForm.setFieldsValue(getFormValuesFromConfig('junie', defaults?.junie));
 
       // Initialize audio form with user's preferences
       const audioPrefs = userData.preferences?.audio;
@@ -137,7 +141,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
           audioPrefs?.minDurationSeconds ?? DEFAULT_AUDIO_PREFERENCES.minDurationSeconds,
       });
     },
-    [form, claudeForm, codexForm, geminiForm, audioForm]
+    [form, claudeForm, codexForm, geminiForm, junieForm, audioForm]
   );
 
   // Initialize when modal opens with user data
@@ -158,6 +162,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       gemini: {},
       opencode: {},
       copilot: {},
+      junie: {},
     };
     const stored = user?.agentic_tools;
     if (stored) {
@@ -183,6 +188,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
     claudeForm.resetFields();
     codexForm.resetFields();
     geminiForm.resetFields();
+    junieForm.resetFields();
     setActiveTab('general');
     onClose();
   };
@@ -354,6 +360,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       gemini: geminiForm,
       opencode: opencodeForm,
       copilot: copilotForm,
+      junie: junieForm,
     };
 
     try {
@@ -386,6 +393,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       gemini: geminiForm,
       opencode: opencodeForm,
       copilot: copilotForm,
+      junie: junieForm,
     };
 
     formMap[tool].setFieldsValue(getClearedFormValues(tool));
@@ -437,6 +445,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       case 'gemini':
       case 'opencode':
       case 'copilot':
+      case 'junie':
         await handleAgenticConfigSave(activeTab as AgenticToolName);
         break;
     }
@@ -501,6 +510,11 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
         {
           key: 'copilot',
           label: 'GitHub Copilot',
+          icon: <RobotOutlined />,
+        },
+        {
+          key: 'junie',
+          label: 'Junie',
           icon: <RobotOutlined />,
         },
       ],
@@ -644,7 +658,8 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       case 'codex':
       case 'gemini':
       case 'opencode':
-      case 'copilot': {
+      case 'copilot':
+      case 'junie': {
         const toolName = activeTab as AgenticToolName;
         const formMap = {
           'claude-code': claudeForm,
@@ -652,6 +667,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
           gemini: geminiForm,
           opencode: opencodeForm,
           copilot: copilotForm,
+          junie: junieForm,
         };
         const currentForm = formMap[toolName];
         const displayNames: Record<AgenticToolName, string> = {
@@ -660,6 +676,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
           gemini: 'Gemini',
           opencode: 'OpenCode',
           copilot: 'Copilot',
+          junie: 'Junie',
         };
         // Field set is owned by ApiKeyFields' `TOOL_FIELD_CONFIGS`. Per-field
         // saving spinners are tracked in `savingToolField` keyed by `${tool}.${field}`.
@@ -738,6 +755,7 @@ export const UserSettingsModal: React.FC<UserSettingsModalProps> = ({
       gemini: 'Gemini',
       opencode: 'OpenCode',
       copilot: 'GitHub Copilot',
+      junie: 'Junie',
     };
     return titles[activeTab] || 'User Settings';
   };
