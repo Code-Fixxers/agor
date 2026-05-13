@@ -1,0 +1,3 @@
+## 2026-05-10 - [O(n) Queries in Session/Worktree Repositories]
+**Learning:** The session message enrichment previously performed N+1 queries by querying the latest message for every session in a `for` loop. This can scale linearly, causing a huge performance bottleneck during page loads. Using `MAX()` subqueries inside a correlated select effectively squashes this O(n) round-trip penalty into a single SQL query.
+**Action:** When enriching datasets where N>1 rows are queried, replace loop-driven SQL queries with IN clauses or JOINs with nested correlated subqueries to fetch max values in a single network trip.

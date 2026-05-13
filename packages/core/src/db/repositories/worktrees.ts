@@ -749,25 +749,33 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
         return worktrees.map((wt) => ({ ...wt, sessions: [] }));
       }
 
-      // Get last assistant message for each session using N+1 queries
-      // This is acceptable since we typically have 1-5 sessions per worktree
-      // Much better than fetching all messages which could be huge for long-running sessions
+      // Get last assistant message for all sessions in a single query to avoid N+1
+      // We use a correlated subquery to get the row with the max index for each session.
+      // Doing this inside a single SQL query avoids multiple round trips.
       const lastMessageBySession = new Map<string, string>();
 
-      for (const sessionId of sessionIds) {
-        const query = select(this.db, {
+      // Ensure sessionIds is not empty since sql`IN ${sessionIds}` throws if empty
+      if (sessionIds.length > 0) {
+        const latestMessages = await select(this.db, {
+          session_id: messagesTable.session_id,
           data: messagesTable.data,
         })
           .from(messagesTable)
-          .where(and(eq(messagesTable.session_id, sessionId), eq(messagesTable.role, 'assistant')));
+          .where(
+            sql`${messagesTable.session_id} IN ${sessionIds}
+                AND ${messagesTable.role} = 'assistant'
+                AND ${messagesTable.index} = (
+                  SELECT MAX(m2.index)
+                  FROM ${messagesTable} m2
+                  WHERE m2.session_id = ${messagesTable.session_id}
+                  AND m2.role = 'assistant'
+                )`
+          )
+          .all();
 
-        // Chain orderBy and limit, then execute with one()
-        // The spread operator in the wrapper passes through these methods
-        const lastMessage = await query.orderBy(desc(messagesTable.index)).limit(1).one();
-
-        if (lastMessage) {
+        for (const msg of latestMessages) {
           // Extract text content from message data and truncate to requested length
-          const messageData = lastMessage.data as {
+          const messageData = msg.data as {
             content?: Array<{ type: string; text?: string }>;
           };
           let fullText = '';
@@ -785,7 +793,7 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
             fullText = `${fullText.substring(0, truncationLength)}...`;
           }
 
-          lastMessageBySession.set(sessionId, fullText);
+          lastMessageBySession.set(msg.session_id as string, fullText);
         }
       }
 
