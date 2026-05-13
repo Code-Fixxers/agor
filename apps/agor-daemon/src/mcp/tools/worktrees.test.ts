@@ -45,8 +45,10 @@ describe('agor_worktrees_update', () => {
       'agor_worktrees_update',
     ]);
 
-    await expect(tools.agor_worktrees_update({ notes: 'hello' })).rejects.toThrow(
-      /X-Agor-Session-Id|sessionId/
-    );
+    const result = await tools.agor_worktrees_update({ notes: 'hello' });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.error).toMatch(/requires session context/i);
+    expect(parsed.error).toMatch(/X-Agor-Session-Id|sessionId/);
   }, 30_000);
 });

@@ -16,7 +16,7 @@ import { getBaseUrl, loadConfig, type ResolvedProxy, resolveProxies } from '@ago
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../server.js';
+import { coerceString, textResult } from '../utils.js';
 
 interface ProxyDescriptor {
   vendor: string;

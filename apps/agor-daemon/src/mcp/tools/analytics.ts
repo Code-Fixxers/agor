@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { resolveRepoId, resolveUserId, resolveWorktreeId } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { textResult } from '../server.js';
+import { textResult } from '../utils.js';
 
 export function registerAnalyticsTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_analytics_leaderboard

@@ -16,6 +16,7 @@ import {
   type Board,
   getSessionType,
   type Session,
+  type SessionID,
   type SessionType,
   type ZoneBoardObject,
 } from '@agor/core/types';
@@ -31,7 +32,7 @@ import {
   resolveWorktreeId,
 } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { requireCurrentSession, textResult } from '../server.js';
+import { sessionContextRequiredResult, textResult } from '../utils.js';
 import { listAttachedMcpServers } from './mcp-servers.js';
 
 /**
@@ -199,7 +200,8 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       inputSchema: z.object({}),
     },
     async () => {
-      const currentSessionId = requireCurrentSession(ctx, 'agor_sessions_get_current');
+      if (!ctx.sessionId) return sessionContextRequiredResult();
+      const currentSessionId = ctx.sessionId;
       const currentSessionParams: SessionParams = {
         ...ctx.baseServiceParams,
         _include_last_message: true,
@@ -287,7 +289,8 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       }),
     },
     async (args) => {
-      const currentSessionId = requireCurrentSession(ctx, 'agor_sessions_get_current_context');
+      if (!ctx.sessionId) return sessionContextRequiredResult();
+      const currentSessionId = ctx.sessionId;
       const includeSiblings = args.includeSiblings !== false;
 
       // Fetch session and user in parallel (no dependencies)
@@ -485,7 +488,8 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       }),
     },
     async (args) => {
-      const currentSessionId = requireCurrentSession(ctx, 'agor_sessions_spawn');
+      if (!ctx.sessionId) return sessionContextRequiredResult();
+      const currentSessionId = ctx.sessionId;
       const spawnData: Partial<import('@agor/core/types').SpawnConfig> = {
         prompt: args.prompt,
         title: args.title,
@@ -592,6 +596,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
             error: `${targetSession.agentic_tool} does not support session forking. Use mode "subsession" instead to delegate work to a fresh session.`,
           });
         }
+        if (mode === 'btw' && !ctx.sessionId) return sessionContextRequiredResult();
 
         // Shared fork+prompt flow for both "fork" and "btw" modes
         const forkData: { prompt: string; task_id?: string } = { prompt: args.prompt };
@@ -606,11 +611,10 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
         if (args.title) forkPatch.title = args.title;
 
         if (mode === 'btw') {
-          const currentSessionId = requireCurrentSession(ctx, 'agor_sessions_prompt');
           forkPatch.fork_origin = 'btw';
           forkPatch.callback_config = {
             enabled: true,
-            callback_session_id: currentSessionId,
+            callback_session_id: ctx.sessionId as SessionID,
             callback_created_by: ctx.userId,
             callback_mode: 'once',
           };
@@ -775,12 +779,9 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       const callbackConfig: Record<string, unknown> = {};
 
       // Determine the effective callback target session ID
-      const currentSessionId =
-        args.callbackSessionId || args.enableCallback
-          ? requireCurrentSession(ctx, 'agor_sessions_create')
-          : undefined;
-      const effectiveCallbackSessionId = args.callbackSessionId || currentSessionId;
+      const effectiveCallbackSessionId = args.callbackSessionId || ctx.sessionId;
       const wantsCallback = args.enableCallback || args.callbackSessionId;
+      if (wantsCallback && !effectiveCallbackSessionId) return sessionContextRequiredResult();
 
       // Validate user has prompt permission on the callback target session's worktree
       if (wantsCallback && args.callbackSessionId) {

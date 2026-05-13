@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ReposServiceImpl, WorktreesServiceImpl } from '../../declarations.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../server.js';
+import { coerceString, textResult } from '../utils.js';
 import { assertValidVariant } from './_environment-helpers.js';
 
 export function registerEnvironmentTools(server: McpServer, ctx: McpContext): void {

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { CardsService } from '../../services/cards.js';
 import { resolveBoardId, resolveCardId } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../server.js';
+import { coerceString, textResult } from '../utils.js';
 
 export function registerCardTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_cards_create

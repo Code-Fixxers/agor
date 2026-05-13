@@ -66,12 +66,13 @@ describe('coerceJsonRecord', () => {
  */
 function captureMcpHandler() {
   let handler: ((req: Request, res: Response) => Promise<unknown> | unknown) | null = null;
+  const register = (_path: string, fn: typeof handler) => {
+    handler = fn;
+  };
   const app = {
-    post: (_path: string, fn: typeof handler) => {
-      handler = fn;
-    },
-    get: () => {},
-    delete: () => {},
+    post: register,
+    get: register,
+    delete: register,
   } as unknown as Parameters<typeof setupMCPRoutes>[0];
   setupMCPRoutes(app, {} as never, /* toolSearchEnabled */ false);
   if (!handler) throw new Error('MCP handler was not registered');

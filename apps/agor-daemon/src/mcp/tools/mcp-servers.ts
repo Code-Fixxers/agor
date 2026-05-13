@@ -2,7 +2,7 @@ import type { MCPServer } from '@agor/core/types';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { McpContext } from '../server.js';
-import { textResult } from '../server.js';
+import { textResult } from '../utils.js';
 
 /**
  * Standard MCP-server payload returned by the MCP tools. Shared by the catalog
