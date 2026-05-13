@@ -10,7 +10,7 @@ import type { Message, MessageID, SessionID, TaskID } from '@agor/core/types';
 /**
  * Supported tool types
  */
-export type ToolType = 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot';
+export type ToolType = 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot' | 'junie';
 
 /**
  * Streaming callback interface for agents that support real-time streaming

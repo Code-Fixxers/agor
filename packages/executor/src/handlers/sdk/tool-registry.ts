@@ -12,7 +12,7 @@ import type { AgorClient } from '../../services/feathers-client.js';
 /**
  * Tool identifier
  */
-export type Tool = 'claude-code' | 'gemini' | 'codex' | 'opencode' | 'copilot';
+export type Tool = 'claude-code' | 'gemini' | 'codex' | 'opencode' | 'copilot' | 'junie';
 
 /**
  * Tool runner function - executes via Feathers WebSocket
@@ -115,12 +115,13 @@ export class ToolRegistry {
  */
 export async function initializeToolRegistry(): Promise<void> {
   // Import all tool handlers
-  const [claude, codex, gemini, opencode, copilot] = await Promise.all([
+  const [claude, codex, gemini, opencode, copilot, junie] = await Promise.all([
     import('./claude.js'),
     import('./codex.js'),
     import('./gemini.js'),
     import('./opencode.js'),
     import('./copilot.js'),
+    import('./junie.js'),
   ]);
 
   // Register Claude Code
@@ -161,5 +162,12 @@ export async function initializeToolRegistry(): Promise<void> {
     name: 'GitHub Copilot',
     apiKeyEnvVar: TOOL_API_KEY_NAMES['copilot']!, // Note: execution also accepts GH_TOKEN / GITHUB_TOKEN aliases
     runner: copilot.executeCopilotTask,
+  });
+
+  ToolRegistry.register({
+    tool: 'junie',
+    name: 'Junie',
+    apiKeyEnvVar: 'JUNIE_OPENAI_COMPATIBLE_API_KEY',
+    runner: junie.executeJunieTask,
   });
 }

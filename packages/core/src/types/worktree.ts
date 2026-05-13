@@ -454,7 +454,7 @@ export interface WorktreeScheduleConfig {
   /**
    * Agent to use for scheduled sessions
    */
-  agentic_tool: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot';
+  agentic_tool: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot' | 'junie';
 
   /**
    * How many scheduled sessions to keep

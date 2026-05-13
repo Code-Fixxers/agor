@@ -23,8 +23,8 @@ export interface ModelConfig {
 export interface ModelSelectorProps {
   value?: ModelConfig;
   onChange?: (config: ModelConfig) => void;
-  agent?: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot'; // Kept as 'agent' for backwards compat in prop name
-  agentic_tool?: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot';
+  agent?: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot' | 'junie'; // Kept as 'agent' for backwards compat in prop name
+  agentic_tool?: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot' | 'junie';
   /**
    * Optional Feathers client. When provided AND the agentic tool is Copilot,
    * the picker fetches the live model list from /copilot-models (which calls
@@ -169,6 +169,17 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             });
           }
         }}
+      />
+    );
+  }
+
+  if (effectiveTool === 'junie') {
+    return (
+      <Input
+        value={value?.model}
+        onChange={(e) => onChange?.({ mode: 'exact', model: e.target.value })}
+        placeholder="e.g., provider/model-name"
+        style={{ width: '100%', minWidth: 400 }}
       />
     );
   }

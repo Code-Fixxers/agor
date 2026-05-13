@@ -38,6 +38,7 @@ export const DefaultAgenticSettings: React.FC<DefaultAgenticSettingsProps> = ({
   const [geminiForm] = Form.useForm();
   const [opencodeForm] = Form.useForm();
   const [copilotForm] = Form.useForm();
+  const [junieForm] = Form.useForm();
 
   const [saving, setSaving] = useState<Record<AgenticToolName, boolean>>({
     'claude-code': false,
@@ -45,6 +46,7 @@ export const DefaultAgenticSettings: React.FC<DefaultAgenticSettingsProps> = ({
     gemini: false,
     opencode: false,
     copilot: false,
+    junie: false,
   });
   const [activeTab, setActiveTab] = useState<AgenticToolName>('claude-code');
 
@@ -63,6 +65,8 @@ export const DefaultAgenticSettings: React.FC<DefaultAgenticSettingsProps> = ({
         return opencodeForm;
       case 'copilot':
         return copilotForm;
+      case 'junie':
+        return junieForm;
     }
   };
 
@@ -124,6 +128,12 @@ export const DefaultAgenticSettings: React.FC<DefaultAgenticSettingsProps> = ({
       label: 'GitHub Copilot',
       tool: 'copilot',
       form: copilotForm,
+    },
+    {
+      key: 'junie',
+      label: 'Junie',
+      tool: 'junie',
+      form: junieForm,
     },
   ];
 

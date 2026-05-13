@@ -89,6 +89,7 @@ export type {
  * - Gemini: 'autoEdit' (native ApprovalMode.AUTO_EDIT - auto-approve file edits)
  * - Codex: 'auto' (auto-approve safe operations, ask for dangerous ones)
  * - OpenCode: 'autoEdit' (auto-approve, similar to Gemini)
+ * - Junie: 'default' (Junie-managed behavior)
  */
 export function getDefaultPermissionMode(agenticTool: AgenticToolName): PermissionMode {
   switch (agenticTool) {
@@ -100,6 +101,8 @@ export function getDefaultPermissionMode(agenticTool: AgenticToolName): Permissi
       return 'autoEdit'; // OpenCode auto-approves, similar to Gemini
     case 'copilot':
       return 'acceptEdits'; // Copilot uses same semantics as Claude Code
+    case 'junie':
+      return 'default'; // Junie-managed behavior
     default:
       return 'acceptEdits'; // Claude Code native mode
   }

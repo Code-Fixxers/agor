@@ -39,8 +39,53 @@ function maskCredentials(config: AgorConfig): AgorConfig {
       ANTHROPIC_BASE_URL: config.credentials.ANTHROPIC_BASE_URL,
       OPENAI_API_KEY: maskApiKey(config.credentials.OPENAI_API_KEY),
       GEMINI_API_KEY: maskApiKey(config.credentials.GEMINI_API_KEY),
+      COPILOT_GITHUB_TOKEN: maskApiKey(config.credentials.COPILOT_GITHUB_TOKEN),
+      JUNIE_OPENAI_COMPATIBLE_API_KEY: maskApiKey(
+        config.credentials.JUNIE_OPENAI_COMPATIBLE_API_KEY
+      ),
     },
   };
+}
+
+function resolveJunieModelsUrl(baseUrl: string): string {
+  const normalized = baseUrl.trim().replace(/\/+$/, '');
+  if (!normalized) {
+    throw new Error('Junie OpenAI-compatible base URL is required');
+  }
+
+  if (normalized.endsWith('/v1/models')) return normalized;
+  if (normalized.endsWith('/v1/chat/completions')) {
+    return `${normalized.slice(0, -'/chat/completions'.length)}/models`;
+  }
+  if (normalized.endsWith('/v1/responses')) {
+    return `${normalized.slice(0, -'/responses'.length)}/models`;
+  }
+  if (normalized.endsWith('/v1')) return `${normalized}/models`;
+  return `${normalized}/v1/models`;
+}
+
+export async function fetchJunieModels(baseUrl: string, apiKey: string): Promise<string[]> {
+  const response = await fetch(resolveJunieModelsUrl(baseUrl), {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to load Junie models: ${response.status} ${response.statusText}`);
+  }
+
+  const body = (await response.json()) as { data?: unknown };
+  if (!Array.isArray(body.data)) {
+    throw new Error('Failed to load Junie models: gateway response did not contain a data array');
+  }
+
+  return body.data
+    .map((model) => (model && typeof model === 'object' ? (model as { id?: unknown }).id : null))
+    .filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
 }
 
 /**
@@ -138,6 +183,31 @@ export class ConfigService {
     };
   }
 
+  async loadJunieModels(data: { openaiCompatibleBaseUrl?: string; apiKey?: string }): Promise<{
+    models: string[];
+  }> {
+    const config = await loadConfig();
+    const openaiCompatibleBaseUrl =
+      data.openaiCompatibleBaseUrl?.trim() || config.junie?.openaiCompatibleBaseUrl?.trim();
+    if (!openaiCompatibleBaseUrl) {
+      throw new Error('Junie OpenAI-compatible base URL is required');
+    }
+
+    const keyResult = data.apiKey?.trim()
+      ? { apiKey: data.apiKey.trim() }
+      : await resolveApiKey('JUNIE_OPENAI_COMPATIBLE_API_KEY', {
+          db: this.db,
+        });
+    const apiKey = keyResult.apiKey;
+    if (!apiKey) {
+      throw new Error('Junie OpenAI-compatible API key is not configured');
+    }
+
+    return {
+      models: await fetchJunieModels(openaiCompatibleBaseUrl, apiKey),
+    };
+  }
+
   /**
    * Update config values
    *
@@ -184,6 +254,66 @@ export class ConfigService {
       }
       if (data.opencode.serverUrl !== undefined) {
         config.opencode.serverUrl = data.opencode.serverUrl;
+      }
+    }
+
+    // Allow updating Junie configuration
+    if (data.junie) {
+      if (!config.junie) {
+        config.junie = {};
+      }
+      const juniePatch = data.junie as Record<string, unknown>;
+
+      if (juniePatch.executable !== undefined) {
+        if (juniePatch.executable === null || juniePatch.executable === '') {
+          delete config.junie.executable;
+        } else if (typeof juniePatch.executable === 'string') {
+          config.junie.executable = juniePatch.executable;
+        } else {
+          throw new Error('junie.executable must be a string');
+        }
+      }
+      if (juniePatch.openaiCompatibleBaseUrl !== undefined) {
+        if (
+          juniePatch.openaiCompatibleBaseUrl === null ||
+          juniePatch.openaiCompatibleBaseUrl === ''
+        ) {
+          delete config.junie.openaiCompatibleBaseUrl;
+        } else if (typeof juniePatch.openaiCompatibleBaseUrl === 'string') {
+          config.junie.openaiCompatibleBaseUrl = juniePatch.openaiCompatibleBaseUrl;
+        } else {
+          throw new Error('junie.openaiCompatibleBaseUrl must be a string');
+        }
+      }
+      if (juniePatch.defaultModel !== undefined) {
+        if (juniePatch.defaultModel === null || juniePatch.defaultModel === '') {
+          delete config.junie.defaultModel;
+        } else if (typeof juniePatch.defaultModel === 'string') {
+          config.junie.defaultModel = juniePatch.defaultModel;
+        } else {
+          throw new Error('junie.defaultModel must be a string');
+        }
+      }
+      if (juniePatch.fasterModel !== undefined) {
+        if (juniePatch.fasterModel === null || juniePatch.fasterModel === '') {
+          delete config.junie.fasterModel;
+        } else if (typeof juniePatch.fasterModel === 'string') {
+          config.junie.fasterModel = juniePatch.fasterModel;
+        } else {
+          throw new Error('junie.fasterModel must be a string');
+        }
+      }
+      if (juniePatch.apiType !== undefined) {
+        if (juniePatch.apiType === null || juniePatch.apiType === '') {
+          delete config.junie.apiType;
+        } else if (
+          juniePatch.apiType === 'OpenAIResponses' ||
+          juniePatch.apiType === 'OpenAICompletion'
+        ) {
+          config.junie.apiType = juniePatch.apiType;
+        } else {
+          throw new Error('junie.apiType must be OpenAIResponses or OpenAICompletion');
+        }
       }
     }
 

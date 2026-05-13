@@ -126,6 +126,8 @@ export interface OnboardingWizardProps {
     ANTHROPIC_API_KEY?: boolean;
     OPENAI_API_KEY?: boolean;
     GEMINI_API_KEY?: boolean;
+    COPILOT_GITHUB_TOKEN?: boolean;
+    JUNIE_OPENAI_COMPATIBLE_API_KEY?: boolean;
   };
 }
 
@@ -175,6 +177,8 @@ function apiKeyPlaceholder(agent: AgenticToolName): string {
       return 'AIza...';
     case 'copilot':
       return 'ghp_...';
+    case 'junie':
+      return 'sk-...';
     default:
       return 'sk-ant-...';
   }
@@ -186,6 +190,7 @@ const AGENT_LABELS: Record<AgenticToolName, string> = {
   gemini: 'Gemini',
   opencode: 'OpenCode',
   copilot: 'GitHub Copilot',
+  junie: 'Junie',
 };
 
 /**
@@ -245,6 +250,10 @@ const AGENT_KEY_CONSOLES: Record<AgenticToolName, { label: string; url: string }
   codex: { label: 'platform.openai.com', url: 'https://platform.openai.com/api-keys' },
   gemini: { label: 'aistudio.google.com', url: 'https://aistudio.google.com/apikey' },
   copilot: { label: 'github.com/features/copilot', url: 'https://github.com/features/copilot' },
+  junie: {
+    label: 'Junie parameters docs',
+    url: 'https://junie.jetbrains.com/docs/parameters.html',
+  },
   opencode: null,
 };
 
@@ -342,6 +351,7 @@ export function OnboardingWizard({
   const codexFields = user?.agentic_tools?.codex;
   const geminiFields = user?.agentic_tools?.gemini;
   const copilotFields = user?.agentic_tools?.copilot;
+  const junieFields = user?.agentic_tools?.junie;
   const hasAnthropicKey = !!(
     claudeFields?.ANTHROPIC_API_KEY ||
     claudeFields?.CLAUDE_CODE_OAUTH_TOKEN ||
@@ -364,6 +374,11 @@ export function OnboardingWizard({
     user?.env_vars?.COPILOT_GITHUB_TOKEN ||
     (systemCredentials as Record<string, unknown>)?.COPILOT_GITHUB_TOKEN
   );
+  const hasJunieOpenAICompatibleKey = !!(
+    junieFields?.JUNIE_OPENAI_COMPATIBLE_API_KEY ||
+    user?.env_vars?.JUNIE_OPENAI_COMPATIBLE_API_KEY ||
+    (systemCredentials as Record<string, unknown>)?.JUNIE_OPENAI_COMPATIBLE_API_KEY
+  );
 
   const hasKeyForAgent = (agent: AgenticToolName): boolean => {
     switch (agent) {
@@ -375,6 +390,8 @@ export function OnboardingWizard({
         return hasGeminiKey;
       case 'copilot':
         return hasCopilotToken;
+      case 'junie':
+        return hasJunieOpenAICompatibleKey;
       case 'opencode':
         return hasAnthropicKey || hasOpenAIKey || hasGeminiKey;
       default:
@@ -1462,6 +1479,7 @@ export function OnboardingWizard({
                 { value: 'gemini', label: 'Gemini' },
                 { value: 'copilot', label: 'GitHub Copilot' },
                 { value: 'opencode', label: 'OpenCode' },
+                { value: 'junie', label: 'Junie' },
               ]}
               style={{ width: '100%' }}
             />
