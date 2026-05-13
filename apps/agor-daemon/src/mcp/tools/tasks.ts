@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { resolveSessionId } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { textResult } from '../server.js';
+import { textResult } from '../utils.js';
 
 export function registerTaskTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_tasks_list

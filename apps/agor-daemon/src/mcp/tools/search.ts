@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { coerceJsonRecord, textResult } from '../server.js';
 import { ToolRegistry } from '../tool-registry.js';
+import { coerceJsonRecord, textResult } from '../utils.js';
 
 /**
  * Registered tool entry from the SDK's internal _registeredTools map.

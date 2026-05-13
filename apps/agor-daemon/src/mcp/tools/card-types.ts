@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../server.js';
+import { coerceString, textResult } from '../utils.js';
 
 export function registerCardTypeTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_card_types_create

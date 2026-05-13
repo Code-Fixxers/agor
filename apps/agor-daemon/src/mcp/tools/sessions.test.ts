@@ -60,7 +60,7 @@ async function registerAndCaptureTools(
   ctx: {
     app: unknown;
     userId: string;
-    sessionId: string;
+    sessionId?: string;
   },
   toolNames: string[]
 ): Promise<Record<string, CapturedTool>> {
@@ -90,12 +90,56 @@ async function registerAndCaptureTools(
 }
 
 async function registerAndCaptureHandlers(
-  ctx: { app: unknown; userId: string; sessionId: string },
+  ctx: { app: unknown; userId: string; sessionId?: string },
   toolNames: string[]
 ): Promise<Record<string, ToolHandler>> {
   const tools = await registerAndCaptureTools(ctx, toolNames);
   return Object.fromEntries(Object.entries(tools).map(([name, { cb }]) => [name, cb]));
 }
+
+describe('sessionless API-key context', () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it('agor_sessions_get_current returns a clean session-context error', async () => {
+    const sessionsGet = vi.fn();
+    const app = makeFakeApp({
+      sessions: { get: sessionsGet },
+    });
+    const { agor_sessions_get_current } = await registerAndCaptureHandlers(
+      { app, userId: 'user-1', sessionId: undefined },
+      ['agor_sessions_get_current']
+    );
+
+    const result = await agor_sessions_get_current({});
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.error).toMatch(/requires session context/i);
+    expect(parsed.error).toMatch(/X-Agor-Session-Id/);
+    expect(sessionsGet).not.toHaveBeenCalled();
+  });
+
+  it('agor_sessions_spawn returns a clean session-context error', async () => {
+    const spawn = vi.fn();
+    const app = makeFakeApp({
+      sessions: { spawn },
+      '/sessions/:id/prompt': { create: vi.fn() },
+    });
+    const { agor_sessions_spawn } = await registerAndCaptureHandlers(
+      { app, userId: 'user-1', sessionId: undefined },
+      ['agor_sessions_spawn']
+    );
+
+    const result = await agor_sessions_spawn({ prompt: 'delegate this' });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.error).toMatch(/requires session context/i);
+    expect(parsed.error).toMatch(/X-Agor-Session-Id/);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+});
 
 describe('agor_sessions_create', () => {
   const baseWorktree = {

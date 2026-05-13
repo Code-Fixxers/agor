@@ -17,7 +17,7 @@ import { z } from 'zod';
 import { isSuperAdmin } from '../../utils/worktree-authorization.js';
 import { resolveSessionId, resolveTaskId } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../server.js';
+import { coerceString, textResult } from '../utils.js';
 
 export function registerMessageTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_messages_list

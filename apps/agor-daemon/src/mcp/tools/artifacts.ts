@@ -28,7 +28,7 @@ import type { ArtifactsService } from '../../services/artifacts.js';
 import { hasWorktreePermission } from '../../utils/worktree-authorization.js';
 import { resolveArtifactId, resolveBoardId, resolveWorktreeId } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../server.js';
+import { coerceString, textResult } from '../utils.js';
 
 const SANDPACK_TEMPLATES = [
   'react',

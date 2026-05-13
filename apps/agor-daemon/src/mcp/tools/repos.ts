@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ReposServiceImpl } from '../../declarations.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../server.js';
+import { coerceString, textResult } from '../utils.js';
 
 export function registerRepoTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_repos_list

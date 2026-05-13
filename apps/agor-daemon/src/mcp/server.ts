@@ -13,7 +13,9 @@
  * JSON across requests, which is critical for client-side KV prefix caching.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { Database } from '@agor/core/db';
+import { UserApiKeysRepository } from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
 import type { DaemonServicesConfig, ServiceGroupName, SessionID, UserID } from '@agor/core/types';
 import { getServiceTier, SERVICE_GROUP_TO_MCP_DOMAINS, SERVICE_TIER_RANK } from '@agor/core/types';
@@ -23,6 +25,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { Request, Response } from 'express';
 import { toJSONSchema } from 'zod/v4-mini';
+import { ApiKeyStrategy } from '../auth/api-key-strategy.js';
 import type { AuthenticatedParams, AuthenticatedUser } from '../declarations.js';
 import { validateSessionToken } from './tokens.js';
 import { ToolRegistry } from './tool-registry.js';
@@ -42,6 +45,15 @@ import { registerTaskTools } from './tools/tasks.js';
 import { registerUserTools } from './tools/users.js';
 import { registerWorktreeTools } from './tools/worktrees.js';
 
+export {
+  coerceJsonRecord,
+  coerceString,
+  sessionContextRequiredResult,
+  textResult,
+} from './utils.js';
+
+import { coerceString } from './utils.js';
+
 /**
  * Shared context passed to every tool handler.
  */
@@ -49,43 +61,9 @@ export interface McpContext {
   app: Application;
   db: Database;
   userId: UserID;
-  sessionId: SessionID;
+  sessionId: SessionID | undefined;
   authenticatedUser: AuthenticatedUser;
   baseServiceParams: Pick<AuthenticatedParams, 'user' | 'authenticated' | 'provider'>;
-}
-
-/**
- * Helper: coerce unknown value to trimmed non-empty string or undefined.
- */
-export function coerceString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-/**
- * Helper: coerce a possibly-stringified JSON value to a Record, or return as-is.
- *
- * Some MCP clients double-serialize nested objects as JSON strings (especially
- * with large or complex content). This helper transparently parses those back.
- * Returns the original value unchanged if it's not a string or not valid JSON.
- */
-export function coerceJsonRecord(value: unknown): unknown {
-  if (typeof value !== 'string') return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-
-/**
- * Helper: format a value as MCP text content response.
- */
-export function textResult(data: unknown) {
-  return {
-    content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
-  };
 }
 
 /** Server instructions shown to agents when tool search is enabled. */
@@ -433,6 +411,26 @@ export function setupMCPRoutes(
     console.log(`✅ MCP tool registry built (${cachedRegistry!.size} tools cached)`);
   }
 
+  // Stateful transports for streamable HTTP sessions (enables GET SSE + DELETE).
+  const transports = new Map<
+    string,
+    {
+      transport: StreamableHTTPServerTransport;
+      server: McpServer;
+      userId: UserID;
+    }
+  >();
+
+  const apiKeysRepo = new UserApiKeysRepository(db);
+  const apiKeyStrategy = new ApiKeyStrategy();
+  apiKeyStrategy.setDependencies(apiKeysRepo, app.service('users'));
+
+  const isInitializeRequest = (body: unknown): boolean => {
+    if (!body || typeof body !== 'object') return false;
+    const maybeRequest = body as { method?: unknown };
+    return maybeRequest.method === 'initialize';
+  };
+
   const handler = async (req: Request, res: Response) => {
     try {
       console.log(`🔌 Incoming MCP request: ${req.method} /mcp`);
@@ -457,50 +455,71 @@ export function setupMCPRoutes(
         });
       }
 
-      // Extract session token from Authorization header only
-      let sessionToken: string | undefined;
+      // Accept MCP credentials via Authorization bearer token or X-API-Key.
+      // Bearer tokens may be either short-lived session tokens or personal API keys.
+      let credential: string | undefined;
       const authHeader = req.headers.authorization;
       if (authHeader?.startsWith('Bearer ')) {
-        sessionToken = authHeader.slice(7);
+        credential = authHeader.slice(7);
+      }
+      if (!credential) {
+        const xApiKey = req.headers['x-api-key'];
+        if (typeof xApiKey === 'string' && xApiKey.startsWith('agor_sk_')) {
+          credential = xApiKey;
+        }
       }
 
-      if (!sessionToken) {
-        console.warn('⚠️  MCP request missing Authorization header');
+      if (!credential) {
+        console.warn('⚠️  MCP request missing credentials');
         return res.status(401).json({
           jsonrpc: '2.0',
           id: (req.body as { id?: unknown })?.id,
           error: {
             code: -32001,
             message:
-              'Authentication required: session token must be provided via Authorization: Bearer header',
+              'Authentication required: provide an Authorization: Bearer token or X-API-Key header',
           },
         });
       }
 
-      // Validate token and extract context
-      const context = await validateSessionToken(app, sessionToken);
-      if (!context) {
-        console.warn('⚠️  Invalid MCP session token');
-        return res.status(401).json({
-          jsonrpc: '2.0',
-          id: (req.body as { id?: unknown })?.id,
-          error: {
-            code: -32001,
-            message: 'Invalid or expired session token',
-          },
-        });
-      }
-
-      console.log(
-        `🔌 MCP request authenticated (user: ${context.userId.substring(0, 8)}, session: ${context.sessionId.substring(0, 8)})`
-      );
-
-      // Fetch the authenticated user
+      // Support long-lived personal API keys for external orchestrators (Hermes, etc.).
       let authenticatedUser: AuthenticatedUser;
-      try {
-        authenticatedUser = await app.service('users').get(context.userId);
-      } catch (error) {
-        if (error instanceof NotFoundError) {
+      let userId: UserID;
+      let sessionId: SessionID | undefined;
+
+      if (credential.startsWith('agor_sk_')) {
+        try {
+          const result = await apiKeyStrategy.authenticate({ apiKey: credential }, {});
+          authenticatedUser = result.user;
+          userId = authenticatedUser.user_id as UserID;
+        } catch {
+          console.warn('⚠️  Invalid MCP API key');
+          return res.status(401).json({
+            jsonrpc: '2.0',
+            id: (req.body as { id?: unknown })?.id,
+            error: {
+              code: -32001,
+              message: 'Invalid API key',
+            },
+          });
+        }
+
+        // Session context for tools like agor_sessions_get_current/agor_sessions_spawn.
+        // In API key mode, allow explicit session selection via query/header.
+        const requestedSessionId =
+          coerceString(req.query.sessionId as string | undefined) ||
+          coerceString(
+            typeof req.headers['x-agor-session-id'] === 'string'
+              ? req.headers['x-agor-session-id']
+              : undefined
+          );
+
+        sessionId = requestedSessionId as SessionID | undefined;
+      } else {
+        // Existing deterministic MCP session-token flow.
+        const context = await validateSessionToken(app, credential);
+        if (!context) {
+          console.warn('⚠️  Invalid MCP session token');
           return res.status(401).json({
             jsonrpc: '2.0',
             id: (req.body as { id?: unknown })?.id,
@@ -510,8 +529,34 @@ export function setupMCPRoutes(
             },
           });
         }
-        throw error;
+
+        userId = context.userId;
+        sessionId = context.sessionId;
+
+        try {
+          authenticatedUser = await app.service('users').get(userId);
+        } catch (error) {
+          if (error instanceof NotFoundError) {
+            return res.status(401).json({
+              jsonrpc: '2.0',
+              id: (req.body as { id?: unknown })?.id,
+              error: {
+                code: -32001,
+                message: 'Invalid or expired session token',
+              },
+            });
+          }
+          throw error;
+        }
       }
+
+      console.log(
+        `🔌 MCP request authenticated (user: ${userId.substring(0, 8)}, session: ${sessionId?.substring(0, 8) || 'none'})`
+      );
+
+      // Sessionless access is permitted for personal API keys. Tools that need
+      // a current session (e.g. agor_sessions_get_current, spawn) will surface
+      // their own error if called without ?sessionId=/X-Agor-Session-Id set.
 
       const baseServiceParams: Pick<AuthenticatedParams, 'user' | 'authenticated' | 'provider'> = {
         user: {
@@ -523,33 +568,106 @@ export function setupMCPRoutes(
         provider: 'mcp',
       };
 
-      // Create a per-request McpServer with tools registered per service tier
-      const mcpServer = createMcpServer(
-        {
-          app,
-          db,
-          userId: context.userId,
-          sessionId: context.sessionId,
-          authenticatedUser,
-          baseServiceParams,
+      const mcpContext: McpContext = {
+        app,
+        db,
+        userId,
+        sessionId,
+        authenticatedUser,
+        baseServiceParams,
+      };
+
+      const mcpSessionId = coerceString(req.headers['mcp-session-id']);
+
+      // ─────────────────────────────────────────────────────────────────────────────
+      // Stateful mode (streamable HTTP sessions): supports GET /mcp SSE + DELETE /mcp
+      // ─────────────────────────────────────────────────────────────────────────────
+      if (req.method === 'GET' || req.method === 'DELETE' || mcpSessionId) {
+        if (!mcpSessionId || !transports.has(mcpSessionId)) {
+          return res.status(400).json({
+            jsonrpc: '2.0',
+            id: (req.body as { id?: unknown })?.id,
+            error: {
+              code: -32000,
+              message: 'Bad Request: Invalid or missing MCP session ID',
+            },
+          });
+        }
+
+        const existing = transports.get(mcpSessionId)!;
+        if (existing.userId !== userId) {
+          return res.status(403).json({
+            jsonrpc: '2.0',
+            id: (req.body as { id?: unknown })?.id,
+            error: {
+              code: -32003,
+              message: 'Forbidden: MCP session belongs to a different user',
+            },
+          });
+        }
+
+        if (req.method === 'GET') {
+          let closed = false;
+          req.on('close', () => {
+            if (closed) return;
+            closed = true;
+            existing.transport.close().catch(() => {});
+          });
+        }
+
+        await existing.transport.handleRequest(req, res, req.body);
+        return;
+      }
+
+      // Initialize a new stateful streamable HTTP session
+      if (req.method === 'POST' && isInitializeRequest(req.body)) {
+        const mcpServer = createMcpServer(mcpContext, toolSearchEnabled, servicesConfig);
+
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (newSessionId) => {
+            transports.set(newSessionId, { transport, server: mcpServer, userId });
+          },
+        });
+
+        transport.onclose = () => {
+          const sid = transport.sessionId;
+          if (sid) transports.delete(sid);
+          mcpServer.close().catch(() => {});
+        };
+
+        await mcpServer.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+        return;
+      }
+
+      // ─────────────────────────────────────────────────────────────────────────────
+      // Stateless fallback mode: preserves legacy behavior for direct POST usage
+      // ─────────────────────────────────────────────────────────────────────────────
+      if (req.method === 'POST') {
+        const mcpServer = createMcpServer(mcpContext, toolSearchEnabled, servicesConfig);
+
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+        });
+
+        await mcpServer.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+
+        res.on('close', () => {
+          transport.close().catch(() => {});
+          mcpServer.close().catch(() => {});
+        });
+        return;
+      }
+
+      return res.status(405).json({
+        jsonrpc: '2.0',
+        id: (req.body as { id?: unknown })?.id,
+        error: {
+          code: -32005,
+          message: `Method ${req.method} not allowed on /mcp`,
         },
-        toolSearchEnabled,
-        servicesConfig
-      );
-
-      // Create stateless transport (one per request, no session tracking)
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-      });
-
-      // Connect and handle the request
-      await mcpServer.connect(transport);
-      await transport.handleRequest(req, res, req.body);
-
-      // Clean up after response is done
-      res.on('close', () => {
-        transport.close().catch(() => {});
-        mcpServer.close().catch(() => {});
       });
     } catch (error) {
       console.error('❌ MCP request failed:', error);
@@ -565,6 +683,12 @@ export function setupMCPRoutes(
   // Register as Express POST route
   // @ts-expect-error - FeathersJS app extends Express
   app.post('/mcp', handler);
+  // GET supports SSE stream in streamable HTTP transport
+  // @ts-expect-error - FeathersJS app extends Express
+  app.get('/mcp', handler);
+  // DELETE supports streamable HTTP session termination
+  // @ts-expect-error - FeathersJS app extends Express
+  app.delete('/mcp', handler);
 
-  console.log('✅ MCP routes registered at POST /mcp');
+  console.log('✅ MCP routes registered at /mcp (POST + GET + DELETE)');
 }

@@ -24,7 +24,7 @@ import {
   resolveWorktreeId,
 } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../server.js';
+import { coerceString, sessionContextRequiredResult, textResult } from '../utils.js';
 import { assertValidVariant } from './_environment-helpers.js';
 
 const WORKTREE_NAME_PATTERN = /^[a-z0-9-]+$/;
@@ -445,6 +445,7 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
       if (coerceString(args.worktreeId)) {
         resolvedWorktreeId = await resolveWorktreeId(ctx, coerceString(args.worktreeId)!);
       } else {
+        if (!ctx.sessionId) return sessionContextRequiredResult();
         const currentSession = await ctx.app.service('sessions').get(ctx.sessionId);
         const sessionWorktreeId = currentSession.worktree_id;
         if (!sessionWorktreeId)
