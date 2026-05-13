@@ -95,17 +95,17 @@ private class AgorToolWindow(private val project: Project) {
         inspector.border = JBUI.Borders.customLine(JBColor.border(), 0, 1, 0, 0)
 
         val actions = DefaultActionGroup().apply {
-            add(object : DumbAwareAction("Refresh") {
+            add(object : DumbAwareAction("Refresh", "Refresh Agor", AgorIcons.Refresh) {
                 override fun actionPerformed(event: AnActionEvent) = refresh()
             })
-            add(object : DumbAwareAction("New Worktree") {
+            add(object : DumbAwareAction("New Worktree", "Create an Agor worktree", AgorIcons.NewWorktree) {
                 override fun actionPerformed(event: AnActionEvent) = showNewWorktree()
             })
-            add(object : DumbAwareAction("New Session") {
+            add(object : DumbAwareAction("New Session", "Create an Agor session", AgorIcons.NewSession) {
                 override fun actionPerformed(event: AnActionEvent) = selectedWorktree()?.let { showNewSession(it) } ?: showText("Agor", "Select a worktree first.")
             })
             addSeparator()
-            add(object : DumbAwareAction("Settings") {
+            add(object : DumbAwareAction("Settings", "Configure Agor", AgorIcons.Settings) {
                 override fun actionPerformed(event: AnActionEvent) = showSettings()
             })
         }
@@ -196,7 +196,7 @@ private class AgorToolWindow(private val project: Project) {
         val panel = detailPanel("Board", name, listOf("Worktrees: $worktreeCount", "Sessions: $sessionCount"))
         panel.add(Box.createVerticalStrut(JBUI.scale(14)))
         panel.add(buttonRow(
-            JButton("New Worktree").apply { addActionListener { showNewWorktree(boardId.takeUnless { it == "unassigned" }) } },
+            actionButton("New Worktree", AgorIcons.NewWorktree) { showNewWorktree(boardId.takeUnless { it == "unassigned" }) },
         ))
         replaceInspector(panel)
     }
@@ -214,14 +214,12 @@ private class AgorToolWindow(private val project: Project) {
         )
         panel.add(Box.createVerticalStrut(JBUI.scale(14)))
         panel.add(buttonRow(
-            JButton("New Session").apply { addActionListener { showNewSession(worktree) } },
-            JButton("Open Path").apply {
-                addActionListener {
+            actionButton("New Session", AgorIcons.NewSession) { showNewSession(worktree) },
+            actionButton("Open Path", AgorIcons.OpenPath) {
                     val file = File(worktree.path)
                     if (file.exists()) {
-                        FileEditorManager.getInstance(project).openFile(com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file) ?: return@addActionListener, true)
+                        FileEditorManager.getInstance(project).openFile(com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file) ?: return@actionButton, true)
                     }
-                }
             },
         ))
         replaceInspector(panel)
@@ -262,23 +260,15 @@ private class AgorToolWindow(private val project: Project) {
         panel.add(promptScroll)
         panel.add(Box.createVerticalStrut(JBUI.scale(10)))
         panel.add(buttonRow(
-            JButton("Send").apply {
-                addActionListener {
+            actionButton("Send", AgorIcons.Send) {
                     val text = prompt.text.trim()
                     if (text.isNotEmpty()) runClientAction(AgorNodeKey(AgorTreeNodeKind.SESSION, session.sessionId)) {
                         promptSession(session.sessionId, text)
                     }
-                }
             },
-            JButton("Stop").apply {
-                addActionListener { runClientAction { stopSession(session.sessionId) } }
-            },
-            JButton("Fork").apply {
-                addActionListener { showForkSession(session) }
-            },
-            JButton("Spawn").apply {
-                addActionListener { showSpawnSession(session) }
-            },
+            actionButton("Stop", AgorIcons.Stop) { runClientAction { stopSession(session.sessionId) } },
+            actionButton("Fork", AgorIcons.Fork) { showForkSession(session) },
+            actionButton("Spawn", AgorIcons.Spawn) { showSpawnSession(session) },
         ))
         snapshot.permissionRequests
             .filter { it.sessionId == session.sessionId }
@@ -305,26 +295,20 @@ private class AgorToolWindow(private val project: Project) {
         )
         panel.add(Box.createVerticalStrut(JBUI.scale(10)))
         panel.add(buttonRow(
-            JButton("Approve Once").apply {
-                addActionListener {
+            actionButton("Approve Once", AgorIcons.Approve) {
                     runClientAction {
                         decidePermission(sessionId, permission.requestId, permission.taskId, true, AgorPermissionScope.ONCE)
                     }
-                }
             },
-            JButton("Approve Project").apply {
-                addActionListener {
+            actionButton("Approve Project", AgorIcons.Approve) {
                     runClientAction {
                         decidePermission(sessionId, permission.requestId, permission.taskId, true, AgorPermissionScope.PROJECT)
                     }
-                }
             },
-            JButton("Deny").apply {
-                addActionListener {
+            actionButton("Deny", AgorIcons.Deny) {
                     runClientAction {
                         decidePermission(sessionId, permission.requestId, permission.taskId, false, AgorPermissionScope.ONCE)
                     }
-                }
             },
         ))
         return panel
@@ -456,7 +440,7 @@ private class AgorToolWindow(private val project: Project) {
             ).apply {
                 add(Box.createVerticalStrut(JBUI.scale(14)))
                 add(buttonRow(
-                    JButton("New Worktree").apply { addActionListener { showNewWorktree() } },
+                    actionButton("New Worktree", AgorIcons.NewWorktree) { showNewWorktree() },
                 ))
             },
         )
@@ -474,8 +458,8 @@ private class AgorToolWindow(private val project: Project) {
         )
         panel.add(Box.createVerticalStrut(JBUI.scale(14)))
         panel.add(buttonRow(
-            JButton("Configure").apply { addActionListener { showSettings() } },
-            JButton("Retry").apply { addActionListener { refresh() } },
+            actionButton("Configure", AgorIcons.Settings) { showSettings() },
+            actionButton("Retry", AgorIcons.Refresh) { refresh() },
         ))
         replaceInspector(panel)
     }
@@ -541,6 +525,11 @@ private class AgorToolWindow(private val project: Project) {
             isOpaque = false
             buttons.forEach { add(it) }
             maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }
+
+    private fun actionButton(text: String, icon: javax.swing.Icon, action: () -> Unit): JButton =
+        JButton(text, icon).apply {
+            addActionListener { action() }
         }
 
     private fun replaceInspector(panel: JPanel) {

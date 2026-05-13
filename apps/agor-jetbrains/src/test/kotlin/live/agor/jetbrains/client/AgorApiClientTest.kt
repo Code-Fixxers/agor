@@ -38,6 +38,31 @@ class AgorApiClientTest {
     }
 
     @Test
+    fun `loads every paginated session page`() {
+        val firstPage = (1..250).joinToString(",") {
+            """{"session_id":"sess-$it","worktree_id":"wt-1","title":"Session $it","agentic_tool":"codex","status":"idle"}"""
+        }
+        val transport = RecordingTransport(
+            responses = ArrayDeque(
+                listOf(
+                    response("""{"data":[{"board_id":"board-1","name":"Main"}],"total":1,"limit":100,"skip":0}"""),
+                    response("""{"data":[{"worktree_id":"wt-1","board_id":"board-1","name":"Addon","path":"/repo","ref":"main"}],"total":1,"limit":100,"skip":0}"""),
+                    response("""{"data":[$firstPage],"total":251,"limit":250,"skip":0}"""),
+                    response("""{"data":[{"session_id":"sess-251","worktree_id":"wt-1","title":"Session 251","agentic_tool":"codex","status":"idle"}],"total":251,"limit":250,"skip":250}"""),
+                    response("""{"data":[],"total":0,"limit":250,"skip":0}"""),
+                ),
+            ),
+        )
+
+        val snapshot = AgorApiClient("http://localhost:3030", "token-123", transport).loadSnapshot()
+
+        assertEquals(251, snapshot.sessions.size)
+        assertEquals("sess-251", snapshot.sessions.last().sessionId)
+        assertTrue(transport.requests[2].uri().rawQuery.contains("%24skip=0"))
+        assertTrue(transport.requests[3].uri().rawQuery.contains("%24skip=250"))
+    }
+
+    @Test
     fun `exchanges personal API keys for JWT before service calls`() {
         val transport = RecordingTransport(
             responses = ArrayDeque(

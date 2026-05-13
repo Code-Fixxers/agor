@@ -31,14 +31,14 @@ class AgorApiClient(
 
     fun loadSnapshot(): AgorSnapshot {
         val boards = getList("/boards", BoardDto::class.java).map { it.toModel() }
-        val worktrees = getList("/worktrees", WorktreeDto::class.java, mapOf("archived" to "false")).map { it.toModel() }
-        val sessions = getList(
+        val worktrees = getAllPages("/worktrees", WorktreeDto::class.java, mapOf("archived" to "false")).map { it.toModel() }
+        val sessions = getAllPages(
             "/sessions",
             SessionDto::class.java,
             mapOf("archived" to "false", "\$limit" to "250"),
         ).map { it.toModel() }
         val permissionRequests = runCatching {
-            getList(
+            getAllPages(
                 "/messages",
                 MessageDto::class.java,
                 mapOf("type" to "permission_request", "\$limit" to "250"),
@@ -48,7 +48,7 @@ class AgorApiClient(
     }
 
     fun loadRepos(): List<AgorRepo> =
-        getList("/repos", RepoDto::class.java).map { it.toModel() }
+        getAllPages("/repos", RepoDto::class.java).map { it.toModel() }
 
     fun connectionBaseUrl(): String = normalizedBaseUrl.trimEnd('/')
 
@@ -154,6 +154,33 @@ class AgorApiClient(
             else -> JsonArray()
         }
         return array.map { gson.fromJson(it, type) }
+    }
+
+    private fun <T> getAllPages(path: String, type: Class<T>, query: Map<String, String> = emptyMap()): List<T> {
+        val limit = query["\$limit"]?.toIntOrNull() ?: DEFAULT_PAGE_SIZE
+        val items = mutableListOf<T>()
+        var skip = query["\$skip"]?.toIntOrNull() ?: 0
+        while (true) {
+            val pageQuery = query + mapOf("\$limit" to limit.toString(), "\$skip" to skip.toString())
+            val response = send("GET", path, pageQuery)
+            val root = gson.fromJson(response.body(), JsonElement::class.java)
+            val array = when {
+                root is JsonArray -> root
+                root is JsonObject && root.has("data") && root.get("data").isJsonArray -> root.getAsJsonArray("data")
+                else -> JsonArray()
+            }
+            items += array.map { gson.fromJson(it, type) }
+
+            if (root !is JsonObject || !root.has("total")) break
+            val total = root.int("total") ?: break
+            val pageLimit = root.int("limit") ?: limit
+            val pageSkip = root.int("skip") ?: skip
+            val pageSize = array.size()
+            val nextSkip = pageSkip + pageSize
+            if (pageSize < pageLimit || nextSkip >= total) break
+            skip = nextSkip
+        }
+        return items
     }
 
     private fun postJson(path: String, body: String) {
@@ -347,6 +374,7 @@ private class JdkAgorHttpTransport(
 
 private val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(5)
 private val REQUEST_TIMEOUT: Duration = Duration.ofSeconds(10)
+private const val DEFAULT_PAGE_SIZE = 250
 private const val API_KEY_PREFIX = "agor_sk_"
 
 private fun normalizeBaseUrl(value: String): String {
@@ -376,4 +404,9 @@ private fun String.json(): String =
 private fun JsonObject.string(key: String): String? {
     val value = get(key) ?: return null
     return if (value.isJsonPrimitive && value.asJsonPrimitive.isString) value.asString else null
+}
+
+private fun JsonObject.int(key: String): Int? {
+    val value = get(key) ?: return null
+    return if (value.isJsonPrimitive && value.asJsonPrimitive.isNumber) value.asInt else null
 }
