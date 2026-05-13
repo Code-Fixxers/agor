@@ -5,6 +5,7 @@
  * - Claude Code: acceptEdits (auto-accept file edits)
  * - Gemini: autoEdit (native SDK mode)
  * - Codex: auto (auto-approve safe ops)
+ * - Junie: default (Junie-managed)
  */
 
 import { describe, expect, it } from 'vitest';
@@ -26,6 +27,10 @@ describe('getDefaultPermissionMode', () => {
 
   it('returns "autoEdit" for opencode (uses Gemini-like modes)', () => {
     expect(getDefaultPermissionMode('opencode')).toBe('autoEdit');
+  });
+
+  it('returns "default" for junie (Junie-managed)', () => {
+    expect(getDefaultPermissionMode('junie')).toBe('default');
   });
 
   it('returns "acceptEdits" for any unknown tool (default case)', () => {
@@ -65,7 +70,14 @@ describe('getDefaultPermissionMode', () => {
 
   describe('all agentic tools coverage', () => {
     it('handles all valid AgenticToolName values', () => {
-      const allTools: AgenticToolName[] = ['claude-code', 'codex', 'gemini', 'opencode'];
+      const allTools: AgenticToolName[] = [
+        'claude-code',
+        'codex',
+        'gemini',
+        'opencode',
+        'copilot',
+        'junie',
+      ];
       const results: Record<string, string> = {};
 
       for (const tool of allTools) {
@@ -77,10 +89,19 @@ describe('getDefaultPermissionMode', () => {
       expect(results.codex).toBe('auto');
       expect(results.gemini).toBe('autoEdit');
       expect(results.opencode).toBe('autoEdit');
+      expect(results.copilot).toBe('acceptEdits');
+      expect(results.junie).toBe('default');
     });
 
     it('returns valid PermissionMode values', () => {
-      const allTools: AgenticToolName[] = ['claude-code', 'codex', 'gemini', 'opencode'];
+      const allTools: AgenticToolName[] = [
+        'claude-code',
+        'codex',
+        'gemini',
+        'opencode',
+        'copilot',
+        'junie',
+      ];
       const validModes = [
         // Claude Code native modes
         'default',

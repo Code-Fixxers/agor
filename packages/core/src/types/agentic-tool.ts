@@ -11,11 +11,12 @@ import type { AgenticToolID } from './id';
  * - gemini: Google's Gemini Code Assist
  * - opencode: Open-source terminal-based AI assistant with 75+ LLM providers
  * - copilot: GitHub Copilot's agentic runtime via @github/copilot-sdk
+ * - junie: JetBrains Junie CLI backed by a BYOK OpenAI-compatible endpoint
  *
  * Not to be confused with "execution tools" (Bash, Write, Read, etc.)
  * which are the primitives that agentic tools use to perform work.
  */
-export type AgenticToolName = 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot';
+export type AgenticToolName = 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot' | 'junie';
 
 /**
  * Agentic tool metadata for UI display
@@ -128,6 +129,14 @@ export type CodexNetworkAccess = boolean;
  */
 export type CopilotPermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions';
 
+/**
+ * Junie permission modes
+ *
+ * Junie headless docs do not expose an Agor-style permission policy matrix yet.
+ * Agor therefore treats permissions as Junie-managed in the first integration.
+ */
+export type JuniePermissionMode = 'default';
+
 // ============================================================================
 // Tool Capabilities (static, shared between backend and UI)
 // ============================================================================
@@ -179,6 +188,12 @@ export const AGENTIC_TOOL_CAPABILITIES: Record<AgenticToolName, AgenticToolCapab
     supportsStatelessFsMode: false,
   },
   copilot: {
+    supportsSessionFork: false,
+    supportsChildSpawn: true,
+    supportsSessionImport: false,
+    supportsStatelessFsMode: false,
+  },
+  junie: {
     supportsSessionFork: false,
     supportsChildSpawn: true,
     supportsSessionImport: false,

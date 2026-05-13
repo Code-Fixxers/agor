@@ -104,6 +104,15 @@ export const TOOL_FIELD_CONFIGS: Record<AgenticToolName, AgenticToolFieldConfig[
       docUrl: 'https://github.com/settings/tokens',
     },
   ],
+  junie: [
+    {
+      field: 'JUNIE_OPENAI_COMPATIBLE_API_KEY',
+      label: 'Junie OpenAI-compatible API Key',
+      description: '(Junie)',
+      placeholder: 'sk-...',
+      docUrl: 'https://junie.jetbrains.com/docs/parameters.html',
+    },
+  ],
   opencode: [],
 };
 

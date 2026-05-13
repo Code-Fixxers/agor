@@ -19,7 +19,8 @@ export type ApiKeyName =
   | 'CLAUDE_CODE_OAUTH_TOKEN'
   | 'OPENAI_API_KEY'
   | 'GEMINI_API_KEY'
-  | 'COPILOT_GITHUB_TOKEN';
+  | 'COPILOT_GITHUB_TOKEN'
+  | 'JUNIE_OPENAI_COMPATIBLE_API_KEY';
 
 export interface KeyResolutionContext {
   /** User ID for per-user key lookup */

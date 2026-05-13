@@ -13,7 +13,20 @@ import {
   LoadingOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
-import { Alert, Button, Form, Input, Space, Spin, Switch, Tabs, Tooltip, theme } from 'antd';
+import {
+  Alert,
+  AutoComplete,
+  Button,
+  Form,
+  Input,
+  Select,
+  Space,
+  Spin,
+  Switch,
+  Tabs,
+  Tooltip,
+  theme,
+} from 'antd';
 import { useEffect, useState } from 'react';
 import { useThemedMessage } from '../../utils/message';
 import {
@@ -43,8 +56,26 @@ const GLOBAL_TOOL_FIELDS: Record<AgenticToolName, AgenticToolFieldConfig[]> = {
   codex: TOOL_FIELD_CONFIGS.codex.filter((f) => f.field !== 'OPENAI_BASE_URL'),
   gemini: TOOL_FIELD_CONFIGS.gemini,
   copilot: TOOL_FIELD_CONFIGS.copilot,
+  junie: TOOL_FIELD_CONFIGS.junie,
   opencode: TOOL_FIELD_CONFIGS.opencode,
 };
+
+type JunieModelsResponse = {
+  models?: string[];
+};
+
+function buildJunieModelOptions(models: string[], selectedModels: string[]) {
+  const values = new Set<string>();
+  for (const model of selectedModels) {
+    const trimmed = model.trim();
+    if (trimmed) values.add(trimmed);
+  }
+  for (const model of models) {
+    const trimmed = model.trim();
+    if (trimmed) values.add(trimmed);
+  }
+  return [...values].map((model) => ({ value: model, label: model }));
+}
 
 /** Per-tool global-config tab body. */
 const ApiKeyTabContent: React.FC<{
@@ -122,6 +153,17 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
   const [opencodeConnected, setOpencodeConnected] = useState<boolean | null>(null);
   const [opencodeTesting, setOpencodeTesting] = useState(false);
   const [loadingOpencode, setLoadingOpencode] = useState(true);
+  const [loadingJunieConfig, setLoadingJunieConfig] = useState(true);
+  const [savingJunieConfig, setSavingJunieConfig] = useState(false);
+  const [junieExecutable, setJunieExecutable] = useState('junie');
+  const [junieOpenAICompatibleBaseUrl, setJunieOpenAICompatibleBaseUrl] = useState('');
+  const [junieDefaultModel, setJunieDefaultModel] = useState('');
+  const [junieFasterModel, setJunieFasterModel] = useState('');
+  const [junieModels, setJunieModels] = useState<string[]>([]);
+  const [loadingJunieModels, setLoadingJunieModels] = useState(false);
+  const [junieApiType, setJunieApiType] = useState<'OpenAIResponses' | 'OpenAICompletion'>(
+    'OpenAICompletion'
+  );
 
   // Load API keys configuration
   useEffect(() => {
@@ -156,6 +198,41 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
     };
 
     loadKeys();
+  }, [client]);
+
+  // Load Junie configuration
+  useEffect(() => {
+    if (!client) return;
+
+    const loadJunie = async () => {
+      try {
+        setLoadingJunieConfig(true);
+        const config = (await client.service('config').get('junie')) as {
+          executable?: string;
+          openaiCompatibleBaseUrl?: string;
+          defaultModel?: string;
+          fasterModel?: string;
+          apiType?: 'OpenAIResponses' | 'OpenAICompletion';
+        } | null;
+
+        setJunieExecutable(config?.executable || 'junie');
+        setJunieOpenAICompatibleBaseUrl(config?.openaiCompatibleBaseUrl || '');
+        setJunieDefaultModel(config?.defaultModel || '');
+        setJunieFasterModel(config?.fasterModel || '');
+        setJunieApiType(config?.apiType || 'OpenAICompletion');
+      } catch (err) {
+        console.error('Failed to load Junie config:', err);
+        setJunieExecutable('junie');
+        setJunieOpenAICompatibleBaseUrl('');
+        setJunieDefaultModel('');
+        setJunieFasterModel('');
+        setJunieApiType('OpenAICompletion');
+      } finally {
+        setLoadingJunieConfig(false);
+      }
+    };
+
+    loadJunie();
   }, [client]);
 
   // Load OpenCode configuration
@@ -272,7 +349,75 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
     }
   };
 
-  const loading = loadingKeys || loadingOpencode;
+  const handleSaveJunieConfig = async () => {
+    if (!client) return;
+
+    const openaiCompatibleBaseUrl = junieOpenAICompatibleBaseUrl.trim();
+    const defaultModel = junieDefaultModel.trim();
+
+    if (!openaiCompatibleBaseUrl) {
+      showError('Junie OpenAI-compatible base URL cannot be empty');
+      return;
+    }
+    if (!defaultModel) {
+      showError('Junie default model cannot be empty');
+      return;
+    }
+
+    try {
+      setSavingJunieConfig(true);
+      await client.service('config').patch(null, {
+        junie: {
+          executable: junieExecutable.trim() || 'junie',
+          openaiCompatibleBaseUrl,
+          defaultModel,
+          fasterModel: junieFasterModel.trim() || null,
+          apiType: junieApiType,
+        },
+      });
+      showSuccess('Junie settings saved');
+    } catch (err) {
+      console.error('Failed to save Junie config:', err);
+      showError(err instanceof Error ? err.message : 'Failed to save Junie settings');
+    } finally {
+      setSavingJunieConfig(false);
+    }
+  };
+
+  const handleLoadJunieModels = async () => {
+    if (!client) return;
+
+    const openaiCompatibleBaseUrl = junieOpenAICompatibleBaseUrl.trim();
+    if (!openaiCompatibleBaseUrl) {
+      showError('Junie OpenAI-compatible base URL cannot be empty');
+      return;
+    }
+
+    try {
+      setLoadingJunieModels(true);
+      const result = (await client.service('config/junie-models').create({
+        openaiCompatibleBaseUrl,
+      })) as JunieModelsResponse;
+      const models = Array.isArray(result.models) ? result.models : [];
+      setJunieModels(models);
+      if (models.length === 0) {
+        showError('Gateway returned no models');
+      } else {
+        showSuccess(`Loaded ${models.length} Junie models`);
+      }
+    } catch (err) {
+      console.error('Failed to load Junie models:', err);
+      showError(err instanceof Error ? err.message : 'Failed to load Junie models');
+    } finally {
+      setLoadingJunieModels(false);
+    }
+  };
+
+  const loading = loadingKeys || loadingOpencode || loadingJunieConfig;
+  const junieModelOptions = buildJunieModelOptions(junieModels, [
+    junieDefaultModel,
+    junieFasterModel,
+  ]);
 
   if (loading) {
     return (
@@ -346,6 +491,92 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
                 onClear={handleClearKey}
                 onClearError={() => setKeysError(null)}
               />
+            ),
+          },
+          {
+            key: 'junie',
+            label: 'Junie',
+            children: (
+              <div
+                style={{
+                  paddingTop: token.paddingMD,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: token.marginXL,
+                }}
+              >
+                <ApiKeyTabContent
+                  tool="junie"
+                  fieldStatus={fieldStatus}
+                  keysError={keysError}
+                  savingKeys={savingKeys}
+                  onSave={handleSaveKey}
+                  onClear={handleClearKey}
+                  onClearError={() => setKeysError(null)}
+                />
+
+                <Form layout="vertical">
+                  <Form.Item
+                    label="Junie executable"
+                    extra="Command Agor runs for Junie headless sessions."
+                  >
+                    <Input
+                      value={junieExecutable}
+                      onChange={(event) => setJunieExecutable(event.target.value)}
+                      placeholder="junie"
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    label="OpenAI-compatible base URL"
+                    extra="Gateway root URL. Agor appends the Junie profile endpoint for the selected API type."
+                    required
+                  >
+                    <Space.Compact style={{ width: '100%' }}>
+                      <Input
+                        value={junieOpenAICompatibleBaseUrl}
+                        onChange={(event) => setJunieOpenAICompatibleBaseUrl(event.target.value)}
+                        placeholder="https://openai-compatible.example.com"
+                      />
+                      <Button onClick={handleLoadJunieModels} loading={loadingJunieModels}>
+                        Load models
+                      </Button>
+                    </Space.Compact>
+                  </Form.Item>
+                  <Form.Item label="Default model" required>
+                    <AutoComplete
+                      options={junieModelOptions}
+                      value={junieDefaultModel}
+                      onChange={setJunieDefaultModel}
+                      placeholder="gpt-5.2"
+                      filterOption={false}
+                    />
+                  </Form.Item>
+                  <Form.Item label="Faster model">
+                    <AutoComplete
+                      options={junieModelOptions}
+                      value={junieFasterModel}
+                      onChange={setJunieFasterModel}
+                      placeholder="gpt-5.4-mini"
+                      filterOption={false}
+                    />
+                  </Form.Item>
+                  <Form.Item label="OpenAI-compatible API type">
+                    <Select value={junieApiType} onChange={setJunieApiType}>
+                      <Select.Option value="OpenAICompletion">
+                        OpenAI Chat Completions
+                      </Select.Option>
+                      <Select.Option value="OpenAIResponses">OpenAI Responses</Select.Option>
+                    </Select>
+                  </Form.Item>
+                  <Button
+                    type="primary"
+                    onClick={handleSaveJunieConfig}
+                    loading={savingJunieConfig}
+                  >
+                    Save Junie settings
+                  </Button>
+                </Form>
+              </div>
             ),
           },
           {

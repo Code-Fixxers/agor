@@ -9,6 +9,7 @@
  * - Claude Code: default, acceptEdits, bypassPermissions, plan, dontAsk
  * - Gemini: default, autoEdit, yolo
  * - Codex: ask, auto, on-failure, allow-all
+ * - Junie: default
  */
 
 import type { AgenticToolName, PermissionMode } from '../types';
@@ -114,6 +115,10 @@ export function mapPermissionMode(
         default:
           return 'auto'; // Safe default
       }
+
+    case 'junie':
+      // Junie exposes no permission-mode CLI surface; let Junie manage behavior.
+      return 'default';
 
     default:
       // Unknown tool - return mode as-is
