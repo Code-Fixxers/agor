@@ -11,6 +11,7 @@
 
 import { generateId } from '@agor/core';
 import { loadConfig } from '@agor/core/config';
+import { renderAgorSystemPrompt } from '@agor/core/templates/session-context';
 import type { MessageID, PermissionMode, SessionID, TaskID } from '@agor/core/types';
 import { MessageRole } from '@agor/core/types';
 import { createFeathersBackedRepositories } from '../../db/feathers-repositories.js';
@@ -156,7 +157,20 @@ export async function executeOpenCodeTask(params: {
     // Execute task using OpenCode's executeTask interface
     // This will create the assistant message with streaming
     // Pass nextIndex + 1 for assistant message index
-    const result = await tool.executeTask?.(sessionId, prompt, taskId, callbacks, nextIndex + 1);
+    const agorSystemPrompt = await renderAgorSystemPrompt(sessionId, {
+      sessions: repos.sessions,
+      worktrees: repos.worktrees,
+      repos: repos.repos,
+      users: repos.users,
+    });
+    const opencodePrompt = `${agorSystemPrompt.trim()}\n\n---\n\n## User Task\n\n${prompt}`;
+    const result = await tool.executeTask?.(
+      sessionId,
+      opencodePrompt,
+      taskId,
+      callbacks,
+      nextIndex + 1
+    );
 
     console.log(`[opencode] Execution completed: status=${result?.status}`);
 

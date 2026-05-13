@@ -115,6 +115,12 @@ export function mapPermissionMode(
           return 'auto'; // Safe default
       }
 
+    case 'junie':
+      // Junie headless does not currently expose an Agor permission matrix.
+      // Keep cross-agent spawns explicit by collapsing every source mode to
+      // Junie's single managed mode.
+      return 'default';
+
     default:
       // Unknown tool - return mode as-is
       return mode;

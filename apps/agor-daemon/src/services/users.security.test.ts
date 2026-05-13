@@ -88,11 +88,13 @@ describe('UsersService — Junie API keys', () => {
     const id = await makeUser(service);
 
     const patched = await service.patch(id, {
-      api_keys: { JUNIE_LITELLM_API_KEY: 'sk-junie-litellm' },
+      agentic_tools: { junie: { JUNIE_LITELLM_API_KEY: 'sk-junie-litellm' } },
     });
 
-    expect(patched.api_keys?.JUNIE_LITELLM_API_KEY).toBe(true);
+    expect(patched.agentic_tools?.junie?.JUNIE_LITELLM_API_KEY).toBe(true);
     expect(JSON.stringify(patched)).not.toContain('sk-junie-litellm');
-    await expect(service.getApiKey(id, 'JUNIE_LITELLM_API_KEY')).resolves.toBe('sk-junie-litellm');
+    await expect(service.getToolConfigField(id, 'junie', 'JUNIE_LITELLM_API_KEY')).resolves.toBe(
+      'sk-junie-litellm'
+    );
   });
 });

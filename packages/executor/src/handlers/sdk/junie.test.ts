@@ -123,5 +123,11 @@ describe('executeJunieTask', () => {
       content: 'JUNIE_OK',
     });
     expect(sessionsPatch).toHaveBeenCalledWith('session-1', { sdk_session_id: 'junie-123' });
+
+    const spawnArgs = spawnMock.mock.calls[0][1] as string[];
+    const taskPrompt = spawnArgs[spawnArgs.indexOf('--task') + 1];
+    expect(taskPrompt).toContain('Junie Headless Remote Worker Contract');
+    expect(taskPrompt).toContain('## User Task');
+    expect(taskPrompt).toContain('Reply exactly JUNIE_OK');
   });
 });

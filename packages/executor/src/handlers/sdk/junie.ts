@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { generateId } from '@agor/core';
 import { getGitState } from '@agor/core/git';
+import { renderAgorSystemPrompt } from '@agor/core/templates/session-context';
 import type { MessageID, MessageSource, PermissionMode, SessionID, TaskID } from '@agor/core/types';
 import { MessageRole } from '@agor/core/types';
 import {
@@ -170,6 +171,29 @@ async function readJunieOutput(outputPath: string): Promise<unknown | undefined>
   }
 }
 
+async function buildJunieTaskPrompt(
+  client: AgorClient,
+  sessionId: SessionID,
+  prompt: string
+): Promise<string> {
+  const agorContext = await renderAgorSystemPrompt(sessionId, {
+    sessions: {
+      findById: async (id) => client.service('sessions').get(id),
+    },
+    worktrees: {
+      findById: async (id) => client.service('worktrees').get(id),
+    },
+    repos: {
+      findById: async (id) => client.service('repos').get(id),
+    },
+    users: {
+      findById: async (id) => client.service('users').get(id),
+    },
+  });
+
+  return `${agorContext.trim()}\n\n---\n\n## User Task\n\n${prompt}`;
+}
+
 export async function executeJunieTask(params: {
   client: AgorClient;
   sessionId: SessionID;
@@ -239,6 +263,7 @@ export async function executeJunieTask(params: {
     }
 
     const executable = settings.executable?.trim() || 'junie';
+    const juniePrompt = await buildJunieTaskPrompt(client, sessionId, prompt);
     const args = buildJunieArgs({
       projectPath: worktree.path,
       sessionId: junieSessionId,
@@ -248,7 +273,7 @@ export async function executeJunieTask(params: {
       configPath: files.configPath,
       cacheDir: files.cacheDir,
       outputPath: files.outputPath,
-      prompt,
+      prompt: juniePrompt,
     });
 
     const processResult = await runJunieProcess(
