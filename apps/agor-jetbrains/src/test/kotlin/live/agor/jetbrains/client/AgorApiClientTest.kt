@@ -162,6 +162,27 @@ class AgorApiClientTest {
     }
 
     @Test
+    fun `loads navigator snapshot when optional permission request query fails`() {
+        val transport = RecordingTransport(
+            responses = ArrayDeque(
+                listOf(
+                    response("""{"data":[{"board_id":"board-1","name":"Main"}]}"""),
+                    response("""{"data":[{"worktree_id":"wt-1","board_id":"board-1","name":"Addon","path":"/repo","ref":"main"}]}"""),
+                    response("""{"data":[{"session_id":"sess-1","worktree_id":"wt-1","title":"Build","agentic_tool":"codex","status":"running"}]}"""),
+                    response("""{"name":"GeneralError","message":"Unexpected token 'R'","code":500,"className":"general-error"}""", 500),
+                ),
+            ),
+        )
+
+        val snapshot = AgorApiClient("http://localhost:3030", "token-123", transport).loadSnapshot()
+
+        assertEquals("Main", snapshot.boards.single().name)
+        assertEquals("Addon", snapshot.worktrees.single().name)
+        assertEquals("Build", snapshot.sessions.single().title)
+        assertTrue(snapshot.permissionRequests.isEmpty())
+    }
+
+    @Test
     fun `posts permission decisions with Agor payload shape`() {
         val transport = RecordingTransport(ArrayDeque(listOf(response("{}"))))
 

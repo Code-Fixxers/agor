@@ -37,11 +37,13 @@ class AgorApiClient(
             SessionDto::class.java,
             mapOf("archived" to "false", "\$limit" to "250"),
         ).map { it.toModel() }
-        val permissionRequests = getList(
-            "/messages",
-            MessageDto::class.java,
-            mapOf("type" to "permission_request", "\$limit" to "250"),
-        ).mapNotNull { it.toPermissionRequest(gson) }
+        val permissionRequests = runCatching {
+            getList(
+                "/messages",
+                MessageDto::class.java,
+                mapOf("type" to "permission_request", "\$limit" to "250"),
+            ).mapNotNull { it.toPermissionRequest(gson) }
+        }.getOrDefault(emptyList())
         return AgorSnapshot(boards, worktrees, sessions, permissionRequests)
     }
 
