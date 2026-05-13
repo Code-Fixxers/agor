@@ -23,7 +23,7 @@ interface SystemCredentials {
   OPENAI_API_KEY?: boolean;
   GEMINI_API_KEY?: boolean;
   COPILOT_GITHUB_TOKEN?: boolean;
-  JUNIE_LITELLM_API_KEY?: boolean;
+  JUNIE_OPENAI_COMPATIBLE_API_KEY?: boolean;
 }
 
 interface OnboardingConfig {

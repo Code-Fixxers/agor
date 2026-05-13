@@ -40,7 +40,9 @@ function maskCredentials(config: AgorConfig): AgorConfig {
       OPENAI_API_KEY: maskApiKey(config.credentials.OPENAI_API_KEY),
       GEMINI_API_KEY: maskApiKey(config.credentials.GEMINI_API_KEY),
       COPILOT_GITHUB_TOKEN: maskApiKey(config.credentials.COPILOT_GITHUB_TOKEN),
-      JUNIE_LITELLM_API_KEY: maskApiKey(config.credentials.JUNIE_LITELLM_API_KEY),
+      JUNIE_OPENAI_COMPATIBLE_API_KEY: maskApiKey(
+        config.credentials.JUNIE_OPENAI_COMPATIBLE_API_KEY
+      ),
     },
   };
 }
@@ -48,7 +50,7 @@ function maskCredentials(config: AgorConfig): AgorConfig {
 function resolveJunieModelsUrl(baseUrl: string): string {
   const normalized = baseUrl.trim().replace(/\/+$/, '');
   if (!normalized) {
-    throw new Error('Junie LiteLLM base URL is required');
+    throw new Error('Junie OpenAI-compatible base URL is required');
   }
 
   if (normalized.endsWith('/v1/models')) return normalized;
@@ -181,28 +183,29 @@ export class ConfigService {
     };
   }
 
-  async loadJunieModels(data: { litellmBaseUrl?: string; apiKey?: string }): Promise<{
+  async loadJunieModels(data: { openaiCompatibleBaseUrl?: string; apiKey?: string }): Promise<{
     models: string[];
   }> {
     const config = await loadConfig();
-    const litellmBaseUrl = data.litellmBaseUrl?.trim() || config.junie?.litellmBaseUrl?.trim();
-    if (!litellmBaseUrl) {
-      throw new Error('Junie LiteLLM base URL is required');
+    const openaiCompatibleBaseUrl =
+      data.openaiCompatibleBaseUrl?.trim() || config.junie?.openaiCompatibleBaseUrl?.trim();
+    if (!openaiCompatibleBaseUrl) {
+      throw new Error('Junie OpenAI-compatible base URL is required');
     }
 
     const apiKey =
       data.apiKey?.trim() ||
       (
-        await resolveApiKey('JUNIE_LITELLM_API_KEY', {
+        await resolveApiKey('JUNIE_OPENAI_COMPATIBLE_API_KEY', {
           db: this.db,
         })
       ).apiKey;
     if (!apiKey) {
-      throw new Error('Junie LiteLLM API key is not configured');
+      throw new Error('Junie OpenAI-compatible API key is not configured');
     }
 
     return {
-      models: await fetchJunieModels(litellmBaseUrl, apiKey),
+      models: await fetchJunieModels(openaiCompatibleBaseUrl, apiKey),
     };
   }
 
@@ -271,13 +274,16 @@ export class ConfigService {
           throw new Error('junie.executable must be a string');
         }
       }
-      if (juniePatch.litellmBaseUrl !== undefined) {
-        if (juniePatch.litellmBaseUrl === null || juniePatch.litellmBaseUrl === '') {
-          delete config.junie.litellmBaseUrl;
-        } else if (typeof juniePatch.litellmBaseUrl === 'string') {
-          config.junie.litellmBaseUrl = juniePatch.litellmBaseUrl;
+      if (juniePatch.openaiCompatibleBaseUrl !== undefined) {
+        if (
+          juniePatch.openaiCompatibleBaseUrl === null ||
+          juniePatch.openaiCompatibleBaseUrl === ''
+        ) {
+          delete config.junie.openaiCompatibleBaseUrl;
+        } else if (typeof juniePatch.openaiCompatibleBaseUrl === 'string') {
+          config.junie.openaiCompatibleBaseUrl = juniePatch.openaiCompatibleBaseUrl;
         } else {
-          throw new Error('junie.litellmBaseUrl must be a string');
+          throw new Error('junie.openaiCompatibleBaseUrl must be a string');
         }
       }
       if (juniePatch.defaultModel !== undefined) {

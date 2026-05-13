@@ -3,7 +3,7 @@
 ## Summary
 
 Add JetBrains Junie as a first-class Agor agentic tool using Junie's headless CLI.
-The initial integration is BYOK-only and targets the user's LiteLLM gateway through a
+The initial integration is BYOK-only and targets the user's OpenAI-compatible gateway through a
 Junie custom model profile. Agor will not support JetBrains account login or Junie
 API tokens in this first version.
 
@@ -11,9 +11,9 @@ API tokens in this first version.
 
 - Add `junie` anywhere Agor enumerates supported agentic tools.
 - Run Junie against Agor worktrees from the executor process.
-- Use a separate LiteLLM credential path so Junie does not reuse Codex's
+- Use a separate OpenAI-compatible credential path so Junie does not reuse Codex's
   `OPENAI_API_KEY`.
-- Default Junie to LiteLLM's OpenAI Responses-compatible endpoint.
+- Default Junie to an OpenAI-compatible endpoint.
 - Preserve Agor session continuity by storing Junie's CLI session id in
   `session.sdk_session_id`.
 - Surface Junie in the UI with model/gateway configuration and basic execution
@@ -34,16 +34,16 @@ API tokens in this first version.
 
 ## External Behavior
 
-Users can select Junie when creating a session, choose a LiteLLM model profile, and
+Users can select Junie when creating a session, choose an OpenAI-compatible model profile, and
 send prompts the same way they do for Claude Code, Codex, Gemini, OpenCode, and
 Copilot. Junie runs in the selected worktree and writes changes directly to that
 worktree.
 
 Junie uses:
 
-- `JUNIE_LITELLM_API_KEY` for the LiteLLM bearer token.
-- `junie.litellmBaseUrl` for the LiteLLM gateway URL.
-- `junie.defaultModel` for the primary LiteLLM model.
+- `JUNIE_OPENAI_COMPATIBLE_API_KEY` for the OpenAI-compatible bearer token.
+- `junie.openaiCompatibleBaseUrl` for the OpenAI-compatible gateway URL.
+- `junie.defaultModel` for the primary OpenAI-compatible model.
 - `junie.fasterModel` for Junie's helper/internal model, when configured.
 - `junie.apiType`, defaulting to `OpenAIResponses`, with `OpenAICompletion` as an
   escape hatch.
@@ -54,8 +54,8 @@ The generated Junie custom model profile should default to:
 ```json
 {
   "apiType": "OpenAIResponses",
-  "baseUrl": "<litellm-base-url>/v1/responses",
-  "apiKey": "<resolved JUNIE_LITELLM_API_KEY>",
+  "baseUrl": "<openai-compatible-base-url>/v1/responses",
+  "apiKey": "<resolved JUNIE_OPENAI_COMPATIBLE_API_KEY>",
   "id": "<junie.defaultModel>",
   "primaryModel": {
     "id": "<junie.defaultModel>"
@@ -81,14 +81,14 @@ Add Junie configuration to `packages/core/src/config/types.ts`:
 ```ts
 export interface AgorJunieSettings {
   executable?: string;
-  litellmBaseUrl?: string;
+  openaiCompatibleBaseUrl?: string;
   defaultModel?: string;
   fasterModel?: string;
   apiType?: 'OpenAIResponses' | 'OpenAICompletion';
 }
 ```
 
-Add `JUNIE_LITELLM_API_KEY` to:
+Add `JUNIE_OPENAI_COMPATIBLE_API_KEY` to:
 
 - `CredentialKey`
 - `AgorCredentials`
@@ -108,7 +108,7 @@ The resolver precedence remains:
 4. No native auth fallback for Junie.
 
 For Junie specifically, an unresolved key should produce a clear user-facing failure
-that asks for `JUNIE_LITELLM_API_KEY`; it should not attempt JetBrains native auth.
+that asks for `JUNIE_OPENAI_COMPATIBLE_API_KEY`; it should not attempt JetBrains native auth.
 
 ### Executor Integration
 
@@ -173,7 +173,7 @@ Use a per-session temp root under Agor's data home or OS temp directory:
 <tmp>/agor-junie-<session-id>/
   config.json
   models/
-    agor-litellm.json
+    agor-openai-compatible.json
   mcp/
     mcp.json
   output/
@@ -294,7 +294,7 @@ The Junie model selector should collect:
 
 Settings > Agentic Tools should collect:
 
-- LiteLLM base URL.
+- OpenAI-compatible base URL.
 - Default primary model.
 - Optional default faster model.
 - API type, default `OpenAIResponses`.
@@ -313,17 +313,17 @@ Junie CLI was not found. Install it with Homebrew, npm, or JetBrains' install sc
 then set junie.executable if it is not on PATH.
 ```
 
-Missing LiteLLM key should say:
+Missing OpenAI-compatible key should say:
 
 ```text
-Junie requires JUNIE_LITELLM_API_KEY. Add it in Settings > Agentic Tools or your
+Junie requires JUNIE_OPENAI_COMPATIBLE_API_KEY. Add it in Settings > Agentic Tools or your
 user profile API keys.
 ```
 
-Missing LiteLLM URL should say:
+Missing OpenAI-compatible URL should say:
 
 ```text
-Junie requires junie.litellmBaseUrl. Add your LiteLLM gateway URL in Settings.
+Junie requires junie.openaiCompatibleBaseUrl. Add your OpenAI-compatible gateway URL in Settings.
 ```
 
 If Junie exits non-zero, store stdout/stderr previews on the failed task and create
@@ -339,7 +339,7 @@ successful execution unless debug logging is enabled.
 
 Add focused unit tests rather than broad builds:
 
-- Core type/config tests for `JUNIE_LITELLM_API_KEY` resolution.
+- Core type/config tests for `JUNIE_OPENAI_COMPATIBLE_API_KEY` resolution.
 - User service/repository tests for encrypted Junie key status and update.
 - Executor payload schema tests accepting `junie`.
 - Tool registry tests registering Junie.
@@ -361,7 +361,7 @@ Then create a Junie session against a tiny worktree and prompt:
 Read the README and summarize the project in one paragraph. Do not edit files.
 ```
 
-This should verify installation, LiteLLM profile generation, BYOK auth, task
+This should verify installation, OpenAI-compatible profile generation, BYOK auth, task
 storage, and session continuity without creating code changes.
 
 ## References
@@ -370,4 +370,4 @@ storage, and session continuity without creating code changes.
 - Junie CLI reference: https://junie.jetbrains.com/docs/parameters.html
 - Junie custom LLM models: https://junie.jetbrains.com/docs/custom-llm-models.html
 - Junie MCP configuration: https://junie.jetbrains.com/docs/junie-cli-mcp-configuration.html
-- LiteLLM documentation: https://docs.litellm.ai/
+- Junie custom model parameters: https://junie.jetbrains.com/docs/parameters.html

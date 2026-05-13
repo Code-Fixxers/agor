@@ -156,7 +156,7 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
   const [loadingJunieConfig, setLoadingJunieConfig] = useState(true);
   const [savingJunieConfig, setSavingJunieConfig] = useState(false);
   const [junieExecutable, setJunieExecutable] = useState('junie');
-  const [junieLiteLLMBaseUrl, setJunieLiteLLMBaseUrl] = useState('');
+  const [junieOpenAICompatibleBaseUrl, setJunieOpenAICompatibleBaseUrl] = useState('');
   const [junieDefaultModel, setJunieDefaultModel] = useState('');
   const [junieFasterModel, setJunieFasterModel] = useState('');
   const [junieModels, setJunieModels] = useState<string[]>([]);
@@ -209,21 +209,21 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
         setLoadingJunieConfig(true);
         const config = (await client.service('config').get('junie')) as {
           executable?: string;
-          litellmBaseUrl?: string;
+          openaiCompatibleBaseUrl?: string;
           defaultModel?: string;
           fasterModel?: string;
           apiType?: 'OpenAIResponses' | 'OpenAICompletion';
         } | null;
 
         setJunieExecutable(config?.executable || 'junie');
-        setJunieLiteLLMBaseUrl(config?.litellmBaseUrl || '');
+        setJunieOpenAICompatibleBaseUrl(config?.openaiCompatibleBaseUrl || '');
         setJunieDefaultModel(config?.defaultModel || '');
         setJunieFasterModel(config?.fasterModel || '');
         setJunieApiType(config?.apiType || 'OpenAICompletion');
       } catch (err) {
         console.error('Failed to load Junie config:', err);
         setJunieExecutable('junie');
-        setJunieLiteLLMBaseUrl('');
+        setJunieOpenAICompatibleBaseUrl('');
         setJunieDefaultModel('');
         setJunieFasterModel('');
         setJunieApiType('OpenAICompletion');
@@ -352,11 +352,11 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
   const handleSaveJunieConfig = async () => {
     if (!client) return;
 
-    const litellmBaseUrl = junieLiteLLMBaseUrl.trim();
+    const openaiCompatibleBaseUrl = junieOpenAICompatibleBaseUrl.trim();
     const defaultModel = junieDefaultModel.trim();
 
-    if (!litellmBaseUrl) {
-      showError('Junie LiteLLM base URL cannot be empty');
+    if (!openaiCompatibleBaseUrl) {
+      showError('Junie OpenAI-compatible base URL cannot be empty');
       return;
     }
     if (!defaultModel) {
@@ -369,7 +369,7 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
       await client.service('config').patch(null, {
         junie: {
           executable: junieExecutable.trim() || 'junie',
-          litellmBaseUrl,
+          openaiCompatibleBaseUrl,
           defaultModel,
           fasterModel: junieFasterModel.trim() || null,
           apiType: junieApiType,
@@ -387,16 +387,16 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
   const handleLoadJunieModels = async () => {
     if (!client) return;
 
-    const litellmBaseUrl = junieLiteLLMBaseUrl.trim();
-    if (!litellmBaseUrl) {
-      showError('Junie LiteLLM base URL cannot be empty');
+    const openaiCompatibleBaseUrl = junieOpenAICompatibleBaseUrl.trim();
+    if (!openaiCompatibleBaseUrl) {
+      showError('Junie OpenAI-compatible base URL cannot be empty');
       return;
     }
 
     try {
       setLoadingJunieModels(true);
       const result = (await client.service('config/junie-models').create({
-        litellmBaseUrl,
+        openaiCompatibleBaseUrl,
       })) as JunieModelsResponse;
       const models = Array.isArray(result.models) ? result.models : [];
       setJunieModels(models);
@@ -527,15 +527,15 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
                     />
                   </Form.Item>
                   <Form.Item
-                    label="LiteLLM base URL"
+                    label="OpenAI-compatible base URL"
                     extra="Gateway root URL. Agor appends the Junie profile endpoint for the selected API type."
                     required
                   >
                     <Space.Compact style={{ width: '100%' }}>
                       <Input
-                        value={junieLiteLLMBaseUrl}
-                        onChange={(event) => setJunieLiteLLMBaseUrl(event.target.value)}
-                        placeholder="https://litellm.example.com"
+                        value={junieOpenAICompatibleBaseUrl}
+                        onChange={(event) => setJunieOpenAICompatibleBaseUrl(event.target.value)}
+                        placeholder="https://openai-compatible.example.com"
                       />
                       <Button onClick={handleLoadJunieModels} loading={loadingJunieModels}>
                         Load models
@@ -560,7 +560,7 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
                       filterOption={false}
                     />
                   </Form.Item>
-                  <Form.Item label="LiteLLM API type">
+                  <Form.Item label="OpenAI-compatible API type">
                     <Select value={junieApiType} onChange={setJunieApiType}>
                       <Select.Option value="OpenAICompletion">
                         OpenAI Chat Completions

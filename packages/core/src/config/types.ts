@@ -644,7 +644,7 @@ export enum CredentialKey {
   OPENAI_API_KEY = 'OPENAI_API_KEY',
   GEMINI_API_KEY = 'GEMINI_API_KEY',
   COPILOT_GITHUB_TOKEN = 'COPILOT_GITHUB_TOKEN',
-  JUNIE_LITELLM_API_KEY = 'JUNIE_LITELLM_API_KEY',
+  JUNIE_OPENAI_COMPATIBLE_API_KEY = 'JUNIE_OPENAI_COMPATIBLE_API_KEY',
 }
 
 /**
@@ -671,8 +671,8 @@ export interface AgorCredentials {
   /** GitHub token for Copilot */
   COPILOT_GITHUB_TOKEN?: string;
 
-  /** LiteLLM API key for Junie */
-  JUNIE_LITELLM_API_KEY?: string;
+  /** OpenAI-compatible API key for Junie */
+  JUNIE_OPENAI_COMPATIBLE_API_KEY?: string;
 }
 
 /**
@@ -682,8 +682,8 @@ export interface AgorJunieSettings {
   /** Junie executable path or command (default: junie) */
   executable?: string;
 
-  /** LiteLLM/OpenAI-compatible gateway root URL */
-  litellmBaseUrl?: string;
+  /** OpenAI-compatible gateway root URL */
+  openaiCompatibleBaseUrl?: string;
 
   /** Primary model ID used by Junie */
   defaultModel?: string;

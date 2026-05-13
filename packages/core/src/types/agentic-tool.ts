@@ -11,7 +11,7 @@ import type { AgenticToolID } from './id';
  * - gemini: Google's Gemini Code Assist
  * - opencode: Open-source terminal-based AI assistant with 75+ LLM providers
  * - copilot: GitHub Copilot's agentic runtime via @github/copilot-sdk
- * - junie: JetBrains Junie CLI backed by BYOK/LiteLLM
+ * - junie: JetBrains Junie CLI backed by BYOK/OpenAI-compatible
  *
  * Not to be confused with "execution tools" (Bash, Write, Read, etc.)
  * which are the primitives that agentic tools use to perform work.

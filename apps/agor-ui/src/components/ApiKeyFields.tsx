@@ -106,11 +106,11 @@ export const TOOL_FIELD_CONFIGS: Record<AgenticToolName, AgenticToolFieldConfig[
   ],
   junie: [
     {
-      field: 'JUNIE_LITELLM_API_KEY',
-      label: 'Junie LiteLLM API Key',
+      field: 'JUNIE_OPENAI_COMPATIBLE_API_KEY',
+      label: 'Junie OpenAI-compatible API Key',
       description: '(Junie)',
       placeholder: 'sk-...',
-      docUrl: 'https://docs.litellm.ai/',
+      docUrl: 'https://platform.openai.com/docs/',
     },
   ],
   opencode: [],

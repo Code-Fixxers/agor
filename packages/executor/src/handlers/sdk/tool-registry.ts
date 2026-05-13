@@ -166,7 +166,7 @@ export async function initializeToolRegistry(): Promise<void> {
   ToolRegistry.register({
     tool: 'junie',
     name: 'Junie',
-    apiKeyEnvVar: 'JUNIE_LITELLM_API_KEY',
+    apiKeyEnvVar: 'JUNIE_OPENAI_COMPATIBLE_API_KEY',
     runner: junie.executeJunieTask,
   });
 }

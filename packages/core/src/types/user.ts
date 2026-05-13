@@ -123,7 +123,7 @@ export interface CopilotConfig {
 }
 
 export interface JunieConfig {
-  JUNIE_LITELLM_API_KEY?: string;
+  JUNIE_OPENAI_COMPATIBLE_API_KEY?: string;
 }
 
 /**

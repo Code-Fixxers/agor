@@ -3122,8 +3122,9 @@ export async function registerRoutes(ctx: RegisterRoutesContext): Promise<void> 
             COPILOT_GITHUB_TOKEN: !!(
               config.credentials?.COPILOT_GITHUB_TOKEN || process.env.COPILOT_GITHUB_TOKEN
             ),
-            JUNIE_LITELLM_API_KEY: !!(
-              config.credentials?.JUNIE_LITELLM_API_KEY || process.env.JUNIE_LITELLM_API_KEY
+            JUNIE_OPENAI_COMPATIBLE_API_KEY: !!(
+              config.credentials?.JUNIE_OPENAI_COMPATIBLE_API_KEY ||
+              process.env.JUNIE_OPENAI_COMPATIBLE_API_KEY
             ),
           },
         },

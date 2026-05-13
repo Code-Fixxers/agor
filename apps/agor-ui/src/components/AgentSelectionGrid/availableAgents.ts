@@ -44,7 +44,7 @@ export const AVAILABLE_AGENTS: AgenticToolOption[] = [
     id: 'junie',
     name: 'Junie',
     icon: 'J',
-    description: 'JetBrains Junie via LiteLLM BYOK',
+    description: 'JetBrains Junie via OpenAI-compatible BYOK',
     beta: true,
   },
 ];

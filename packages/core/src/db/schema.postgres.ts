@@ -764,7 +764,7 @@ export const users = pgTable(
             COPILOT_GITHUB_TOKEN?: string;
           };
           junie?: {
-            JUNIE_LITELLM_API_KEY?: string;
+            JUNIE_OPENAI_COMPATIBLE_API_KEY?: string;
           };
           opencode?: Record<string, never>;
         };

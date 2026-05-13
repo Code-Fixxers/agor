@@ -14,7 +14,7 @@ describe('buildJunieArgs', () => {
   it('does not pass --session-id for a first Junie prompt', () => {
     const args = buildJunieArgs({
       projectPath: '/repo',
-      profileId: 'agor-litellm',
+      profileId: 'agor-openai-compatible',
       modelDir: '/tmp/models',
       mcpDir: '/tmp/mcp',
       configPath: '/tmp/config.json',
@@ -27,7 +27,7 @@ describe('buildJunieArgs', () => {
       '--project',
       '/repo',
       '--model',
-      'custom:agor-litellm',
+      'custom:agor-openai-compatible',
       '--model-default-locations',
       'false',
       '--model-location',
@@ -57,7 +57,7 @@ describe('buildJunieArgs', () => {
     const args = buildJunieArgs({
       projectPath: '/repo',
       sessionId: 'junie-session-123',
-      profileId: 'agor-litellm',
+      profileId: 'agor-openai-compatible',
       modelDir: '/tmp/models',
       mcpDir: '/tmp/mcp',
       configPath: '/tmp/config.json',
@@ -72,7 +72,7 @@ describe('buildJunieArgs', () => {
       '--session-id',
       'junie-session-123',
       '--model',
-      'custom:agor-litellm',
+      'custom:agor-openai-compatible',
     ]);
   });
 });

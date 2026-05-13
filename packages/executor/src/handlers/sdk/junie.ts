@@ -21,7 +21,7 @@ import type { AgorClient } from '../../services/feathers-client.js';
 
 interface JunieSettings {
   executable?: string;
-  litellmBaseUrl?: string;
+  openaiCompatibleBaseUrl?: string;
   defaultModel?: string;
   fasterModel?: string;
   apiType?: JunieApiType;
@@ -30,18 +30,19 @@ interface JunieSettings {
 async function resolveJunieApiKey(client: AgorClient, taskId: TaskID): Promise<string> {
   const result = (await client.service('config/resolve-api-key').create({
     taskId,
-    keyName: 'JUNIE_LITELLM_API_KEY',
+    keyName: 'JUNIE_OPENAI_COMPATIBLE_API_KEY',
+    tool: 'junie',
   })) as { apiKey?: string | null; decryptionFailed?: boolean };
 
   if (result.decryptionFailed) {
     throw new Error(
-      'Junie LiteLLM API key could not be decrypted. Re-enter JUNIE_LITELLM_API_KEY in Settings.'
+      'Junie OpenAI-compatible API key could not be decrypted. Re-enter JUNIE_OPENAI_COMPATIBLE_API_KEY in Settings.'
     );
   }
 
   if (!result.apiKey) {
     throw new Error(
-      'Junie requires JUNIE_LITELLM_API_KEY. Add it in Settings > Agentic Tools or your user profile API keys.'
+      'Junie requires JUNIE_OPENAI_COMPATIBLE_API_KEY. Add it in Settings > Agentic Tools or your user profile API keys.'
     );
   }
 
@@ -112,7 +113,7 @@ async function prepareJunieFiles(params: {
     path.join(modelDir, `${JUNIE_PROFILE_ID}.json`),
     buildJunieModelProfile({
       apiKey: params.apiKey,
-      baseUrl: params.settings.litellmBaseUrl || '',
+      baseUrl: params.settings.openaiCompatibleBaseUrl || '',
       model: params.model,
       fasterModel: params.fasterModel,
       apiType: params.settings.apiType,
@@ -208,14 +209,14 @@ export async function executeJunieTask(params: {
   const worktree = await client.service('worktrees').get(session.worktree_id);
   const settings = ((await client.service('config').get('junie')) || {}) as JunieSettings;
   const apiKey = await resolveJunieApiKey(client, taskId);
-  const litellmBaseUrl = settings.litellmBaseUrl?.trim();
+  const openaiCompatibleBaseUrl = settings.openaiCompatibleBaseUrl?.trim();
   const sessionModelConfig = session.model_config as
     | { model?: string; fasterModel?: string }
     | undefined;
 
-  if (!litellmBaseUrl) {
+  if (!openaiCompatibleBaseUrl) {
     throw new Error(
-      'Junie requires junie.litellmBaseUrl. Add your LiteLLM gateway URL in Settings.'
+      'Junie requires junie.openaiCompatibleBaseUrl. Add your OpenAI-compatible gateway URL in Settings.'
     );
   }
 
@@ -238,7 +239,7 @@ export async function executeJunieTask(params: {
     sessionId,
     taskId,
     apiKey,
-    settings: { ...settings, litellmBaseUrl },
+    settings: { ...settings, openaiCompatibleBaseUrl },
     model,
     fasterModel: sessionModelConfig?.fasterModel || settings.fasterModel,
   });

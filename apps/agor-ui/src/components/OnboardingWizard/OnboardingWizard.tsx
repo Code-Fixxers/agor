@@ -111,7 +111,7 @@ export interface OnboardingWizardProps {
     OPENAI_API_KEY?: boolean;
     GEMINI_API_KEY?: boolean;
     COPILOT_GITHUB_TOKEN?: boolean;
-    JUNIE_LITELLM_API_KEY?: boolean;
+    JUNIE_OPENAI_COMPATIBLE_API_KEY?: boolean;
   };
 }
 
@@ -156,7 +156,7 @@ function apiKeyNameForAgent(agent: AgenticToolName): string {
     case 'copilot':
       return 'COPILOT_GITHUB_TOKEN';
     case 'junie':
-      return 'JUNIE_LITELLM_API_KEY';
+      return 'JUNIE_OPENAI_COMPATIBLE_API_KEY';
     case 'opencode':
       return 'ANTHROPIC_API_KEY';
     default:
@@ -220,7 +220,7 @@ const AGENT_KEY_CONSOLES: Record<AgenticToolName, { label: string; url: string }
   codex: { label: 'platform.openai.com', url: 'https://platform.openai.com/api-keys' },
   gemini: { label: 'aistudio.google.com', url: 'https://aistudio.google.com/apikey' },
   copilot: { label: 'github.com/features/copilot', url: 'https://github.com/features/copilot' },
-  junie: { label: 'LiteLLM docs', url: 'https://docs.litellm.ai/' },
+  junie: { label: 'OpenAI-compatible docs', url: 'https://platform.openai.com/docs/' },
   opencode: null,
 };
 
@@ -310,10 +310,10 @@ export function OnboardingWizard({
     user?.env_vars?.COPILOT_GITHUB_TOKEN ||
     (systemCredentials as Record<string, unknown>)?.COPILOT_GITHUB_TOKEN
   );
-  const hasJunieLiteLLMKey = !!(
-    junieFields?.JUNIE_LITELLM_API_KEY ||
-    user?.env_vars?.JUNIE_LITELLM_API_KEY ||
-    (systemCredentials as Record<string, unknown>)?.JUNIE_LITELLM_API_KEY
+  const hasJunieOpenAICompatibleKey = !!(
+    junieFields?.JUNIE_OPENAI_COMPATIBLE_API_KEY ||
+    user?.env_vars?.JUNIE_OPENAI_COMPATIBLE_API_KEY ||
+    (systemCredentials as Record<string, unknown>)?.JUNIE_OPENAI_COMPATIBLE_API_KEY
   );
 
   const hasKeyForAgent = (agent: AgenticToolName): boolean => {
@@ -327,7 +327,7 @@ export function OnboardingWizard({
       case 'copilot':
         return hasCopilotToken;
       case 'junie':
-        return hasJunieLiteLLMKey;
+        return hasJunieOpenAICompatibleKey;
       case 'opencode':
         return hasAnthropicKey || hasOpenAIKey || hasGeminiKey;
       default:

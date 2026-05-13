@@ -18,14 +18,14 @@ describe('extractJunieAssistantText', () => {
 describe('normalizeJunieRawResponse', () => {
   it('normalizes usage and model when present', () => {
     const normalized = normalizeJunieRawResponse({
-      model: 'custom:agor-litellm',
+      model: 'custom:agor-openai-compatible',
       usage: {
         input_tokens: 10,
         output_tokens: 5,
       },
     });
 
-    expect(normalized?.primaryModel).toBe('custom:agor-litellm');
+    expect(normalized?.primaryModel).toBe('custom:agor-openai-compatible');
     expect(normalized?.tokenUsage.totalTokens).toBe(15);
   });
 });

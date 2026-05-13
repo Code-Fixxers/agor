@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add JetBrains Junie as a BYOK-only Agor agent backed by a LiteLLM OpenAI Responses custom model profile.
+**Goal:** Add JetBrains Junie as a BYOK-only Agor agent backed by an OpenAI-compatible custom model profile.
 
-**Architecture:** The integration extends Agor's existing agent enum/config surfaces, then adds a process-backed executor adapter for Junie's headless CLI. Junie uses a separate `JUNIE_LITELLM_API_KEY`, session-scoped temp profile/config files, and `session.sdk_session_id` for continuity.
+**Architecture:** The integration extends Agor's existing agent enum/config surfaces, then adds a process-backed executor adapter for Junie's headless CLI. Junie uses a separate `JUNIE_OPENAI_COMPATIBLE_API_KEY`, session-scoped temp profile/config files, and `session.sdk_session_id` for continuity.
 
 **Tech Stack:** TypeScript, Vitest, Feathers-backed executor repositories, React/Ant Design UI.
 
@@ -13,7 +13,7 @@
 ## File Structure
 
 - Modify `packages/core/src/types/agentic-tool.ts`: add `junie` and capabilities.
-- Modify `packages/core/src/config/types.ts`: add Junie settings and `JUNIE_LITELLM_API_KEY`.
+- Modify `packages/core/src/config/types.ts`: add Junie settings and `JUNIE_OPENAI_COMPATIBLE_API_KEY`.
 - Modify `packages/core/src/config/key-resolver.ts`: resolve Junie key through the generic resolver.
 - Modify `packages/core/src/config/config-manager.ts`: expose Junie credential lookup.
 - Modify `packages/core/src/types/user.ts`: add Junie API key status/update fields.
@@ -52,7 +52,7 @@ expect(mapPermissionMode('allow-all', 'junie')).toBe('default');
 expect(mapPermissionMode('acceptEdits', 'junie')).toBe('default');
 ```
 
-Add config-manager type coverage for `getCredential('JUNIE_LITELLM_API_KEY')`.
+Add config-manager type coverage for `getCredential('JUNIE_OPENAI_COMPATIBLE_API_KEY')`.
 
 - [ ] **Step 2: Run red tests**
 
@@ -62,11 +62,11 @@ Run:
 pnpm --filter @agor/core test src/utils/permission-mode-mapper.test.ts src/config/config-manager.test.ts
 ```
 
-Expected: fail because `junie` and `JUNIE_LITELLM_API_KEY` are not recognized.
+Expected: fail because `junie` and `JUNIE_OPENAI_COMPATIBLE_API_KEY` are not recognized.
 
 - [ ] **Step 3: Implement minimal core changes**
 
-Add `junie` to agent unions/capabilities. Add `JUNIE_LITELLM_API_KEY` and `AgorJunieSettings` to config types and credential lookup unions. Add Junie user API key status/update fields. Map all Junie permission modes to `default`.
+Add `junie` to agent unions/capabilities. Add `JUNIE_OPENAI_COMPATIBLE_API_KEY` and `AgorJunieSettings` to config types and credential lookup unions. Add Junie user API key status/update fields. Map all Junie permission modes to `default`.
 
 - [ ] **Step 4: Run green tests**
 
@@ -93,7 +93,7 @@ Run focused daemon/core tests that cover those files.
 
 - [ ] **Step 3: Implement credential plumbing**
 
-Thread `JUNIE_LITELLM_API_KEY` through user encrypted storage, config masking/hot-reload, config patching, setup logging, and executor env handoff.
+Thread `JUNIE_OPENAI_COMPATIBLE_API_KEY` through user encrypted storage, config masking/hot-reload, config patching, setup logging, and executor env handoff.
 
 - [ ] **Step 4: Run green tests**
 
@@ -127,7 +127,7 @@ Tests should assert:
 PromptPayloadSchema.parse({ command: 'prompt', sessionToken: 'jwt', params: { sessionId, taskId, prompt: 'hi', tool: 'junie', cwd: '/tmp/repo' } });
 ```
 
-Profile generation produces `OpenAIResponses` with `/v1/responses`; command args include `--model custom:agor-litellm` and do not include the API key; normalizer extracts assistant text from known JSON shapes and falls back to stdout.
+Profile generation produces `OpenAIResponses` with `/v1/responses`; command args include `--model custom:agor-openai-compatible` and do not include the API key; normalizer extracts assistant text from known JSON shapes and falls back to stdout.
 
 - [ ] **Step 2: Run red tests**
 
@@ -165,7 +165,7 @@ Add or update lightweight tests for agent option lists if present. If no local t
 
 - [ ] **Step 2: Implement UI changes**
 
-Add Junie labels, key fields, settings fields for LiteLLM URL/default models/API type/executable, model selector support, permission selector default-only behavior, and `J` icon fallback.
+Add Junie labels, key fields, settings fields for OpenAI-compatible URL/default models/API type/executable, model selector support, permission selector default-only behavior, and `J` icon fallback.
 
 - [ ] **Step 3: Run UI typecheck**
 

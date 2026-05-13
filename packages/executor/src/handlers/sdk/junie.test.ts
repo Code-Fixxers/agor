@@ -74,7 +74,7 @@ describe('executeJunieTask', () => {
           case 'config':
             return {
               get: vi.fn().mockResolvedValue({
-                litellmBaseUrl: 'https://litellm.example.com',
+                openaiCompatibleBaseUrl: 'https://openai-compatible.example.com',
                 defaultModel: 'qwen',
               }),
             };

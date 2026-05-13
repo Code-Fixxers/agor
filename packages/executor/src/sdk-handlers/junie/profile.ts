@@ -1,6 +1,6 @@
 import type { JunieApiType, JunieModelProfile, JunieModelProfileOptions } from './types.js';
 
-export const JUNIE_PROFILE_ID = 'agor-litellm';
+export const JUNIE_PROFILE_ID = 'agor-openai-compatible';
 
 function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
