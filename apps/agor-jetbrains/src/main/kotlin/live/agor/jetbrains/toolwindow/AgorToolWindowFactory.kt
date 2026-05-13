@@ -6,7 +6,13 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
+import com.intellij.ui.JBColor
+import com.intellij.ui.TreeSpeedSearch
+import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.content.ContentFactory
+import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
 import live.agor.jetbrains.client.AgorApiClient
 import live.agor.jetbrains.client.AgorPermissionRequest
 import live.agor.jetbrains.client.AgorPermissionScope
@@ -18,19 +24,24 @@ import live.agor.jetbrains.settings.AgorSettings
 import live.agor.jetbrains.settings.AgorSettingsDialog
 import java.awt.BorderLayout
 import java.awt.Dimension
-import java.awt.event.MouseAdapter
-import java.awt.event.MouseEvent
+import java.awt.FlowLayout
+import java.awt.Font
 import java.io.File
+import javax.swing.Box
+import javax.swing.BoxLayout
 import javax.swing.JButton
+import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JSplitPane
-import javax.swing.JScrollPane
-import javax.swing.JTextArea
+import javax.swing.Timer
 import javax.swing.JTree
 import javax.swing.SwingUtilities
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
+import javax.swing.tree.TreePath
 
 private val LOG = Logger.getInstance(AgorToolWindowFactory::class.java)
 
@@ -54,22 +65,35 @@ private class AgorToolWindow(private val project: Project) {
     private var snapshot = AgorSnapshot()
     private var socketClient: AgorSocketClient? = null
     private var socketConnectionKey: Pair<String, String?>? = null
+    private var socketRefreshTimer: Timer? = null
+    private val promptDrafts = mutableMapOf<String, String>()
+    private var activePromptSessionId: String? = null
+    private var activePrompt: JBTextArea? = null
+    private var promptFocusSessionToRestore: String? = null
     val component: JPanel = JPanel(BorderLayout())
 
     init {
         tree.minimumSize = Dimension(260, 300)
-        tree.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(event: MouseEvent) {
-                if (event.clickCount >= 1) showSelection()
-            }
-        })
+        tree.isRootVisible = false
+        tree.showsRootHandles = true
+        tree.border = JBUI.Borders.empty(6)
+        tree.addTreeSelectionListener { showSelection() }
+        TreeSpeedSearch(tree)
 
-        val toolbar = JPanel()
+        inspector.border = JBUI.Borders.customLine(JBColor.border(), 0, 1, 0, 0)
+
+        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 6)).apply {
+            border = JBUI.Borders.customLine(JBColor.border(), 0, 0, 1, 0)
+            background = UIUtil.getPanelBackground()
+        }
         toolbar.add(JButton("Refresh").apply { addActionListener { refresh() } })
         toolbar.add(JButton("Settings").apply { addActionListener { showSettings() } })
 
-        val split = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, JScrollPane(tree), inspector)
-        split.resizeWeight = 0.42
+        val split = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, JBScrollPane(tree), inspector).apply {
+            resizeWeight = 0.36
+            dividerSize = JBUI.scale(3)
+            border = JBUI.Borders.empty()
+        }
         component.add(toolbar, BorderLayout.NORTH)
         component.add(split, BorderLayout.CENTER)
         showEmptyInspector()
@@ -77,16 +101,16 @@ private class AgorToolWindow(private val project: Project) {
 
     fun refresh() {
         val agorUrl = settings.state.agorUrl
+        val selectionToRestore = selectedNodeRef()
+        val expandedToRestore = expandedNodeRefs()
+        val promptFocusToRestore = focusedPromptSessionId()
         ApplicationManager.getApplication().executeOnPooledThread {
             val agorToken = settings.agorToken
             val client = AgorApiClient(agorUrl, agorToken)
             runCatching { client.loadSnapshot() }
                 .onSuccess { loaded ->
                     SwingUtilities.invokeLater {
-                        snapshot = loaded
-                        tree.model = DefaultTreeModel(toSwingTree(AgorTreeModelBuilder().build(loaded.boards, loaded.worktrees, loaded.sessions)))
-                        expandAll()
-                        showEmptyInspector()
+                        renderSnapshot(loaded, selectionToRestore, expandedToRestore, promptFocusToRestore)
                         connectSocket(client.connectionBaseUrl(), client.currentBearerToken())
                     }
                 }
@@ -99,10 +123,39 @@ private class AgorToolWindow(private val project: Project) {
         }
     }
 
+    private fun renderSnapshot(
+        loaded: AgorSnapshot,
+        selectionToRestore: AgorNodeRef?,
+        expandedToRestore: Set<AgorNodeKey>,
+        promptFocusToRestore: String?,
+    ) {
+        snapshot = loaded
+        val root = toSwingTree(AgorTreeModelBuilder().build(loaded.boards, loaded.worktrees, loaded.sessions))
+        tree.model = DefaultTreeModel(root)
+        if (expandedToRestore.isEmpty() && selectionToRestore == null) {
+            expandAll()
+        } else {
+            expandNodeRefs(root, expandedToRestore)
+        }
+
+        val restoredPath = selectionToRestore?.let { findNodePath(root, it) }
+        if (restoredPath != null) {
+            tree.expandPath(restoredPath.parentPath)
+            tree.selectionPath = restoredPath
+            tree.scrollPathToVisible(restoredPath)
+            promptFocusSessionToRestore = promptFocusToRestore
+                ?.takeIf { selectionToRestore.kind == AgorTreeNodeKind.SESSION && selectionToRestore.id == it }
+            showSelection()
+        } else {
+            promptFocusSessionToRestore = null
+            showEmptyInspector()
+        }
+    }
+
     private fun showSelection() {
         val node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return
         when (val value = node.userObject) {
-            is NodeRef -> when (value.kind) {
+            is AgorNodeRef -> when (value.kind) {
                 AgorTreeNodeKind.WORKTREE -> snapshot.worktrees.firstOrNull { it.worktreeId == value.id }?.let { showWorktree(it) }
                 AgorTreeNodeKind.SESSION -> snapshot.sessions.firstOrNull { it.sessionId == value.id }?.let { showSession(it) }
                 AgorTreeNodeKind.BOARD -> showText("Board", value.label)
@@ -113,14 +166,17 @@ private class AgorToolWindow(private val project: Project) {
 
     private fun showWorktree(worktree: AgorWorktree) {
         val panel = detailPanel("Worktree", worktree.name, listOf("Branch/ref: ${worktree.ref ?: "-"}", "Path: ${worktree.path}"))
-        panel.add(JButton("Open Path").apply {
-            addActionListener {
-                val file = File(worktree.path)
-                if (file.exists()) {
-                    FileEditorManager.getInstance(project).openFile(com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file) ?: return@addActionListener, true)
+        panel.add(Box.createVerticalStrut(JBUI.scale(14)))
+        panel.add(buttonRow(
+            JButton("Open Path").apply {
+                addActionListener {
+                    val file = File(worktree.path)
+                    if (file.exists()) {
+                        FileEditorManager.getInstance(project).openFile(com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file) ?: return@addActionListener, true)
+                    }
                 }
-            }
-        })
+            },
+        ))
         replaceInspector(panel)
     }
 
@@ -130,21 +186,56 @@ private class AgorToolWindow(private val project: Project) {
             session.title,
             listOf("Status: ${session.status}", "Agent: ${session.agenticTool}", "ID: ${session.sessionId}"),
         )
-        val prompt = JTextArea(4, 32)
-        panel.add(JScrollPane(prompt))
-        panel.add(JButton("Prompt").apply {
-            addActionListener {
-                val text = prompt.text.trim()
-                if (text.isNotEmpty()) runClientAction { promptSession(session.sessionId, text) }
+        val prompt = JBTextArea(4, 32).apply {
+            text = promptDrafts[session.sessionId].orEmpty()
+            lineWrap = true
+            wrapStyleWord = true
+            border = JBUI.Borders.empty(6)
+        }
+        activePromptSessionId = session.sessionId
+        activePrompt = prompt
+        prompt.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(event: DocumentEvent) = saveDraft()
+            override fun removeUpdate(event: DocumentEvent) = saveDraft()
+            override fun changedUpdate(event: DocumentEvent) = saveDraft()
+
+            private fun saveDraft() {
+                promptDrafts[session.sessionId] = prompt.text
             }
         })
-        panel.add(JButton("Stop").apply {
-            addActionListener { runClientAction { stopSession(session.sessionId) } }
-        })
+        val promptScroll = JBScrollPane(prompt).apply {
+            alignmentX = JComponent.LEFT_ALIGNMENT
+            preferredSize = Dimension(JBUI.scale(460), JBUI.scale(100))
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(120))
+            border = JBUI.Borders.customLine(JBColor.border())
+        }
+        panel.add(Box.createVerticalStrut(JBUI.scale(16)))
+        panel.add(sectionLabel("Prompt"))
+        panel.add(Box.createVerticalStrut(JBUI.scale(6)))
+        panel.add(promptScroll)
+        panel.add(Box.createVerticalStrut(JBUI.scale(10)))
+        panel.add(buttonRow(
+            JButton("Send").apply {
+                addActionListener {
+                    val text = prompt.text.trim()
+                    if (text.isNotEmpty()) runClientAction { promptSession(session.sessionId, text) }
+                }
+            },
+            JButton("Stop").apply {
+                addActionListener { runClientAction { stopSession(session.sessionId) } }
+            },
+        ))
         snapshot.permissionRequests
             .filter { it.sessionId == session.sessionId }
             .forEach { panel.add(permissionPanel(session.sessionId, it)) }
         replaceInspector(panel)
+        if (promptFocusSessionToRestore == session.sessionId) {
+            promptFocusSessionToRestore = null
+            SwingUtilities.invokeLater {
+                prompt.requestFocusInWindow()
+                prompt.caretPosition = prompt.text.length
+            }
+        }
     }
 
     private fun permissionPanel(sessionId: String, permission: AgorPermissionRequest): JPanel {
@@ -157,27 +248,30 @@ private class AgorToolWindow(private val project: Project) {
                 "Input: ${permission.toolInputJson}",
             ),
         )
-        panel.add(JButton("Approve Once").apply {
-            addActionListener {
-                runClientAction {
-                    decidePermission(sessionId, permission.requestId, permission.taskId, true, AgorPermissionScope.ONCE)
+        panel.add(Box.createVerticalStrut(JBUI.scale(10)))
+        panel.add(buttonRow(
+            JButton("Approve Once").apply {
+                addActionListener {
+                    runClientAction {
+                        decidePermission(sessionId, permission.requestId, permission.taskId, true, AgorPermissionScope.ONCE)
+                    }
                 }
-            }
-        })
-        panel.add(JButton("Approve Project").apply {
-            addActionListener {
-                runClientAction {
-                    decidePermission(sessionId, permission.requestId, permission.taskId, true, AgorPermissionScope.PROJECT)
+            },
+            JButton("Approve Project").apply {
+                addActionListener {
+                    runClientAction {
+                        decidePermission(sessionId, permission.requestId, permission.taskId, true, AgorPermissionScope.PROJECT)
+                    }
                 }
-            }
-        })
-        panel.add(JButton("Deny").apply {
-            addActionListener {
-                runClientAction {
-                    decidePermission(sessionId, permission.requestId, permission.taskId, false, AgorPermissionScope.ONCE)
+            },
+            JButton("Deny").apply {
+                addActionListener {
+                    runClientAction {
+                        decidePermission(sessionId, permission.requestId, permission.taskId, false, AgorPermissionScope.ONCE)
+                    }
                 }
-            }
-        })
+            },
+        ))
         return panel
     }
 
@@ -210,8 +304,11 @@ private class AgorToolWindow(private val project: Project) {
             "Connection unavailable",
             listOf(error.userFacingMessage("Could not load Agor")),
         )
-        panel.add(JButton("Configure").apply { addActionListener { showSettings() } })
-        panel.add(JButton("Retry").apply { addActionListener { refresh() } })
+        panel.add(Box.createVerticalStrut(JBUI.scale(14)))
+        panel.add(buttonRow(
+            JButton("Configure").apply { addActionListener { showSettings() } },
+            JButton("Retry").apply { addActionListener { refresh() } },
+        ))
         replaceInspector(panel)
     }
 
@@ -235,17 +332,52 @@ private class AgorToolWindow(private val project: Project) {
     }
 
     private fun detailPanel(kicker: String, title: String, lines: List<String>): JPanel {
-        val panel = JPanel()
-        panel.layout = javax.swing.BoxLayout(panel, javax.swing.BoxLayout.Y_AXIS)
-        panel.add(JLabel(kicker))
-        panel.add(JLabel("<html><h2>${title.escapeHtml()}</h2></html>"))
-        lines.forEach { panel.add(JLabel(it)) }
+        val panel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = JBUI.Borders.empty(14, 18, 18, 18)
+            background = UIUtil.getPanelBackground()
+        }
+        panel.add(JLabel(kicker.uppercase()).apply {
+            alignmentX = JComponent.LEFT_ALIGNMENT
+            foreground = JBColor.GRAY
+            font = font.deriveFont(Font.BOLD, 11f)
+        })
+        panel.add(Box.createVerticalStrut(JBUI.scale(8)))
+        panel.add(JLabel(title).apply {
+            alignmentX = JComponent.LEFT_ALIGNMENT
+            foreground = UIUtil.getLabelForeground()
+            font = font.deriveFont(Font.BOLD, 18f)
+        })
+        panel.add(Box.createVerticalStrut(JBUI.scale(12)))
+        lines.forEach { panel.add(metaLabel(it)) }
         return panel
     }
 
+    private fun metaLabel(text: String): JLabel =
+        JLabel(text).apply {
+            alignmentX = JComponent.LEFT_ALIGNMENT
+            foreground = JBColor.namedColor("Label.infoForeground", JBColor(0x6B7280, 0x9CA3AF))
+            border = JBUI.Borders.emptyBottom(4)
+        }
+
+    private fun sectionLabel(text: String): JLabel =
+        JLabel(text).apply {
+            alignmentX = JComponent.LEFT_ALIGNMENT
+            foreground = UIUtil.getLabelForeground()
+            font = font.deriveFont(Font.BOLD, 12f)
+        }
+
+    private fun buttonRow(vararg buttons: JButton): JPanel =
+        JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+            alignmentX = JComponent.LEFT_ALIGNMENT
+            isOpaque = false
+            buttons.forEach { add(it) }
+            maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }
+
     private fun replaceInspector(panel: JPanel) {
         inspector.removeAll()
-        inspector.add(panel, BorderLayout.NORTH)
+        inspector.add(panel, BorderLayout.CENTER)
         inspector.revalidate()
         inspector.repaint()
     }
@@ -253,7 +385,7 @@ private class AgorToolWindow(private val project: Project) {
     private fun toSwingTree(nodes: List<AgorTreeNode>): DefaultMutableTreeNode {
         val root = DefaultMutableTreeNode("Agor")
         fun add(parent: DefaultMutableTreeNode, node: AgorTreeNode) {
-            val swing = DefaultMutableTreeNode(NodeRef(node.kind, node.id, node.label))
+            val swing = DefaultMutableTreeNode(AgorNodeRef(node.kind, node.id, node.label))
             parent.add(swing)
             node.children.forEach { add(swing, it) }
         }
@@ -278,7 +410,7 @@ private class AgorToolWindow(private val project: Project) {
         socketClient?.disconnect()
         socketConnectionKey = connectionKey
         socketClient = AgorSocketClient(agorUrl, agorToken) {
-            SwingUtilities.invokeLater { refresh() }
+            SwingUtilities.invokeLater { scheduleBackgroundRefresh() }
         }.also {
             runCatching { it.connect() }
                 .onFailure { error ->
@@ -288,10 +420,68 @@ private class AgorToolWindow(private val project: Project) {
                 }
         }
     }
+
+    private fun scheduleBackgroundRefresh() {
+        socketRefreshTimer?.stop()
+        socketRefreshTimer = Timer(750) {
+            socketRefreshTimer = null
+            refresh()
+        }.apply {
+            isRepeats = false
+            start()
+        }
+    }
+
+    private fun selectedNodeRef(): AgorNodeRef? {
+        val node = tree.lastSelectedPathComponent as? DefaultMutableTreeNode ?: return null
+        return node.userObject as? AgorNodeRef
+    }
+
+    private fun focusedPromptSessionId(): String? {
+        val prompt = activePrompt ?: return null
+        return activePromptSessionId?.takeIf { prompt.isFocusOwner }
+    }
+
+    private fun expandedNodeRefs(): Set<AgorNodeKey> {
+        val root = tree.model.root as? DefaultMutableTreeNode ?: return emptySet()
+        val expanded = tree.getExpandedDescendants(TreePath(root.path)) ?: return emptySet()
+        return expanded.asSequence()
+            .mapNotNull { ((it.lastPathComponent as? DefaultMutableTreeNode)?.userObject as? AgorNodeRef)?.key() }
+            .toSet()
+    }
+
+    private fun expandNodeRefs(root: DefaultMutableTreeNode, refs: Set<AgorNodeKey>) {
+        refs.forEach { ref ->
+            findNodePath(root, ref)?.let { tree.expandPath(it) }
+        }
+    }
 }
 
-private data class NodeRef(val kind: AgorTreeNodeKind, val id: String, val label: String) {
+internal data class AgorNodeRef(val kind: AgorTreeNodeKind, val id: String, val label: String) {
     override fun toString(): String = label
+}
+
+internal data class AgorNodeKey(val kind: AgorTreeNodeKind, val id: String)
+
+internal fun AgorNodeRef.key(): AgorNodeKey = AgorNodeKey(kind, id)
+
+internal fun findNodePath(root: DefaultMutableTreeNode, target: AgorNodeRef): TreePath? {
+    return findNodePath(root, target.key())
+}
+
+internal fun findNodePath(root: DefaultMutableTreeNode, target: AgorNodeKey): TreePath? {
+    val stack = ArrayDeque<TreePath>()
+    stack.add(TreePath(root.path))
+    while (stack.isNotEmpty()) {
+        val path = stack.removeLast()
+        val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
+        val ref = node.userObject as? AgorNodeRef
+        if (ref?.kind == target.kind && ref.id == target.id) return path
+        for (index in 0 until node.childCount) {
+            stack.add(path.pathByAddingChild(node.getChildAt(index)))
+        }
+    }
+    return null
 }
 
 private fun String.escapeHtml(): String =
