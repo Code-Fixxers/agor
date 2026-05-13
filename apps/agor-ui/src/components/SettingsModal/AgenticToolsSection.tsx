@@ -548,11 +548,7 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
                       value={junieDefaultModel}
                       onChange={setJunieDefaultModel}
                       placeholder="gpt-5.2"
-                      filterOption={(inputValue, option) =>
-                        String(option?.value ?? '')
-                          .toLowerCase()
-                          .includes(inputValue.toLowerCase())
-                      }
+                      filterOption={false}
                     />
                   </Form.Item>
                   <Form.Item label="Faster model">
@@ -561,11 +557,7 @@ export const AgenticToolsSection: React.FC<AgenticToolsSectionProps> = ({ client
                       value={junieFasterModel}
                       onChange={setJunieFasterModel}
                       placeholder="gpt-5.4-mini"
-                      filterOption={(inputValue, option) =>
-                        String(option?.value ?? '')
-                          .toLowerCase()
-                          .includes(inputValue.toLowerCase())
-                      }
+                      filterOption={false}
                     />
                   </Form.Item>
                   <Form.Item label="LiteLLM API type">
