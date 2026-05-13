@@ -6,7 +6,7 @@
  */
 
 import type { Message, MessageID, SessionID, TaskID, UUID } from '@agor/core/types';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, gte, lte } from 'drizzle-orm';
 import type { Database } from '../client';
 import { deleteFrom, insert, select, update } from '../database-wrapper';
 import { type MessageInsert, type MessageRow, messages } from '../schema';
@@ -145,14 +145,17 @@ export class MessagesRepository {
   ): Promise<Message[]> {
     const rows = await select(this.db)
       .from(messages)
-      .where(eq(messages.session_id, sessionId))
+      .where(
+        and(
+          eq(messages.session_id, sessionId),
+          gte(messages.index, startIndex),
+          lte(messages.index, endIndex)
+        )
+      )
       .orderBy(messages.index)
       .all();
 
-    // Filter by range in memory (simpler than complex SQL)
-    return rows
-      .filter((r: MessageRow) => r.index >= startIndex && r.index <= endIndex)
-      .map((r: MessageRow) => this.rowToMessage(r));
+    return rows.map((r: MessageRow) => this.rowToMessage(r));
   }
 
   /**
