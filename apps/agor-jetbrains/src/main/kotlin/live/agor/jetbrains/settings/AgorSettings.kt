@@ -14,6 +14,7 @@ import com.intellij.openapi.components.Storage
 class AgorSettings : PersistentStateComponent<AgorSettings.StateData> {
     data class StateData(
         var agorUrl: String = "http://localhost:3030",
+        var splitLayoutMode: String = "auto",
     )
 
     private var state = StateData()

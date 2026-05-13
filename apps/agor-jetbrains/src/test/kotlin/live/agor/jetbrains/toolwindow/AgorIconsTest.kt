@@ -15,6 +15,7 @@ class AgorIconsTest {
         assertNotNull(AgorIcons.Spawn)
         assertNotNull(AgorIcons.Approve)
         assertNotNull(AgorIcons.Deny)
+        assertNotNull(AgorIcons.Layout)
         assertNotNull(AgorIcons.Settings)
     }
 }

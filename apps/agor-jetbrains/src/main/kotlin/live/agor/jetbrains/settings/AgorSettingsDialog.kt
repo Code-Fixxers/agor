@@ -2,9 +2,11 @@ package live.agor.jetbrains.settings
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
+import live.agor.jetbrains.toolwindow.AgorSplitLayoutMode
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Insets
+import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
@@ -15,6 +17,12 @@ class AgorSettingsDialog(project: Project?) : DialogWrapper(project) {
     private val settings = AgorSettings.getInstance()
     private val agorUrl = JTextField(settings.state.agorUrl, 34)
     private val agorToken = JPasswordField(settings.agorToken.orEmpty(), 34)
+    private val splitLayoutMode = JComboBox(AgorSplitLayoutMode.entries.toTypedArray()).apply {
+        renderer = javax.swing.DefaultListCellRenderer().apply {
+            horizontalAlignment = JLabel.LEFT
+        }
+        selectedItem = AgorSplitLayoutMode.fromId(settings.state.splitLayoutMode)
+    }
 
     init {
         title = "Agor Settings"
@@ -27,11 +35,13 @@ class AgorSettingsDialog(project: Project?) : DialogWrapper(project) {
             addSection("Agor", row++)
             addRow("Server URL or IP", agorUrl, row++)
             addRow("User API key", agorToken, row++)
+            addRow("Tool window layout", splitLayoutMode, row++)
         }
 
     override fun doOKAction() {
         val state = settings.state
         state.agorUrl = agorUrl.text.trim()
+        state.splitLayoutMode = (splitLayoutMode.selectedItem as? AgorSplitLayoutMode ?: AgorSplitLayoutMode.AUTO).id
         settings.agorToken = agorToken.passwordText().ifBlank { null }
         super.doOKAction()
     }

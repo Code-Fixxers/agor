@@ -13,6 +13,7 @@ internal object AgorIcons {
     val Spawn = icon("spawn")
     val Approve = icon("approve")
     val Deny = icon("deny")
+    val Layout = icon("layout")
     val Settings = icon("settings")
 
     private fun icon(name: String) = IconLoader.getIcon("/icons/actions/$name.svg", AgorIcons::class.java)

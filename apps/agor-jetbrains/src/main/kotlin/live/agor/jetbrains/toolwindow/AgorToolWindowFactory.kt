@@ -58,7 +58,7 @@ private val LOG = Logger.getInstance(AgorToolWindowFactory::class.java)
 
 class AgorToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val view = runCatching { AgorToolWindow(project) }
+        val view = runCatching { AgorToolWindow(project, toolWindow) }
             .onFailure { LOG.error("Failed to initialize Agor tool window", it) }
             .getOrNull()
         val component = view?.component ?: fallbackPanel("Agor failed to initialize. See the JetBrains IDE log for details.")
@@ -69,10 +69,11 @@ class AgorToolWindowFactory : ToolWindowFactory {
 
 }
 
-private class AgorToolWindow(private val project: Project) {
+private class AgorToolWindow(private val project: Project, private val toolWindow: ToolWindow) {
     private val settings = AgorSettings.getInstance()
     private val tree = Tree(DefaultMutableTreeNode("Agor"))
     private val inspector = JPanel(BorderLayout(8, 8))
+    private lateinit var splitPane: JSplitPane
     private var snapshot = AgorSnapshot()
     private var socketClient: AgorSocketClient? = null
     private var socketConnectionKey: Pair<String, String?>? = null
@@ -84,15 +85,12 @@ private class AgorToolWindow(private val project: Project) {
     val component: JPanel = JPanel(BorderLayout())
 
     init {
-        tree.minimumSize = Dimension(260, 300)
         tree.isRootVisible = false
         tree.showsRootHandles = true
         tree.border = JBUI.Borders.empty(6)
         tree.addTreeSelectionListener { showSelection() }
         tree.cellRenderer = AgorTreeRenderer { snapshot }
         TreeSpeedSearch(tree)
-
-        inspector.border = JBUI.Borders.customLine(JBColor.border(), 0, 1, 0, 0)
 
         val actions = DefaultActionGroup().apply {
             add(object : DumbAwareAction("Refresh", "Refresh Agor", AgorIcons.Refresh) {
@@ -104,6 +102,9 @@ private class AgorToolWindow(private val project: Project) {
             add(object : DumbAwareAction("New Session", "Create an Agor session", AgorIcons.NewSession) {
                 override fun actionPerformed(event: AnActionEvent) = selectedWorktree()?.let { showNewSession(it) } ?: showText("Agor", "Select a worktree first.")
             })
+            add(object : DumbAwareAction("Layout", "Cycle Agor split layout", AgorIcons.Layout) {
+                override fun actionPerformed(event: AnActionEvent) = cycleSplitLayout()
+            })
             addSeparator()
             add(object : DumbAwareAction("Settings", "Configure Agor", AgorIcons.Settings) {
                 override fun actionPerformed(event: AnActionEvent) = showSettings()
@@ -113,13 +114,13 @@ private class AgorToolWindow(private val project: Project) {
             targetComponent = component
         }
 
-        val split = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, JBScrollPane(tree), inspector).apply {
-            resizeWeight = 0.36
+        splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, JBScrollPane(tree), inspector).apply {
             dividerSize = JBUI.scale(3)
             border = JBUI.Borders.empty()
         }
         component.add(toolbar.component, BorderLayout.NORTH)
-        component.add(split, BorderLayout.CENTER)
+        component.add(splitPane, BorderLayout.CENTER)
+        applySplitLayout()
         showEmptyInspector()
     }
 
@@ -476,11 +477,36 @@ private class AgorToolWindow(private val project: Project) {
 
     private fun showSettings() {
         if (AgorSettingsDialog(project).showAndGet()) {
+            applySplitLayout()
             socketClient?.disconnect()
             socketClient = null
             socketConnectionKey = null
             refresh()
         }
+    }
+
+    private fun cycleSplitLayout() {
+        val next = when (AgorSplitLayoutMode.fromId(settings.state.splitLayoutMode)) {
+            AgorSplitLayoutMode.AUTO -> AgorSplitLayoutMode.STACKED
+            AgorSplitLayoutMode.STACKED -> AgorSplitLayoutMode.SIDE_BY_SIDE
+            AgorSplitLayoutMode.SIDE_BY_SIDE -> AgorSplitLayoutMode.AUTO
+        }
+        settings.state.splitLayoutMode = next.id
+        applySplitLayout()
+    }
+
+    private fun applySplitLayout() {
+        val layout = AgorSplitLayout.resolve(settings.state.splitLayoutMode, toolWindow.anchor)
+        splitPane.orientation = layout.splitPaneOrientation
+        splitPane.resizeWeight = layout.resizeWeight
+        tree.minimumSize = layout.treeMinimumSize
+        inspector.border = if (layout.splitPaneOrientation == JSplitPane.HORIZONTAL_SPLIT) {
+            JBUI.Borders.customLine(JBColor.border(), 0, 1, 0, 0)
+        } else {
+            JBUI.Borders.customLine(JBColor.border(), 1, 0, 0, 0)
+        }
+        splitPane.revalidate()
+        splitPane.repaint()
     }
 
     private fun detailPanel(kicker: String, title: String, lines: List<String>): JPanel {

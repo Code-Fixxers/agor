@@ -2,8 +2,10 @@ package live.agor.jetbrains.settings
 
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.ui.DialogPanel
+import com.intellij.ui.dsl.builder.bindItem
 import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.panel
+import live.agor.jetbrains.toolwindow.AgorSplitLayoutMode
 import javax.swing.JComponent
 
 class AgorSettingsConfigurable : SearchableConfigurable {
@@ -26,6 +28,13 @@ class AgorSettingsConfigurable : SearchableConfigurable {
                 }
                 row("User API key") {
                     passwordField().bindText(::agorTokenDraft)
+                }
+                row("Tool window layout") {
+                    comboBox(AgorSplitLayoutMode.entries.toList())
+                        .bindItem(
+                            { AgorSplitLayoutMode.fromId(state.splitLayoutMode) },
+                            { state.splitLayoutMode = (it ?: AgorSplitLayoutMode.AUTO).id },
+                        )
                 }
             }
         }

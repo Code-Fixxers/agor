@@ -23,6 +23,7 @@ yarn-error.log*
 .idea/
 .vscode/
 .gradle/
+.kotlin/
 .intellijPlatform/
 *.swp
 *.swo
