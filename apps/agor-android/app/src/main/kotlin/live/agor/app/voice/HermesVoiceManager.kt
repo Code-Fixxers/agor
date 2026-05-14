@@ -2,6 +2,7 @@ package live.agor.app.voice
 
 import android.content.Context
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import live.agor.app.util.LogEntry
 import live.agor.app.auth.SecureTokenStore
 import live.agor.app.data.HermesSessionEvent
@@ -54,7 +56,7 @@ data class HermesVoiceState(
  */
 class HermesVoiceManager(
     private val context: Context,
-    tokens: SecureTokenStore,
+    private val tokens: SecureTokenStore,
     private val sessions: HermesSessionStore,
     private val models: VoiceModelManager = VoiceModelManager(context),
 ) {
@@ -75,6 +77,10 @@ class HermesVoiceManager(
     private var streamBuffer = ""
     private var streamedCurrentReply = false
     private var hermesRunning = false
+    private var liveKitStream: WhisperLiveKitStream? = null
+    private val liveKitWebmRecorder = WhisperLiveKitWebmRecorder(context, scope)
+    private var liveKitFinalTranscript: CompletableDeferred<String?>? = null
+    private var lastLiveKitTranscript = ""
 
     init {
         vad.onSpeechStart = {
@@ -82,6 +88,7 @@ class HermesVoiceManager(
                 tts.stop()
                 audio.startBuffering(vad.config.preRollMillis)
                 setPhase(HermesVoicePhase.Recording)
+                startLiveKitWebmIfNeeded()
             } else {
                 AppLogger.log(
                     "Hermes voice ignored speech start while phase=${_state.value.phase}",
@@ -112,6 +119,15 @@ class HermesVoiceManager(
                     phase = HermesVoicePhase.Error,
                     errorMessage = "Voice processing failed: ${it.message}",
                 )
+            }
+        }
+        audio.onPcmFrame = { samples ->
+            val stream = liveKitStream
+            if (stream?.useAudioWorklet == true) {
+                runCatching { stream.sendPcm(samples) }
+                    .onFailure {
+                        AppLogger.log("Hermes voice streaming PCM failed: ${it.message}", LogLevel.WARNING, "Voice")
+                    }
             }
         }
         tts.onSpeechFinished = {
@@ -182,6 +198,7 @@ class HermesVoiceManager(
         modelPreparationJob = null
         transcriptionJob = null
         reviewJob = null
+        stopLiveKitStream()
         pauseCapture()
         tts.stop()
         streamBuffer = ""
@@ -205,6 +222,7 @@ class HermesVoiceManager(
         modelPreparationJob = null
         transcriptionJob = null
         reviewJob = null
+        stopLiveKitStream()
         pauseCapture()
         tts.stop()
         streamBuffer = ""
@@ -290,7 +308,9 @@ class HermesVoiceManager(
         if (!_state.value.enabled || hermesRunning) return
         if (_state.value.phase == HermesVoicePhase.Listening || _state.value.phase == HermesVoicePhase.Recording) return
         setPhase(HermesVoicePhase.LoadingModels)
+        startLiveKitStream()
         if (!audio.start()) {
+            stopLiveKitStream()
             vad.stop()
             _state.value = _state.value.copy(
                 enabled = false,
@@ -321,14 +341,28 @@ class HermesVoiceManager(
     }
 
     private fun pauseCapture() {
+        liveKitWebmRecorder.stop()
         audio.stop()
         vad.stop()
     }
 
     private suspend fun transcribeCurrentBuffer() {
         setPhase(HermesVoicePhase.Transcribing)
+        liveKitWebmRecorder.stop()
+        val finalTranscript = liveKitFinalTranscript
+        liveKitStream?.finish()
         val pcm = audio.stopBufferingAndDrain()
+        val liveText = finalTranscript
+            ?.let { withTimeoutOrNull(LIVEKIT_FINAL_TIMEOUT_MS) { it.await() } }
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        stopLiveKitStream()
         pauseCapture()
+        if (liveText != null) {
+            AppLogger.log("Hermes voice transcript accepted from whisperlivekit: ${liveText.take(120)}", LogLevel.INFO, "Voice")
+            reviewTranscript(liveText)
+            return
+        }
         if (pcm.isEmpty()) {
             AppLogger.log("Hermes voice transcription skipped: empty audio buffer", LogLevel.WARNING, "Voice")
             startCaptureIfNeeded()
@@ -351,6 +385,10 @@ class HermesVoiceManager(
             return
         }
         AppLogger.log("Hermes voice transcript accepted from ${result.source}: ${text.take(120)}", LogLevel.INFO, "Voice")
+        reviewTranscript(text)
+    }
+
+    private fun reviewTranscript(text: String) {
         _state.value = _state.value.copy(phase = HermesVoicePhase.Reviewing, pendingTranscript = text)
         reviewJob?.cancel()
         reviewJob = scope.launch {
@@ -358,6 +396,58 @@ class HermesVoiceManager(
             val latest = _state.value.pendingTranscript.orEmpty()
             if (latest.isNotBlank()) sendTranscript(latest)
         }
+    }
+
+    private fun startLiveKitStream() {
+        val url = tokens.remoteWhisperUrl?.takeIf { it.isNotBlank() } ?: return
+        stopLiveKitStream()
+        lastLiveKitTranscript = ""
+        val finalTranscript = CompletableDeferred<String?>()
+        liveKitFinalTranscript = finalTranscript
+        liveKitStream = WhisperLiveKitClient(url, tokens.remoteWhisperToken).open(
+            onTranscript = { partial ->
+                val cleaned = partial.trim()
+                if (cleaned.isBlank() || cleaned == lastLiveKitTranscript) return@open
+                lastLiveKitTranscript = cleaned
+                if (_state.value.phase == HermesVoicePhase.Recording || _state.value.phase == HermesVoicePhase.Reviewing) {
+                    _state.value = _state.value.copy(pendingTranscript = cleaned)
+                }
+            },
+            onFinalTranscript = { final ->
+                val cleaned = final.trim()
+                if (cleaned.isNotBlank()) {
+                    AppLogger.log("Hermes voice WhisperLiveKit final available: chars=${cleaned.length}", LogLevel.DEBUG, "Voice")
+                    if (!finalTranscript.isCompleted) finalTranscript.complete(cleaned)
+                    if (_state.value.phase == HermesVoicePhase.Recording || _state.value.phase == HermesVoicePhase.Reviewing) {
+                        _state.value = _state.value.copy(pendingTranscript = cleaned)
+                    }
+                }
+            },
+            onFailure = {
+                if (!finalTranscript.isCompleted) finalTranscript.complete(null)
+                liveKitStream = null
+                liveKitWebmRecorder.stop()
+            },
+        )
+    }
+
+    private fun startLiveKitWebmIfNeeded() {
+        val stream = liveKitStream
+        if (stream?.isConnected != true || stream.useAudioWorklet == true) return
+        if (liveKitWebmRecorder.start(stream)) {
+            AppLogger.log("Hermes voice WhisperLiveKit WebM stream active", LogLevel.DEBUG, "Voice")
+        } else {
+            AppLogger.log("Hermes voice WhisperLiveKit WebM stream unavailable; fallback transcriber remains active", LogLevel.WARNING, "Voice")
+        }
+    }
+
+    private fun stopLiveKitStream() {
+        liveKitWebmRecorder.stop()
+        liveKitStream?.close()
+        liveKitStream = null
+        liveKitFinalTranscript?.takeUnless { it.isCompleted }?.complete(null)
+        liveKitFinalTranscript = null
+        lastLiveKitTranscript = ""
     }
 
     private fun sendTranscript(text: String) {
@@ -447,6 +537,7 @@ class HermesVoiceManager(
 
     private companion object {
         const val REVIEW_DELAY_MS = 5_000L
+        const val LIVEKIT_FINAL_TIMEOUT_MS = 8_000L
         const val MAX_TTS_CHARS = 600
     }
 
