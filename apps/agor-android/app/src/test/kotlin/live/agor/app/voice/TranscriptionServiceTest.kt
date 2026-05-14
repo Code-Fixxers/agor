@@ -44,6 +44,75 @@ class TranscriptionServiceTest {
         assertEquals("wss://voice.example.test/base/asr", url)
     }
 
+    @Test
+    fun whisperLiveKitFullStateReplacesTranscriptInsteadOfAppending() {
+        val state = WhisperLiveKitTranscriptState()
+
+        val first = state.handle(
+            """
+            {
+              "status": "active_transcription",
+              "lines": [
+                {"text": "Reactor startup sequence activated by site personnel."}
+              ],
+              "buffer_transcription": ""
+            }
+            """.trimIndent(),
+        )
+        val repeated = state.handle(
+            """
+            {
+              "status": "active_transcription",
+              "lines": [
+                {"text": "Reactor startup sequence activated by site personnel."}
+              ],
+              "buffer_transcription": "Please leave the core chamber."
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(
+            "Reactor startup sequence activated by site personnel.",
+            (first as WhisperLiveKitMessage.Transcript).text,
+        )
+        assertEquals(
+            "Reactor startup sequence activated by site personnel. Please leave the core chamber.",
+            (repeated as WhisperLiveKitMessage.Transcript).text,
+        )
+    }
+
+    @Test
+    fun whisperLiveKitReadyToStopEmitsFinalFullStateTranscript() {
+        val state = WhisperLiveKitTranscriptState()
+        state.handle(
+            """
+            {
+              "status": "active_transcription",
+              "lines": [
+                {"text": "Reactor startup sequence activated by site personnel."}
+              ],
+              "buffer_transcription": "Please leave the core chamber as the reactor is being formed."
+            }
+            """.trimIndent(),
+        )
+
+        val update = state.handle("""{"type":"ready_to_stop"}""")
+
+        assertEquals(
+            "Reactor startup sequence activated by site personnel. Please leave the core chamber as the reactor is being formed.",
+            (update as WhisperLiveKitMessage.Transcript).text,
+        )
+        assertTrue(update.isFinal)
+    }
+
+    @Test
+    fun whisperLiveKitConfigSelectsWebmWhenAudioWorkletDisabled() {
+        val update = WhisperLiveKitTranscriptState()
+            .handle("""{"type":"config","useAudioWorklet":false,"mode":"full"}""")
+
+        assertEquals(false, (update as WhisperLiveKitMessage.Config).useAudioWorklet)
+    }
+
     private fun ByteArray.decodeAscii(start: Int, end: Int): String {
         return copyOfRange(start, end).toString(Charsets.US_ASCII)
     }

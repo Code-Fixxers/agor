@@ -204,6 +204,7 @@ Legend:
 - [x] Regular Agor chat has one-shot prompt dictation through `PromptVoiceInputController`.
 - [x] Prompt dictation uses microphone permission gating.
 - [x] Prompt dictation uses AudioRecord capture, rolling buffer, Silero ONNX VAD, WhisperLiveKit streaming/remote transcription, and local whisper.cpp fallback.
+- [x] Prompt dictation streams WhisperLiveKit `/asr` using full-state transcript replacement and WebM/Opus chunks when the server advertises MediaRecorder mode.
 - [x] Prompt dictation strips common transcription artifacts.
 - [x] Prompt dictation shows phase, live transcript, and audio level.
 - [x] Whisper and VAD model download flows exist.

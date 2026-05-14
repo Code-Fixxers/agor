@@ -62,6 +62,7 @@ class PromptVoiceInputController(
     private var transcriptionJob: Job? = null
     private var liveTranscriptionJob: Job? = null
     private var liveKitStream: WhisperLiveKitStream? = null
+    private val liveKitWebmRecorder = WhisperLiveKitWebmRecorder(context, scope)
     private var lastPartialTranscript = ""
 
     init {
@@ -223,6 +224,7 @@ class PromptVoiceInputController(
         setPhase(PromptVoicePhase.Transcribing)
         liveTranscriptionJob?.cancel()
         liveTranscriptionJob = null
+        liveKitWebmRecorder.stop()
         val pcm = audio.stopBufferingAndDrain()
         stopLiveKitStream()
         stopCapture()
@@ -258,8 +260,19 @@ class PromptVoiceInputController(
     }
 
     private fun startLiveTranscription() {
-        if (liveKitStream?.isConnected == true) {
-            AppLogger.log("Prompt voice rolling REST partials skipped; WhisperLiveKit stream is active", LogLevel.DEBUG, "Voice")
+        val stream = liveKitStream
+        if (stream?.isConnected == true) {
+            if (stream.useAudioWorklet == true) {
+                AppLogger.log("Prompt voice rolling REST partials skipped; WhisperLiveKit PCM stream is active", LogLevel.DEBUG, "Voice")
+                return
+            }
+            if (liveKitWebmRecorder.start(stream)) {
+                AppLogger.log("Prompt voice rolling REST partials skipped; WhisperLiveKit WebM stream is active", LogLevel.DEBUG, "Voice")
+                return
+            }
+            AppLogger.log("Prompt voice WebM live stream unavailable; using rolling REST partials", LogLevel.WARNING, "Voice")
+        }
+        if (liveTranscriptionJob?.isActive == true) {
             return
         }
         liveTranscriptionJob?.cancel()
@@ -304,6 +317,7 @@ class PromptVoiceInputController(
     }
 
     private fun stopLiveKitStream() {
+        liveKitWebmRecorder.stop()
         liveKitStream?.close()
         liveKitStream = null
     }
