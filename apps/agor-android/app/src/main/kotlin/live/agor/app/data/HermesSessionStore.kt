@@ -114,10 +114,21 @@ class HermesSessionStore(
         return assistantTurnId
     }
 
-    suspend fun appendAssistantDelta(sessionId: String, turnId: String, delta: String) {
+    suspend fun appendAssistantDelta(
+        sessionId: String,
+        turnId: String,
+        delta: String,
+        replaceExisting: Boolean = false,
+        emitTextEvent: Boolean = true,
+    ) {
         if (delta.isEmpty()) return
-        updateTurn(sessionId, turnId) { turn -> turn.copy(content = turn.content + delta, streaming = true) }
-        _events.tryEmit(HermesSessionEvent.TextDelta(sessionId, turnId, delta))
+        updateTurn(sessionId, turnId) { turn ->
+            turn.copy(
+                content = if (replaceExisting) delta else turn.content + delta,
+                streaming = true,
+            )
+        }
+        if (emitTextEvent) _events.tryEmit(HermesSessionEvent.TextDelta(sessionId, turnId, delta))
     }
 
     suspend fun appendProgress(sessionId: String, turnId: String, label: String) {

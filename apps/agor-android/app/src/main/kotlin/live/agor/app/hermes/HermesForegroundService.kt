@@ -67,7 +67,7 @@ class HermesForegroundService : Service() {
             val session = container.hermesSessions.getSession(sessionId)
             ?: container.hermesSessions.createSession(prompt)
             val turnId = container.hermesSessions.beginTurn(session.id, prompt, attachments)
-            val reply = StringBuilder()
+            val streamText = HermesStreamTextState()
             var completed = false
             try {
                 container.hermesClient.responseStream(
@@ -76,9 +76,27 @@ class HermesForegroundService : Service() {
                     imageDataUrls = imageDataUrls,
                 ).collect { event ->
                     when (event) {
+                        is HermesResponseEvent.ReasoningDelta -> {
+                            streamText.onReasoningDelta(event.text)?.let { update ->
+                                container.hermesSessions.appendAssistantDelta(
+                                    sessionId = session.id,
+                                    turnId = turnId,
+                                    delta = update.text,
+                                    replaceExisting = update.replaceExisting,
+                                    emitTextEvent = update.emitTextEvent,
+                                )
+                            }
+                        }
                         is HermesResponseEvent.TextDelta -> {
-                            reply.append(event.text)
-                            container.hermesSessions.appendAssistantDelta(session.id, turnId, event.text)
+                            streamText.onTextDelta(event.text)?.let { update ->
+                                container.hermesSessions.appendAssistantDelta(
+                                    sessionId = session.id,
+                                    turnId = turnId,
+                                    delta = update.text,
+                                    replaceExisting = update.replaceExisting,
+                                    emitTextEvent = update.emitTextEvent,
+                                )
+                            }
                         }
                         is HermesResponseEvent.Progress -> {
                             container.hermesSessions.appendProgress(session.id, turnId, event.label)
@@ -89,7 +107,7 @@ class HermesForegroundService : Service() {
                                 sessionId = session.id,
                                 turnId = turnId,
                                 responseId = event.responseId,
-                                finalText = event.outputText.ifBlank { reply.toString() },
+                                finalText = event.outputText.ifBlank { streamText.finalText },
                             )
                         }
                         is HermesResponseEvent.Failed -> throw IllegalStateException(event.message)
@@ -100,7 +118,7 @@ class HermesForegroundService : Service() {
                         sessionId = session.id,
                         turnId = turnId,
                         responseId = null,
-                        finalText = reply.toString(),
+                        finalText = streamText.finalText,
                     )
                 }
                 val completedSession = container.hermesSessions.getSession(session.id)

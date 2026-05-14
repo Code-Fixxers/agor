@@ -16,6 +16,16 @@ class HermesResponseEventParserTest {
     }
 
     @Test
+    fun parsesReasoningDeltaFromResponsesStream() {
+        val event = HermesResponseEventParser.parse(
+            "response.reasoning_text.delta",
+            """{"type":"response.reasoning_text.delta","delta":"Thinking"}""",
+        )
+
+        assertEquals(HermesResponseEvent.ReasoningDelta("Thinking"), event)
+    }
+
+    @Test
     fun parsesCompletedOutputTextFromNestedResponse() {
         val event = HermesResponseEventParser.parse(
             "response.completed",

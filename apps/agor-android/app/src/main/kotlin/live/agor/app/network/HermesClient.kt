@@ -697,6 +697,10 @@ internal object HermesResponseEventParser {
         val obj = runCatching { JSONObject(payload) }.getOrNull() ?: return null
         val type = obj.optString("type", eventName.orEmpty())
         return when {
+            type == "response.reasoning_text.delta" -> {
+                val delta = obj.optString("delta", obj.optString("text", ""))
+                if (delta.isBlank()) null else HermesResponseEvent.ReasoningDelta(delta)
+            }
             type == "response.output_text.delta" -> {
                 val delta = obj.optString("delta", obj.optString("text", ""))
                 if (delta.isBlank()) null else HermesResponseEvent.TextDelta(delta)
@@ -753,6 +757,7 @@ internal object HermesResponseEventParser {
 }
 
 sealed interface HermesResponseEvent {
+    data class ReasoningDelta(val text: String) : HermesResponseEvent
     data class TextDelta(val text: String) : HermesResponseEvent
     data class Progress(val label: String) : HermesResponseEvent
     data class Completed(val responseId: String?, val outputText: String) : HermesResponseEvent
