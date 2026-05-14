@@ -194,7 +194,7 @@ If `SKIP_WHISPER=1` is set or the local assets are otherwise unavailable, the
 JNI library still compiles as a no-op stub and the voice UI reports local
 transcription as unavailable. Settings default remote transcription to
 WhisperLiveKit at `http://100.101.157.56:8090`, using `/asr` for live
-streaming and `/v1/audio/transcriptions` for final/fallback transcription.
+streaming and final transcripts before falling back to REST/local transcription.
 
 Model downloads use HTTPS from the upstream project release/source locations:
 the Whisper `ggml-base.en.bin` artifact is fetched from the `ggerganov/whisper.cpp`

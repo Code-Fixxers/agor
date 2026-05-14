@@ -1,6 +1,7 @@
 package live.agor.app.voice
 
 import android.content.Context
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -12,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import live.agor.app.auth.SecureTokenStore
 import live.agor.app.util.AppLogger
 import live.agor.app.util.LogLevel
@@ -62,6 +64,7 @@ class PromptVoiceInputController(
     private var transcriptionJob: Job? = null
     private var liveTranscriptionJob: Job? = null
     private var liveKitStream: WhisperLiveKitStream? = null
+    private var liveKitFinalTranscript: CompletableDeferred<String?>? = null
     private val liveKitWebmRecorder = WhisperLiveKitWebmRecorder(context, scope)
     private var lastPartialTranscript = ""
 
@@ -225,9 +228,15 @@ class PromptVoiceInputController(
         liveTranscriptionJob?.cancel()
         liveTranscriptionJob = null
         liveKitWebmRecorder.stop()
+        val liveFinal = finishLiveKitStreamAndAwaitFinal()
         val pcm = audio.stopBufferingAndDrain()
-        stopLiveKitStream()
         stopCapture()
+        if (!liveFinal.isNullOrBlank()) {
+            AppLogger.log("Prompt voice transcript accepted from remote-stream: ${liveFinal.take(120)}", LogLevel.INFO, "Voice")
+            onTranscribed?.invoke(liveFinal)
+            resetState()
+            return
+        }
         if (pcm.isEmpty()) {
             AppLogger.log("Prompt voice transcription skipped: empty audio buffer", LogLevel.WARNING, "Voice")
             resetState()
@@ -299,6 +308,8 @@ class PromptVoiceInputController(
     private fun startLiveKitStream() {
         val url = tokens.remoteWhisperUrl?.takeIf { it.isNotBlank() } ?: return
         stopLiveKitStream()
+        val finalTranscript = CompletableDeferred<String?>()
+        liveKitFinalTranscript = finalTranscript
         liveKitStream = WhisperLiveKitClient(url, tokens.remoteWhisperToken).open(
             onTranscript = { partial ->
                 val cleaned = partial.trim()
@@ -309,15 +320,38 @@ class PromptVoiceInputController(
             },
             onFinalTranscript = { final ->
                 AppLogger.log("Prompt voice WhisperLiveKit final available: chars=${final.length}", LogLevel.DEBUG, "Voice")
+                finalTranscript.complete(final.trim().takeIf { it.isNotBlank() })
             },
             onFailure = {
+                finalTranscript.complete(null)
+                liveKitWebmRecorder.stop()
                 liveKitStream = null
+                if (liveKitFinalTranscript === finalTranscript) {
+                    liveKitFinalTranscript = null
+                }
             },
         )
     }
 
+    private suspend fun finishLiveKitStreamAndAwaitFinal(): String? {
+        val stream = liveKitStream ?: return null
+        val finalTranscript = liveKitFinalTranscript
+        stream.finish()
+        val text = if (finalTranscript != null) {
+            withTimeoutOrNull(LIVE_KIT_FINAL_TIMEOUT_MS) {
+                finalTranscript.await()
+            }?.trim()?.takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
+        stopLiveKitStream()
+        return text
+    }
+
     private fun stopLiveKitStream() {
         liveKitWebmRecorder.stop()
+        liveKitFinalTranscript?.complete(null)
+        liveKitFinalTranscript = null
         liveKitStream?.close()
         liveKitStream = null
     }
@@ -335,5 +369,6 @@ class PromptVoiceInputController(
         const val LIVE_TRANSCRIPTION_INITIAL_DELAY_MS = 1_200L
         const val LIVE_TRANSCRIPTION_INTERVAL_MS = 1_200L
         const val LIVE_TRANSCRIPTION_MIN_SAMPLES = AudioCapture.SAMPLE_RATE
+        const val LIVE_KIT_FINAL_TIMEOUT_MS = 8_000L
     }
 }

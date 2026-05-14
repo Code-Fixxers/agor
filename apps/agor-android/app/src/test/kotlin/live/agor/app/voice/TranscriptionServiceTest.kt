@@ -113,6 +113,14 @@ class TranscriptionServiceTest {
         assertEquals(false, (update as WhisperLiveKitMessage.Config).useAudioWorklet)
     }
 
+    @Test
+    fun whisperLiveKitErrorStatusSurfacesServerError() {
+        val update = WhisperLiveKitTranscriptState()
+            .handle("""{"status":"error","error":"FFmpeg failed to start."}""")
+
+        assertEquals("FFmpeg failed to start.", (update as WhisperLiveKitMessage.Error).message)
+    }
+
     private fun ByteArray.decodeAscii(start: Int, end: Int): String {
         return copyOfRange(start, end).toString(Charsets.US_ASCII)
     }

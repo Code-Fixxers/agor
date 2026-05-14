@@ -99,9 +99,17 @@ class WhisperLiveKitStream internal constructor(
         ws.send(bytes.toByteString(0, length))
     }
 
+    fun finish() {
+        val ws = webSocket ?: return
+        if (!isConnected) return
+        runCatching { ws.send(ByteString.EMPTY) }
+            .onFailure {
+                AppLogger.log("WhisperLiveKit finish signal failed: ${it.message}", LogLevel.WARNING, "Voice")
+            }
+    }
+
     fun close() {
         if (!closed.compareAndSet(false, true)) return
-        runCatching { webSocket?.send(ByteString.EMPTY) }
         runCatching { webSocket?.close(1000, "voice input stopped") }
         connected.set(false)
         webSocket = null
@@ -157,6 +165,10 @@ class WhisperLiveKitStream internal constructor(
             is WhisperLiveKitMessage.Metadata -> AppLogger.log("WhisperLiveKit metadata received", LogLevel.DEBUG, "Voice")
             is WhisperLiveKitMessage.SpeechStarted -> AppLogger.log("WhisperLiveKit speech started", LogLevel.DEBUG, "Voice")
             is WhisperLiveKitMessage.UtteranceEnd -> AppLogger.log("WhisperLiveKit utterance ended", LogLevel.DEBUG, "Voice")
+            is WhisperLiveKitMessage.Error -> {
+                AppLogger.log("WhisperLiveKit server error: ${update.message}", LogLevel.WARNING, "Voice")
+                onFailure(update.message)
+            }
             is WhisperLiveKitMessage.Ignored -> AppLogger.log("WhisperLiveKit WS message ignored: type=${update.type}", LogLevel.DEBUG, "Voice")
         }
     }
@@ -171,6 +183,7 @@ private fun pcmBytes(samples: ShortArray): ByteArray {
 internal sealed interface WhisperLiveKitMessage {
     data class Config(val useAudioWorklet: Boolean) : WhisperLiveKitMessage
     data class Transcript(val text: String, val isFinal: Boolean) : WhisperLiveKitMessage
+    data class Error(val message: String) : WhisperLiveKitMessage
     data object Metadata : WhisperLiveKitMessage
     data object SpeechStarted : WhisperLiveKitMessage
     data object UtteranceEnd : WhisperLiveKitMessage
@@ -183,6 +196,12 @@ internal class WhisperLiveKitTranscriptState {
 
     fun handle(text: String): WhisperLiveKitMessage {
         val obj = JSONObject(text)
+        if (obj.optString("status") == "error") {
+            val message = obj.optString("error")
+                .ifBlank { obj.optString("message") }
+                .ifBlank { "WhisperLiveKit server error" }
+            return WhisperLiveKitMessage.Error(message)
+        }
         return when (val type = obj.optString("type")) {
             "config" -> WhisperLiveKitMessage.Config(obj.optBoolean("useAudioWorklet"))
             "Metadata" -> WhisperLiveKitMessage.Metadata

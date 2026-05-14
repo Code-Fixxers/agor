@@ -205,11 +205,13 @@ Legend:
 - [x] Prompt dictation uses microphone permission gating.
 - [x] Prompt dictation uses AudioRecord capture, rolling buffer, Silero ONNX VAD, WhisperLiveKit streaming/remote transcription, and local whisper.cpp fallback.
 - [x] Prompt dictation streams WhisperLiveKit `/asr` using full-state transcript replacement and WebM/Opus chunks when the server advertises MediaRecorder mode.
+- [x] Prompt dictation accepts WhisperLiveKit `/asr` final transcripts before falling back to REST/local transcription.
 - [x] Prompt dictation strips common transcription artifacts.
 - [x] Prompt dictation shows phase, live transcript, and audio level.
 - [x] Whisper and VAD model download flows exist.
 - [x] Hermes has app-scoped auto-listening through `HermesVoiceManager`.
 - [x] Hermes voice supports transcript review, delayed auto-send, TTS status, streamed sentence TTS, skip TTS, foreground/background pause/resume, and local diagnostics.
+- [x] Hermes voice uses WhisperLiveKit `/asr` streaming transcripts before falling back to REST/local transcription.
 - [x] `ContinuousVoiceService` exists for session-scoped foreground voice infrastructure.
 - [x] Wire full regular Agor session voice mode to the chat UI and ChatViewModel through `ContinuousVoiceService`.
 - [x] Add session-scoped voice ownership, background continuation, and a floating return button when viewing another session.
