@@ -33,8 +33,10 @@ async function ensureAgorHome(): Promise<void> {
   const agorHome = getAgorHome();
   try {
     await fs.access(agorHome);
+    await fs.chmod(agorHome, 0o700);
   } catch {
-    await fs.mkdir(agorHome, { recursive: true });
+    await fs.mkdir(agorHome, { recursive: true, mode: 0o700 });
+    await fs.chmod(agorHome, 0o700);
   }
 }
 
@@ -108,7 +110,8 @@ export async function saveConfig(config: AgorConfig): Promise<void> {
     noRefs: true,
   });
 
-  await fs.writeFile(configPath, content, 'utf-8');
+  await fs.writeFile(configPath, content, { encoding: 'utf-8', mode: 0o600 });
+  await fs.chmod(configPath, 0o600);
 }
 
 /**
