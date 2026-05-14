@@ -6,7 +6,6 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import live.agor.app.auth.SecureTokenStore
 import live.agor.app.data.HermesSession
 import live.agor.app.data.HermesTurn
 import live.agor.app.util.AppLogger
@@ -32,7 +31,13 @@ import kotlin.text.Charsets
  * MCP servers — the Android app does not see or call them, it just sees the
  * assistant's final natural-language replies.
  */
-class HermesClient(private val tokens: SecureTokenStore) {
+interface HermesTokenStore {
+    var hermesUrl: String?
+    var hermesToken: String?
+    var hermesModel: String?
+}
+
+class HermesClient(private val tokens: HermesTokenStore) {
     private enum class RemoteHistoryMode {
         Unknown,
         Conversations,
@@ -52,7 +57,7 @@ class HermesClient(private val tokens: SecureTokenStore) {
     @Volatile
     private var remoteHistoryMode: RemoteHistoryMode = RemoteHistoryMode.Unknown
 
-    val baseUrl: String? get() = tokens.hermesUrl?.trimEnd('/')
+    val baseUrl: String? get() = tokens.hermesUrl?.let { normalizeHermesRootUrl(it) }
     val isConfigured: Boolean get() = !tokens.hermesUrl.isNullOrBlank() && !tokens.hermesToken.isNullOrBlank()
     val model: String get() = tokens.hermesModel?.takeIf { it.isNotBlank() } ?: DEFAULT_MODEL
 
@@ -61,27 +66,30 @@ class HermesClient(private val tokens: SecureTokenStore) {
      * Returns the list of advertised model names if reachable, null if not.
      */
     suspend fun probe(url: String, bearer: String): List<String>? = kotlinx.coroutines.withContext(Dispatchers.IO) {
-        val cleaned = url.trim().trimEnd('/')
+        val cleaned = normalizeHermesRootUrl(url)
         runCatching {
             val endpoint = "$cleaned/v1/models".toHttpUrlOrNull() ?: return@runCatching null
             val req = Request.Builder()
                 .url(endpoint)
-                .header("Authorization", "Bearer $bearer")
+                .hermesAuthHeaders(bearer)
                 .header("Accept", "application/json")
                 .get()
                 .build()
             http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) {
                     if (resp.code == 401 || resp.code == 403) {
-                        throw IOException(hermesHttpErrorMessage(resp.code, resp.body?.string().orEmpty().take(400)))
+                        throw IOException(hermesHttpErrorMessage(resp.code, text.take(400)))
                     }
                     return@use null
                 }
-                val body = resp.body?.string().orEmpty()
-                val payload = json.decodeFromString(ModelsResponse.serializer(), body)
+                val payload = json.decodeFromString(ModelsResponse.serializer(), text)
                 payload.data?.map { it.id }
             }
-        }.getOrNull()
+        }.getOrElse { error ->
+            if (error is IOException) throw error
+            null
+        }
     }
 
     /** Send a non-streaming completion request and return the assistant message. */
@@ -102,7 +110,7 @@ class HermesClient(private val tokens: SecureTokenStore) {
         val raw = json.encodeToString(ChatCompletionRequest.serializer(), body)
         val req = Request.Builder()
             .url("$url/v1/chat/completions")
-            .header("Authorization", "Bearer $token")
+            .hermesAuthHeaders(token)
             .header("Accept", "application/json")
             .post(raw.toRequestBody(jsonMedia))
             .build()
@@ -147,7 +155,7 @@ class HermesClient(private val tokens: SecureTokenStore) {
         val reqBody = json.encodeToString(HermesWebhookRequest.serializer(), HermesWebhookRequest(prompt))
         val req = Request.Builder()
             .url("$url/webhooks/$encodedRoute")
-            .header("Authorization", "Bearer $token")
+            .hermesAuthHeaders(token)
             .header("Accept", "application/json")
             .post(reqBody.toRequestBody(jsonMedia))
             .build()
@@ -187,7 +195,7 @@ class HermesClient(private val tokens: SecureTokenStore) {
         val raw = json.encodeToString(ChatCompletionRequest.serializer(), body)
         val req = Request.Builder()
             .url("$url/v1/chat/completions")
-            .header("Authorization", "Bearer $bearer")
+            .hermesAuthHeaders(bearer)
             .header("Accept", "text/event-stream")
             .post(raw.toRequestBody(jsonMedia))
             .build()
@@ -220,7 +228,7 @@ class HermesClient(private val tokens: SecureTokenStore) {
         val started = System.nanoTime()
         val req = Request.Builder()
             .url("$url/v1/capabilities")
-            .header("Authorization", "Bearer $bearer")
+            .hermesAuthHeaders(bearer)
             .header("Accept", "application/json")
             .get()
             .build()
@@ -294,7 +302,7 @@ class HermesClient(private val tokens: SecureTokenStore) {
         )
         val req = Request.Builder()
             .url("$url/v1/responses")
-            .header("Authorization", "Bearer $bearer")
+            .hermesAuthHeaders(bearer)
             .header("Accept", "text/event-stream")
             .post(buildResponseRequest(conversationId, prompt, imageDataUrls).toRequestBody(jsonMedia))
             .build()
@@ -325,11 +333,11 @@ class HermesClient(private val tokens: SecureTokenStore) {
     }.flowOn(Dispatchers.IO)
 
     private fun requireConfig(): Pair<String, String> {
-        return requireConfig(tokens.hermesUrl?.trimEnd('/'), tokens.hermesToken)
+        return requireConfig(tokens.hermesUrl, tokens.hermesToken)
     }
 
     private fun requireConfig(rawUrl: String?, rawToken: String?): Pair<String, String> {
-        val u = rawUrl?.trimEnd('/') ?: tokens.hermesUrl?.trimEnd('/')
+        val u = rawUrl?.let { normalizeHermesRootUrl(it) } ?: tokens.hermesUrl?.let { normalizeHermesRootUrl(it) }
         val t = rawToken ?: tokens.hermesToken
         if (u.isNullOrBlank()) throw IOException("Hermes URL not configured")
         if (t.isNullOrBlank()) throw IOException("Hermes token not configured")
@@ -536,7 +544,7 @@ class HermesClient(private val tokens: SecureTokenStore) {
     private fun getJson(url: String, bearer: String, path: String): JSONObject {
         val req = Request.Builder()
             .url("$url$path")
-            .header("Authorization", "Bearer $bearer")
+            .hermesAuthHeaders(bearer)
             .header("Accept", "application/json")
             .get()
             .build()
@@ -670,8 +678,18 @@ class HermesClient(private val tokens: SecureTokenStore) {
     private fun encodeQuery(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.toString())
 
     companion object {
-        const val DEFAULT_MODEL = "hermes-agent"
+        const val DEFAULT_MODEL = "hermes-model"
     }
+}
+
+internal fun normalizeHermesRootUrl(rawUrl: String): String {
+    val cleaned = rawUrl.trim().trimEnd('/')
+    return if (cleaned.endsWith("/v1", ignoreCase = true)) cleaned.dropLast(3) else cleaned
+}
+
+private fun Request.Builder.hermesAuthHeaders(bearer: String): Request.Builder {
+    return header("Authorization", "Bearer $bearer")
+        .header("x-litellm-api-key", bearer)
 }
 
 internal object HermesResponseEventParser {

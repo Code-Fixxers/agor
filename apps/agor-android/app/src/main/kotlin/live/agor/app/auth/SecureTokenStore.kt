@@ -6,6 +6,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import live.agor.app.models.DrawerSessionFilter
 import live.agor.app.network.AgorTokenStore
+import live.agor.app.network.HermesTokenStore
 import live.agor.app.voice.DEFAULT_REMOTE_WHISPER_URL
 
 /**
@@ -13,7 +14,7 @@ import live.agor.app.voice.DEFAULT_REMOTE_WHISPER_URL
  * Backed by Android Jetpack Security; survives reboot before first unlock thanks to
  * MasterKey AES_GCM defaults.
  */
-class SecureTokenStore(context: Context) : AgorTokenStore {
+class SecureTokenStore(context: Context) : AgorTokenStore, HermesTokenStore {
 
     private val prefs: SharedPreferences = run {
         val key = MasterKey.Builder(context)
@@ -54,18 +55,18 @@ class SecureTokenStore(context: Context) : AgorTokenStore {
         get() = prefs.getString(KEY_SAVED_API_KEY, null)
         set(value) = prefs.edit().putString(KEY_SAVED_API_KEY, value?.takeIf { it.isNotBlank() }).apply()
 
-    /** Hermes Agent base URL (OpenAI-compatible /v1 endpoint). e.g. http://100.101.157.56:8642 */
-    var hermesUrl: String?
+    /** Hermes/OpenAI-compatible base URL. Accepts either a server root or a `/v1` gateway URL. */
+    override var hermesUrl: String?
         get() = prefs.getString(KEY_HERMES_URL, null)
         set(value) = prefs.edit().putString(KEY_HERMES_URL, value).apply()
 
-    /** Hermes API server bearer token (sops-stored hermes_api_server_key on the host). */
-    var hermesToken: String?
+    /** LiteLLM virtual key or direct Hermes bearer token. */
+    override var hermesToken: String?
         get() = prefs.getString(KEY_HERMES_TOKEN, null)
         set(value) = prefs.edit().putString(KEY_HERMES_TOKEN, value).apply()
 
-    /** Hermes model name as advertised by API_SERVER_MODEL_NAME. Default: hermes-agent. */
-    var hermesModel: String?
+    /** Hermes model name as advertised by the gateway. Default: hermes-model. */
+    override var hermesModel: String?
         get() = prefs.getString(KEY_HERMES_MODEL, null)
         set(value) = prefs.edit().putString(KEY_HERMES_MODEL, value).apply()
 

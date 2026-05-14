@@ -252,7 +252,7 @@ Legend:
 ## Hermes-Specific Work
 
 - [x] Hermes connection setup screen exists.
-- [x] Hermes client probes `/v1/models`.
+- [x] Hermes client probes `/v1/models`, accepts either root URLs or OpenAI `/v1` base URLs, and sends LiteLLM-compatible auth headers.
 - [x] Hermes supports OpenAI-compatible chat completions and streaming.
 - [x] Hermes supports server-side tool/MCP behavior as an opaque assistant capability.
 - [x] Hermes local session store persists turns by configured Hermes URL.
