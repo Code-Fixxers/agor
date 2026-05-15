@@ -14,11 +14,14 @@ import live.agor.app.util.LogLevel
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.EOFException
 import java.io.IOException
+import java.net.ProtocolException
 import java.util.concurrent.TimeUnit
 import java.net.URLEncoder
 import kotlin.text.Charsets
@@ -51,6 +54,9 @@ class HermesClient(private val tokens: HermesTokenStore) {
         // Hermes can sit on a tool-call hop chain for a while; be patient.
         .readTimeout(180, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
+        // LiteLLM/Caddy SSE is more predictable over HTTP/1.1; OkHttp's HTTP/2
+        // stream handling can surface gateway closes as "unexpected end of stream".
+        .protocols(listOf(Protocol.HTTP_1_1))
         .build()
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
@@ -207,7 +213,7 @@ class HermesClient(private val tokens: HermesTokenStore) {
                 throw IOException(hermesHttpErrorMessage(resp.code, text))
             }
             val source = resp.body?.source() ?: throw IOException("empty response")
-            while (!source.exhausted()) {
+            while (true) {
                 val line = source.readUtf8Line() ?: break
                 if (line.isEmpty() || !line.startsWith("data:")) continue
                 val payload = line.removePrefix("data:").trim()
@@ -303,7 +309,31 @@ class HermesClient(private val tokens: HermesTokenStore) {
                 LogLevel.INFO,
                 "Hermes",
             )
-            events = streamChatCompletionEvents(url, bearer, messages)
+            val streamResult = runCatching {
+                streamChatCompletionEvents(url, bearer, messages)
+            }.getOrElse { error ->
+                if (!isPrematureStreamEnd(error)) throw error
+                AppLogger.log(
+                    "Hermes chat-completions stream ended early; retrying non-streaming completion: ${error.message}",
+                    LogLevel.WARNING,
+                    "Hermes",
+                )
+                val fallback = chat(messages = messages, rawUrl = url, bearer = bearer, rawModel = model)
+                emit(HermesResponseEvent.Completed(responseId = null, outputText = fallback))
+                AppLogger.log("Hermes chat-completions fallback completed chars=${fallback.length}", LogLevel.INFO, "Hermes")
+                return@flow
+            }
+            events = streamResult.events
+            if (!streamResult.completed) {
+                AppLogger.log(
+                    "Hermes chat-completions stream closed without DONE; retrying non-streaming completion",
+                    LogLevel.WARNING,
+                    "Hermes",
+                )
+                val fallback = chat(messages = messages, rawUrl = url, bearer = bearer, rawModel = model)
+                emit(HermesResponseEvent.Completed(responseId = null, outputText = fallback))
+                return@flow
+            }
             AppLogger.log("Hermes chat-completions stream closed events=$events elapsed=${elapsedMs(started)}ms", LogLevel.INFO, "Hermes")
             return@flow
         }
@@ -326,7 +356,7 @@ class HermesClient(private val tokens: HermesTokenStore) {
             }
             val source = resp.body?.source() ?: throw IOException("empty response")
             var eventName: String? = null
-            while (!source.exhausted()) {
+            while (true) {
                 val line = source.readUtf8Line() ?: break
                 when {
                     line.startsWith("event:") -> eventName = line.removePrefix("event:").trim()
@@ -348,8 +378,9 @@ class HermesClient(private val tokens: HermesTokenStore) {
         url: String,
         bearer: String,
         messages: List<HermesMessage>,
-    ): Int {
+    ): ChatStreamResult {
         var events = 0
+        var completed = false
         val body = ChatCompletionRequest(
             model = model,
             messages = messages,
@@ -368,19 +399,44 @@ class HermesClient(private val tokens: HermesTokenStore) {
                 throw IOException(hermesHttpErrorMessage(resp.code, text))
             }
             val source = resp.body?.source() ?: throw IOException("empty response")
-            while (!source.exhausted()) {
+            while (true) {
                 val line = source.readUtf8Line() ?: break
                 if (line.isEmpty() || !line.startsWith("data:")) continue
                 val payload = line.removePrefix("data:").trim()
-                if (payload == "[DONE]") break
+                if (payload == "[DONE]") {
+                    completed = true
+                    break
+                }
                 HermesResponseEventParser.parse(null, payload)?.let {
                     events += 1
                     emit(it)
                 }
             }
         }
-        return events
+        return ChatStreamResult(events = events, completed = completed)
     }
+
+    private fun isPrematureStreamEnd(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            if (current is EOFException || current is ProtocolException) return true
+            val message = current.message.orEmpty().lowercase()
+            if (
+                "unexpected end of stream" in message ||
+                "unexpected end of input" in message ||
+                "stream was reset" in message
+            ) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
+    }
+
+    private data class ChatStreamResult(
+        val events: Int,
+        val completed: Boolean,
+    )
 
     private fun requireConfig(): Pair<String, String> {
         return requireConfig(tokens.hermesUrl, tokens.hermesToken)
@@ -746,6 +802,7 @@ internal object HermesResponseEventParser {
     fun parse(eventName: String?, payload: String): HermesResponseEvent? {
         val obj = runCatching { JSONObject(payload) }.getOrNull() ?: return null
         parseChatCompletionChunk(obj)?.let { return it }
+        if (obj.has("error")) return HermesResponseEvent.Failed(extractFailureMessage(obj))
         val type = obj.optString("type", eventName.orEmpty())
         return when {
             type == "response.reasoning_text.delta" -> {

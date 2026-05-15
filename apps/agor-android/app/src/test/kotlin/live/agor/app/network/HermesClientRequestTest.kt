@@ -4,6 +4,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.toList
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -105,6 +106,50 @@ class HermesClientRequestTest {
         assertTrue(body.contains("previous prompt"))
         assertTrue(body.contains("previous answer"))
         assertTrue(body.contains(""""stream":true"""))
+        server.shutdown()
+    }
+
+    @Test
+    fun responseStreamFallsBackToNonStreamingChatCompletionWhenSseEndsUnexpectedly() = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setChunkedBody(
+                    """
+                    data: {"object":"chat.completion.chunk","choices":[{"delta":{"reasoning_content":"Thinking"}}]}
+
+                    """.trimIndent(),
+                    8,
+                )
+                .setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY),
+        )
+        server.enqueue(
+            MockResponse()
+                .setBody("""{"choices":[{"message":{"role":"assistant","content":"fallback answer"}}]}"""),
+        )
+        val client = HermesClient(
+            FakeHermesTokenStore(
+                hermesUrl = server.url("/v1").toString(),
+                hermesToken = "litellm-key",
+                hermesModel = "hermes-model",
+            ),
+        )
+
+        val events = client.responseStream(
+            conversationId = "agor-android-session",
+            prompt = "new prompt",
+            messages = listOf(HermesMessage("user", "new prompt")),
+        ).toList()
+
+        assertEquals(
+            listOf(HermesResponseEvent.Completed(responseId = null, outputText = "fallback answer")),
+            events,
+        )
+        assertEquals("/v1/chat/completions", server.takeRequest().path)
+        val fallbackRequest = server.takeRequest()
+        assertEquals("/v1/chat/completions", fallbackRequest.path)
+        assertTrue(!fallbackRequest.body.readUtf8().contains(""""stream":true"""))
         server.shutdown()
     }
 

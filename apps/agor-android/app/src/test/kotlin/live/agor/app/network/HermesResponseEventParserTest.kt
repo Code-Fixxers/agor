@@ -66,6 +66,16 @@ class HermesResponseEventParserTest {
     }
 
     @Test
+    fun parsesFailureMessageFromChatCompletionErrorPayload() {
+        val event = HermesResponseEventParser.parse(
+            null,
+            """{"error":{"message":"upstream closed"}}""",
+        )
+
+        assertEquals(HermesResponseEvent.Failed("upstream closed"), event)
+    }
+
+    @Test
     fun ignoresUnknownOrBlankDeltas() {
         assertNull(HermesResponseEventParser.parse("response.output_text.delta", """{"delta":""}"""))
         assertNull(HermesResponseEventParser.parse("response.created", """{"type":"response.created"}"""))
