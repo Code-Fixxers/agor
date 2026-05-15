@@ -54,9 +54,6 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
                 container.socket.connect()
             }
         }
-        viewModelScope.launch {
-            container.voiceModels.ensureVadModelDownloaded()
-        }
         container.socket.onAuthFailure = {
             container.authService.softLogout()
             container.socket.disconnect()

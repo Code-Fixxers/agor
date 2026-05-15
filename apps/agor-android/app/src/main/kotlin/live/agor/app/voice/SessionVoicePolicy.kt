@@ -21,11 +21,12 @@ data class SessionVoiceState(
     val phase: SessionVoicePhase = SessionVoicePhase.Disabled,
     val pendingTranscript: String? = null,
     val audioLevel: Float = 0f,
-    val threshold: Float = VadConfig().threshold,
+    val threshold: Float = 1f,
     val settings: SessionVoiceSettings = SessionVoiceSettings.Default,
     val errorMessage: String? = null,
     val needsWhisperDownload: Boolean = false,
     val modelDownloadInProgress: Boolean = false,
+    val transcriptionEndpoint: String? = null,
 )
 
 object SessionVoicePolicy {
@@ -41,7 +42,7 @@ object SessionVoicePolicy {
         if (!enabled) return SessionVoicePhase.Disabled
         return when {
             !promptable && current in promptableCapturePhases -> SessionVoicePhase.Paused
-            promptable && current == SessionVoicePhase.Paused -> SessionVoicePhase.Listening
+            promptable && current == SessionVoicePhase.Paused -> SessionVoicePhase.Recording
             else -> current
         }
     }

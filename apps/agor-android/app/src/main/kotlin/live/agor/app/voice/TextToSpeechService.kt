@@ -20,8 +20,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - speakFinal(): clears queue + speaks immediately (the "agent's response" path).
  * - pause()/resume(): pauses TTS while user is recording, resumes after.
  *
- * The service reports a "speaking" state so the VAD pipeline can avoid recording
- * while the agent is talking (Voice Mode echo prevention).
+ * The service reports a "speaking" state so voice mode can avoid recording while
+ * the agent is talking.
  */
 class TextToSpeechService(context: Context) {
 

@@ -21,8 +21,8 @@ import java.nio.ShortBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * AudioRecord wrapper that delivers PCM frames to a VAD and (optionally) records the
- * confirmed-speech window into a contiguous Short buffer for transcription.
+ * AudioRecord wrapper that delivers PCM frames and records a contiguous Short
+ * buffer for transcription.
  *
  * Sample rate is 16kHz mono — required by Whisper and matches AudioRecord's lowest
  * documented support floor across Android devices.

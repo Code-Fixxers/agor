@@ -19,7 +19,7 @@ Legend:
 ## Current Snapshot
 
 - [x] Android is a real native client: Gradle, Compose, Material 3, REST, Socket.IO, local persistence, chat, file browsing, prompt attachments, prompt dictation, Hermes, notifications, and APK updates exist.
-- [x] Android is already better than the original iOS baseline in several places: API-key login, biometric API-key unlock, Hermes orchestration, Silero ONNX VAD, WhisperLiveKit streaming transcription, local Whisper fallback, in-app APK updates, and Hermes voice/TTS.
+- [x] Android is already better than the original iOS baseline in several places: API-key login, biometric API-key unlock, Hermes orchestration, LiteLLM/WhisperLiveKit transcription with fallback, local Whisper fallback, in-app APK updates, and Hermes voice/TTS.
 - [x] The highest-value parity work is implemented: task-centric chat loading, full regular-session voice mode, background recovery, crash logs, and broader QA coverage.
 - [x] Android now ships as two side-by-side product variants: Hermes+Agor (`live.agor.app`) and Hermes-only (`live.agor.hermes`).
 
@@ -203,12 +203,13 @@ Legend:
 
 - [x] Regular Agor chat has one-shot prompt dictation through `PromptVoiceInputController`.
 - [x] Prompt dictation uses microphone permission gating.
-- [x] Prompt dictation uses AudioRecord capture, rolling buffer, Silero ONNX VAD, WhisperLiveKit streaming/remote transcription, and local whisper.cpp fallback.
+- [x] Prompt dictation starts raw AudioRecord capture immediately after the microphone toggle, without VAD gating.
+- [x] Prompt dictation uses LiteLLM `https://llm.bitp.cz` by default with `whisper-1`, realtime endpoint display, REST fallback, and local whisper.cpp fallback.
 - [x] Prompt dictation streams WhisperLiveKit `/asr` using full-state transcript replacement and WebM/Opus chunks when the server advertises MediaRecorder mode.
 - [x] Prompt dictation accepts WhisperLiveKit `/asr` final transcripts before falling back to REST/local transcription.
 - [x] Prompt dictation strips common transcription artifacts.
 - [x] Prompt dictation shows phase, live transcript, and audio level.
-- [x] Whisper and VAD model download flows exist.
+- [x] Whisper model download flow exists for local fallback.
 - [x] Hermes has app-scoped auto-listening through `HermesVoiceManager`.
 - [x] Hermes voice supports transcript review, delayed auto-send, TTS status, streamed sentence TTS, skip TTS, foreground/background pause/resume, and local diagnostics.
 - [x] Hermes voice uses WhisperLiveKit `/asr` streaming transcripts before falling back to REST/local transcription.
@@ -219,9 +220,8 @@ Legend:
 - [x] Pause regular Agor listening while the agent is running or awaiting permission/input, then resume when promptable.
 - [x] Speak regular Agor status updates and assistant responses with Android TTS.
 - [x] Add ready-to-listen and recording-start tones.
-- [x] Add persisted voice settings: VAD sensitivity, silence-before-send, and reset-to-defaults.
-- [x] Apply voice settings to active voice services.
-- [x] Add tests for VAD threshold mapping, transcript cleanup, and voice state transitions.
+- [x] Remove VAD sensitivity/silence controls because voice recording is now explicit push-to-record.
+- [x] Add tests for transcript cleanup, default public LiteLLM Whisper config, and voice state transitions.
 
 ## Notifications and Background Recovery
 
@@ -277,7 +277,7 @@ Legend:
 - [x] Audit install-package permission, overlay permission, and remaining debug defaults before release.
 - [x] Add a user-facing policy for saved password/API-key behavior.
 - [x] Ensure logs redact tokens, API keys, and sensitive headers before export or attachment.
-- [x] Document local Whisper/VAD model download source and integrity behavior.
+- [x] Document local Whisper model download source and integrity behavior.
 
 ## Tests and QA
 

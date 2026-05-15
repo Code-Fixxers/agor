@@ -31,7 +31,7 @@ import java.lang.ref.WeakReference
 /**
  * Foreground service that owns regular Agor session voice mode.
  *
- * The UI talks to the companion controls, but the microphone, VAD, Whisper, TTS,
+ * The UI talks to the companion controls, but the microphone, Whisper, TTS,
  * wake lock, and foreground notification stay here so voice can continue when
  * the user leaves the chat screen.
  */
@@ -41,7 +41,6 @@ class ContinuousVoiceService : Service() {
 
     private lateinit var container: AppContainer
     private lateinit var audio: AudioCapture
-    private lateinit var vad: VoiceActivityDetector
     private lateinit var tts: TextToSpeechService
     private lateinit var transcription: TranscriptionService
     private var tones: ToneGenerator? = null
@@ -65,43 +64,16 @@ class ContinuousVoiceService : Service() {
         activeService = WeakReference(this)
         container = (application as AgorApplication).container
         audio = AudioCapture(this)
-        vad = VoiceActivityDetector(this, sharedState.value.settings.toVadConfig())
         tts = TextToSpeechService(this)
         transcription = TranscriptionService(this, container.tokenStore, container.voiceModels)
         tones = runCatching { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 55) }.getOrNull()
 
-        vad.onSpeechStart = {
-            if (sharedState.value.phase == SessionVoicePhase.Listening) {
-                playRecordingTone()
-                tts.stop()
-                audio.startBuffering(vad.config.preRollMillis)
-                updateState { it.copy(phase = SessionVoicePhase.Recording) }
-            } else {
-                AppLogger.log(
-                    "Session voice ignored speech start while phase=${sharedState.value.phase}",
-                    LogLevel.WARNING,
-                    "Voice",
-                )
-            }
-        }
-        vad.onSpeechEnd = {
-            transcriptionJob?.cancel()
-            transcriptionJob = scope.launch { transcribeCurrentBuffer() }
-        }
-        vad.onCalibrationComplete = {
-            if (sharedState.value.enabled && promptable) {
-                updateState { it.copy(phase = SessionVoicePhase.Listening) }
-            }
-        }
         audio.onFrame = { samples ->
             runCatching {
-                if (sharedState.value.phase != SessionVoicePhase.Speaking && promptable) {
-                    vad.process(samples)
-                }
                 updateState {
                     it.copy(
-                        audioLevel = vad.currentAudioLevel.value,
-                        threshold = vad.energyThreshold.value,
+                        audioLevel = normalizedAudioLevel(samples),
+                        threshold = 1f,
                     )
                 }
             }.onFailure { error ->
@@ -116,11 +88,7 @@ class ContinuousVoiceService : Service() {
             }
         }
         tts.onSpeechFinished = {
-            if (sharedState.value.enabled && promptable) {
-                startCaptureIfNeeded()
-            } else if (sharedState.value.enabled) {
-                updateState { it.copy(phase = SessionVoicePhase.Paused) }
-            }
+            endSession()
         }
         settingsJob = scope.launch {
             container.sessionVoiceSettings.settings.collect { applySettings(it) }
@@ -150,7 +118,7 @@ class ContinuousVoiceService : Service() {
                 enabled = true,
                 activeSessionId = sessionId,
                 phase = SessionVoicePhase.Preparing,
-                threshold = vad.config.threshold,
+                threshold = 1f,
                 settings = it.settings,
             )
         }
@@ -177,6 +145,15 @@ class ContinuousVoiceService : Service() {
 
     fun stopVoiceMode() = endSession()
 
+    fun finishRecording() {
+        if (sharedState.value.phase != SessionVoicePhase.Recording) {
+            endSession()
+            return
+        }
+        transcriptionJob?.cancel()
+        transcriptionJob = scope.launch { transcribeCurrentBuffer() }
+    }
+
     private fun startCaptureIfNeeded() {
         if (!sharedState.value.enabled || !promptable) {
             updateState { it.copy(phase = SessionVoicePhase.Paused) }
@@ -189,7 +166,6 @@ class ContinuousVoiceService : Service() {
         }
         updateState { it.copy(phase = SessionVoicePhase.Preparing, errorMessage = null) }
         if (!audio.start()) {
-            vad.stop()
             updateState {
                 it.copy(
                     phase = SessionVoicePhase.Error,
@@ -198,14 +174,14 @@ class ContinuousVoiceService : Service() {
             }
             return
         }
-        vad.start()
         playReadyTone()
-        updateState { it.copy(phase = SessionVoicePhase.Listening) }
+        playRecordingTone()
+        audio.startBuffering(0)
+        updateState { it.copy(phase = SessionVoicePhase.Recording) }
     }
 
     private fun pauseCapture() {
         audio.stop()
-        vad.stop()
     }
 
     private suspend fun transcribeCurrentBuffer() {
@@ -213,7 +189,7 @@ class ContinuousVoiceService : Service() {
         val pcm = audio.stopBufferingAndDrain()
         pauseCapture()
         if (pcm.isEmpty()) {
-            startCaptureIfNeeded()
+            endSession()
             return
         }
         val result = transcription.transcribe(pcm)
@@ -228,7 +204,7 @@ class ContinuousVoiceService : Service() {
                     )
                 }
             } else {
-                startCaptureIfNeeded()
+                endSession()
             }
             return
         }
@@ -237,6 +213,7 @@ class ContinuousVoiceService : Service() {
                 phase = SessionVoicePhase.Reviewing,
                 pendingTranscript = text,
                 errorMessage = null,
+                transcriptionEndpoint = result.endpoint ?: result.source,
             )
         }
         reviewJob?.cancel()
@@ -262,7 +239,7 @@ class ContinuousVoiceService : Service() {
         val trimmed = text.trim()
         if (trimmed.isBlank()) {
             updateState { it.copy(pendingTranscript = null) }
-            startCaptureIfNeeded()
+            endSession()
             return
         }
         reviewJob?.cancel()
@@ -303,8 +280,6 @@ class ContinuousVoiceService : Service() {
             pauseCapture()
             tts.stop()
             updateState { it.copy(phase = SessionVoicePhase.Paused, pendingTranscript = null) }
-        } else if (canPrompt && sharedState.value.phase == SessionVoicePhase.Paused) {
-            startCaptureIfNeeded()
         }
     }
 
@@ -328,7 +303,7 @@ class ContinuousVoiceService : Service() {
     private fun skipTts() {
         if (sharedState.value.phase != SessionVoicePhase.Speaking) return
         tts.stop()
-        if (promptable) startCaptureIfNeeded() else updateState { it.copy(phase = SessionVoicePhase.Paused) }
+        endSession()
     }
 
     private fun updatePendingTranscript(text: String) {
@@ -340,23 +315,16 @@ class ContinuousVoiceService : Service() {
         reviewJob?.cancel()
         reviewJob = null
         updateState { it.copy(pendingTranscript = null) }
-        startCaptureIfNeeded()
+        endSession()
     }
 
     private fun applySettings(settings: SessionVoiceSettings) {
-        val config = settings.toVadConfig()
-        vad.config = config
         updateState {
             it.copy(
                 settings = settings,
-                threshold = config.threshold,
+                threshold = 1f,
             )
         }
-        AppLogger.log(
-            "Session voice settings applied sensitivity=${settings.vadSensitivity} silence=${settings.silenceBeforeSendMillis}ms",
-            LogLevel.INFO,
-            "Voice",
-        )
     }
 
     private fun downloadWhisperModel() {
@@ -373,7 +341,6 @@ class ContinuousVoiceService : Service() {
             runCatching { transcription.downloadOnDeviceModel() }
                 .onSuccess {
                     updateState { it.copy(modelDownloadInProgress = false) }
-                    startCaptureIfNeeded()
                 }
                 .onFailure { error ->
                     updateState {
@@ -455,6 +422,14 @@ class ContinuousVoiceService : Service() {
 
         fun stop(context: Context) {
             activeService?.get()?.stopVoiceMode()
+                ?: run {
+                    _sharedState.value = SessionVoiceState(settings = _sharedState.value.settings)
+                    context.stopService(Intent(context, ContinuousVoiceService::class.java))
+                }
+        }
+
+        fun finishOrStop(context: Context) {
+            activeService?.get()?.finishRecording()
                 ?: run {
                     _sharedState.value = SessionVoiceState(settings = _sharedState.value.settings)
                     context.stopService(Intent(context, ContinuousVoiceService::class.java))

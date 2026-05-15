@@ -371,7 +371,7 @@ class ChatViewModel(private val container: AppContainer, val sessionId: String) 
     }
 
     fun stopSessionVoiceMode() {
-        ContinuousVoiceService.stop(container.appContext)
+        ContinuousVoiceService.finishOrStop(container.appContext)
     }
 
     fun updateSessionVoiceTranscript(text: String) {

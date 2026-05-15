@@ -469,6 +469,14 @@ private fun VoiceStatusBar(
                     modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                 )
             }
+            state.transcriptionEndpoint?.takeIf { it.isNotBlank() }?.let { endpoint ->
+                Text(
+                    endpoint,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
             state.pendingTranscript?.let { transcript ->
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),

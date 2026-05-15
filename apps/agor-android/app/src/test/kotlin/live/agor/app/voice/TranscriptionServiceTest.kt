@@ -31,6 +31,12 @@ class TranscriptionServiceTest {
     }
 
     @Test
+    fun defaultRemoteWhisperUsesPublicLiteLlmGateway() {
+        assertEquals("https://llm.bitp.cz", DEFAULT_REMOTE_WHISPER_URL)
+        assertEquals("whisper-1", DEFAULT_REMOTE_WHISPER_MODEL)
+    }
+
+    @Test
     fun whisperLiveKitUrlUsesNativeAsrEndpoint() {
         val url = whisperLiveKitAsrUrl("http://100.101.157.56:8090")
 

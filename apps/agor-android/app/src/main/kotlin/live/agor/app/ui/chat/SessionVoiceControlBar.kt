@@ -14,7 +14,6 @@ import androidx.compose.material.icons.automirrored.filled.Forward
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Icon
@@ -22,7 +21,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -100,35 +98,13 @@ fun SessionVoiceControlBar(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Sensitivity",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Slider(
-                value = settings.vadSensitivity,
-                onValueChange = { onSettingsChange(settings.copy(vadSensitivity = it)) },
-                valueRange = 0f..1f,
-                modifier = Modifier.testTag("session-voice-sensitivity"),
-            )
-            Text(
-                "Silence ${(settings.silenceBeforeSendMillis / 1000.0).format1()}s",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Slider(
-                value = settings.silenceBeforeSendMillis.toFloat(),
-                onValueChange = { onSettingsChange(settings.copy(silenceBeforeSendMillis = it.toLong())) },
-                valueRange = SessionVoiceSettings.MIN_SILENCE_BEFORE_SEND_MS.toFloat()..
-                    SessionVoiceSettings.MAX_SILENCE_BEFORE_SEND_MS.toFloat(),
-                modifier = Modifier.testTag("session-voice-silence"),
-            )
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                IconButton(onClick = onResetSettings, modifier = Modifier.testTag("session-voice-reset-settings")) {
-                    Icon(Icons.Default.RestartAlt, contentDescription = "Reset voice settings")
-                }
+            state.transcriptionEndpoint?.takeIf { it.isNotBlank() }?.let { endpoint ->
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    endpoint,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -137,7 +113,7 @@ fun SessionVoiceControlBar(
 private fun sessionVoiceStatusLabel(state: SessionVoiceState): String = when (state.phase) {
     SessionVoicePhase.Disabled -> "Voice off"
     SessionVoicePhase.Preparing -> "Preparing voice..."
-    SessionVoicePhase.Listening -> "Listening"
+    SessionVoicePhase.Listening -> "Ready"
     SessionVoicePhase.Paused -> "Waiting for session"
     SessionVoicePhase.Recording -> "Recording"
     SessionVoicePhase.Transcribing -> "Transcribing"
@@ -145,10 +121,4 @@ private fun sessionVoiceStatusLabel(state: SessionVoiceState): String = when (st
     SessionVoicePhase.Sending -> "Sending"
     SessionVoicePhase.Speaking -> "Speaking"
     SessionVoicePhase.Error -> state.errorMessage ?: "Voice failed"
-}
-
-private fun Double.format1(): String = if (this >= 10) {
-    toInt().toString()
-} else {
-    "%.1f".format(this)
 }

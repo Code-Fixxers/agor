@@ -192,16 +192,17 @@ scripts/fetch-whisper-model.sh base.en
 
 If `SKIP_WHISPER=1` is set or the local assets are otherwise unavailable, the
 JNI library still compiles as a no-op stub and the voice UI reports local
-transcription as unavailable. Settings default remote transcription to
-WhisperLiveKit at `http://100.101.157.56:8090`, using `/asr` for live
-streaming and final transcripts before falling back to REST/local transcription.
+transcription as unavailable. Settings default remote transcription to the
+public LiteLLM gateway at `https://llm.bitp.cz` with model `whisper-1`. Voice
+mode attempts realtime `/asr` first, visibly reports the active transcription
+endpoint, then falls back to `/v1/audio/transcriptions` and finally local
+transcription when available.
 
 Model downloads use HTTPS from the upstream project release/source locations:
 the Whisper `ggml-base.en.bin` artifact is fetched from the `ggerganov/whisper.cpp`
-Hugging Face repository, and the Silero VAD ONNX file is fetched from the
-`snakers4/silero-vad` GitHub repository. Runtime downloads store files under
-app-private `filesDir/voice-models/` and only accept non-empty files today. There
-is no pinned checksum or signature verification yet, so release candidates should
+Hugging Face repository. Runtime downloads store files under app-private
+`filesDir/voice-models/` and only accept non-empty files today. There is no
+pinned checksum or signature verification yet, so release candidates should
 either ship vetted bundled assets or add checksum validation before treating
 runtime model refreshes as integrity-checked.
 
@@ -219,7 +220,7 @@ app/src/main/
 │   ├── network/                  # AgorClient, SocketService, StreamingService
 │   ├── auth/                     # AuthService, SecureTokenStore, ServerProfile
 │   ├── data/                     # SidebarCache (1h TTL JSON file)
-│   ├── voice/                    # VAD, TTS, AudioCapture, Whisper, foreground svc
+│   ├── voice/                    # TTS, AudioCapture, Whisper, foreground svc
 │   │   └── jni/WhisperJni.kt
 │   ├── notifications/
 │   ├── viewmodels/               # AppVM, NavigationVM, ChatVM, FileBrowserVM

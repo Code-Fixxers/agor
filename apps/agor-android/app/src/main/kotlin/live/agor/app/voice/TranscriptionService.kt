@@ -24,6 +24,7 @@ import org.json.JSONObject
 data class TranscriptionResult(
     val text: String,
     val source: String,
+    val endpoint: String? = null,
 )
 
 interface SpeechTranscriber {
@@ -148,6 +149,7 @@ class RemoteWhisperTranscriber(
             )
             .addFormDataPart("temperature", "0.0")
             .addFormDataPart("response_format", "json")
+            .addFormDataPart("model", DEFAULT_REMOTE_WHISPER_MODEL)
             .build()
         val openAiResult = runCatching {
             postTranscription("$baseUrl/v1/audio/transcriptions", body)
@@ -178,7 +180,7 @@ class RemoteWhisperTranscriber(
                 "Voice",
             )
             if (!resp.isSuccessful) throw WhisperHttpException(resp.code, "Whisper ${resp.code}: ${text.take(300)}")
-            TranscriptionResult(parseRemoteText(text), "remote")
+            TranscriptionResult(parseRemoteText(text), "remote", url)
         }
     }
 

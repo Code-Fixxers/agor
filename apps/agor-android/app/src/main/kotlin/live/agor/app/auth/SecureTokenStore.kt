@@ -95,8 +95,13 @@ class SecureTokenStore(context: Context) : AgorTokenStore, HermesTokenStore {
 
     /** Optional bearer token for the self-hosted WhisperLiveKit server. */
     var remoteWhisperToken: String?
-        get() = prefs.getString(KEY_REMOTE_WHISPER_TOKEN, null)
+        get() = prefs.getString(KEY_REMOTE_WHISPER_TOKEN, null) ?: hermesToken
         set(value) = prefs.edit().putString(KEY_REMOTE_WHISPER_TOKEN, value).apply()
+
+    /** Explicit Whisper token override; when blank, voice uses the Hermes LiteLLM key. */
+    var remoteWhisperTokenOverride: String?
+        get() = prefs.getString(KEY_REMOTE_WHISPER_TOKEN, null)
+        set(value) = prefs.edit().putString(KEY_REMOTE_WHISPER_TOKEN, value?.takeIf { it.isNotBlank() }).apply()
 
     var drawerSessionFilter: String
         get() = prefs.getString(KEY_DRAWER_SESSION_FILTER, null) ?: DrawerSessionFilter.SevenDays.token

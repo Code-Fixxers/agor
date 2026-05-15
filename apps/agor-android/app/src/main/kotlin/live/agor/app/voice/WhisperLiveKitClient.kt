@@ -28,6 +28,7 @@ class WhisperLiveKitClient(
     fun open(
         onTranscript: (String) -> Unit,
         onFinalTranscript: (String) -> Unit = {},
+        onConfig: (Boolean) -> Unit = {},
         onFailure: (String) -> Unit = {},
     ): WhisperLiveKitStream {
         val stream = WhisperLiveKitStream(
@@ -36,6 +37,7 @@ class WhisperLiveKitClient(
             http = http,
             onTranscript = onTranscript,
             onFinalTranscript = onFinalTranscript,
+            onConfig = onConfig,
             onFailure = onFailure,
         )
         stream.open()
@@ -60,6 +62,7 @@ class WhisperLiveKitStream internal constructor(
     private val http: OkHttpClient,
     private val onTranscript: (String) -> Unit,
     private val onFinalTranscript: (String) -> Unit,
+    private val onConfig: (Boolean) -> Unit,
     private val onFailure: (String) -> Unit,
 ) : WebSocketListener() {
     private val connected = AtomicBoolean(false)
@@ -152,6 +155,7 @@ class WhisperLiveKitStream internal constructor(
                 serverUseAudioWorklet = update.useAudioWorklet
                 val mode = if (update.useAudioWorklet) "PCM AudioWorklet" else "WebM MediaRecorder"
                 AppLogger.log("WhisperLiveKit config received: mode=$mode", LogLevel.INFO, "Voice")
+                onConfig(update.useAudioWorklet)
             }
             is WhisperLiveKitMessage.Transcript -> {
                 AppLogger.log(

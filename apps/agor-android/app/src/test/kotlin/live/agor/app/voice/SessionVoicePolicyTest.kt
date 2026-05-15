@@ -29,14 +29,14 @@ class SessionVoicePolicyTest {
     }
 
     @Test
-    fun pausedVoiceResumesListeningWhenPromptable() {
+    fun pausedVoiceResumesRecordingWhenPromptable() {
         val next = SessionVoicePolicy.phaseForPromptability(
             current = SessionVoicePhase.Paused,
             enabled = true,
             promptable = true,
         )
 
-        assertEquals(SessionVoicePhase.Listening, next)
+        assertEquals(SessionVoicePhase.Recording, next)
     }
 
     @Test

@@ -56,6 +56,7 @@ import live.agor.app.ui.common.findFragmentActivity
 import live.agor.app.ui.simpleViewModelFactory
 import live.agor.app.util.AppLogger
 import live.agor.app.voice.DEFAULT_REMOTE_WHISPER_URL
+import live.agor.app.voice.DIRECT_WHISPERLIVEKIT_URL
 import live.agor.app.voice.LEGACY_REMOTE_WHISPER_URL
 import live.agor.app.viewmodels.AppViewModel
 import live.agor.app.viewmodels.UpdateViewModel
@@ -588,13 +589,13 @@ internal fun WhisperServerRow() {
     var whisperUrl by remember {
         mutableStateOf(container.tokenStore.remoteWhisperUrl ?: DEFAULT_REMOTE_WHISPER_URL)
     }
-    var whisperToken by remember { mutableStateOf(container.tokenStore.remoteWhisperToken ?: "") }
+    var whisperToken by remember { mutableStateOf(container.tokenStore.remoteWhisperTokenOverride ?: "") }
     var message by remember { mutableStateOf<String?>(null) }
     val savedUrl = container.tokenStore.remoteWhisperUrl
 
     fun saveWhisperSettings() {
         container.tokenStore.remoteWhisperUrl = whisperUrl.trim().trimEnd('/').ifBlank { null }
-        container.tokenStore.remoteWhisperToken = whisperToken.trim().ifBlank { null }
+        container.tokenStore.remoteWhisperTokenOverride = whisperToken.trim().ifBlank { null }
         message = container.tokenStore.remoteWhisperUrl?.let { "Remote Whisper saved: $it" }
             ?: "Remote Whisper disabled. Local Whisper will be used if available."
     }
@@ -602,7 +603,7 @@ internal fun WhisperServerRow() {
     Text("Whisper transcription", style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(4.dp))
     Text(
-        "Voice mode uses your self-hosted WhisperLiveKit server for streaming transcription before falling back to local Whisper when available.",
+        "Voice mode uses LiteLLM Whisper at the public endpoint by default. Realtime WebSocket is attempted first when available, then REST and local fallback are used.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -617,13 +618,25 @@ internal fun WhisperServerRow() {
         TextButton(
             onClick = {
                 whisperUrl = DEFAULT_REMOTE_WHISPER_URL
-                message = "WhisperLiveKit selected. Save to apply."
+                message = "LiteLLM Whisper selected. Save to apply."
             },
             modifier = Modifier.weight(1f).testTag("settings-whisper-livekit"),
         ) {
-            Text("Use LiveKit")
+            Text("Use LiteLLM")
         }
         Spacer(Modifier.width(8.dp))
+        TextButton(
+            onClick = {
+                whisperUrl = DIRECT_WHISPERLIVEKIT_URL
+                message = "Direct WhisperLiveKit selected. Save to apply."
+            },
+            modifier = Modifier.weight(1f).testTag("settings-whisper-direct"),
+        ) {
+            Text("Use Direct")
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
         TextButton(
             onClick = {
                 whisperUrl = LEGACY_REMOTE_WHISPER_URL
@@ -633,6 +646,7 @@ internal fun WhisperServerRow() {
         ) {
             Text("Use Legacy")
         }
+        Spacer(Modifier.weight(1f))
     }
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(
@@ -655,6 +669,7 @@ internal fun WhisperServerRow() {
             message = null
         },
         label = { Text("Remote Whisper token") },
+        placeholder = { Text("Empty uses Hermes LiteLLM API key") },
         singleLine = true,
         visualTransformation = PasswordVisualTransformation(),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),

@@ -131,6 +131,15 @@ fun PromptInputBar(
                     },
                     modifier = Modifier.testTag("prompt-voice-status"),
                 )
+                voiceState.transcriptionEndpoint?.takeIf { it.isNotBlank() }?.let { endpoint ->
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = endpoint,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("prompt-voice-endpoint"),
+                    )
+                }
                 voiceState.liveTranscript?.takeIf { it.isNotBlank() }?.let { partial ->
                     Spacer(Modifier.height(2.dp))
                     Text(

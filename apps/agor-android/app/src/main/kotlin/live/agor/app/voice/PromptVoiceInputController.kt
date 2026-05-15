@@ -35,6 +35,7 @@ data class PromptVoiceInputState(
     val needsWhisperDownload: Boolean = false,
     val modelDownloadInProgress: Boolean = false,
     val liveTranscript: String? = null,
+    val transcriptionEndpoint: String? = null,
 )
 
 /**
@@ -51,10 +52,9 @@ class PromptVoiceInputController(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val audio = AudioCapture(context)
-    private val vad = VoiceActivityDetector(context, VadConfig())
     private val transcriber = TranscriptionService(context, tokens, models)
 
-    private val _state = MutableStateFlow(PromptVoiceInputState(threshold = vad.config.threshold))
+    private val _state = MutableStateFlow(PromptVoiceInputState(threshold = 1f))
     val state: StateFlow<PromptVoiceInputState> = _state.asStateFlow()
 
     var onTranscribed: ((String) -> Unit)? = null
@@ -69,31 +69,11 @@ class PromptVoiceInputController(
     private var lastPartialTranscript = ""
 
     init {
-        vad.onSpeechStart = {
-            if (_state.value.phase == PromptVoicePhase.Listening) {
-                audio.startBuffering(vad.config.preRollMillis)
-                setPhase(PromptVoicePhase.Recording)
-                startLiveTranscription()
-            } else {
-                AppLogger.log(
-                    "Prompt voice ignored speech start while phase=${_state.value.phase}",
-                    LogLevel.WARNING,
-                    "Voice",
-                )
-            }
-        }
-        vad.onSpeechEnd = {
-            liveTranscriptionJob?.cancel()
-            liveTranscriptionJob = null
-            transcriptionJob?.cancel()
-            transcriptionJob = scope.launch { transcribeCurrentBuffer() }
-        }
         audio.onFrame = { samples ->
             runCatching {
-                vad.process(samples)
                 _state.value = _state.value.copy(
-                    audioLevel = vad.currentAudioLevel.value,
-                    threshold = vad.energyThreshold.value,
+                    audioLevel = normalizedAudioLevel(samples),
+                    threshold = 1f,
                 )
             }.onFailure {
                 AppLogger.log("Prompt voice frame processing failed: ${it.message}", LogLevel.ERROR, "Voice")
@@ -129,9 +109,9 @@ class PromptVoiceInputController(
             phase = PromptVoicePhase.LoadingModels,
             errorMessage = null,
             needsWhisperDownload = false,
-            modelDownloadInProgress = true,
+            modelDownloadInProgress = false,
         )
-        prepareVadAndStartCapture()
+        startCapture()
     }
 
     fun stop() {
@@ -192,35 +172,19 @@ class PromptVoiceInputController(
         scope.cancel()
     }
 
-    private fun prepareVadAndStartCapture() {
-        modelPreparationJob?.cancel()
-        modelPreparationJob = scope.launch {
-            val vadReady = models.ensureVadModelDownloaded()
-            if (!vadReady) {
-                AppLogger.log(
-                    "Prompt voice continuing with energy fallback VAD",
-                    LogLevel.WARNING,
-                    "Voice",
-                )
-            }
-            _state.value = _state.value.copy(modelDownloadInProgress = false)
-            startCapture()
-        }
-    }
-
     private fun startCapture() {
         startLiveKitStream()
         if (!audio.start()) {
             stopLiveKitStream()
-            vad.stop()
             _state.value = _state.value.copy(
                 phase = PromptVoicePhase.Error,
                 errorMessage = "Microphone capture could not start. Check Android microphone permission/privacy indicators.",
             )
             return
         }
-        vad.start()
-        setPhase(PromptVoicePhase.Listening)
+        audio.startBuffering(0)
+        setPhase(PromptVoicePhase.Recording)
+        startLiveTranscription()
     }
 
     private suspend fun transcribeCurrentBuffer() {
@@ -233,6 +197,9 @@ class PromptVoiceInputController(
         stopCapture()
         if (!liveFinal.isNullOrBlank()) {
             AppLogger.log("Prompt voice transcript accepted from remote-stream: ${liveFinal.take(120)}", LogLevel.INFO, "Voice")
+            _state.value = _state.value.copy(
+                transcriptionEndpoint = "Realtime ${whisperLiveKitAsrUrl(tokens.remoteWhisperUrl ?: DEFAULT_REMOTE_WHISPER_URL)}",
+            )
             onTranscribed?.invoke(liveFinal)
             resetState()
             return
@@ -259,13 +226,13 @@ class PromptVoiceInputController(
             return
         }
         AppLogger.log("Prompt voice transcript accepted from ${result.source}: ${text.take(120)}", LogLevel.INFO, "Voice")
+        _state.value = _state.value.copy(transcriptionEndpoint = result.endpoint ?: result.source)
         onTranscribed?.invoke(text)
         resetState()
     }
 
     private fun stopCapture() {
         audio.stop()
-        vad.stop()
     }
 
     private fun startLiveTranscription() {
@@ -310,6 +277,7 @@ class PromptVoiceInputController(
         stopLiveKitStream()
         val finalTranscript = CompletableDeferred<String?>()
         liveKitFinalTranscript = finalTranscript
+        _state.value = _state.value.copy(transcriptionEndpoint = "Realtime ${whisperLiveKitAsrUrl(url)}")
         liveKitStream = WhisperLiveKitClient(url, tokens.remoteWhisperToken).open(
             onTranscript = { partial ->
                 val cleaned = partial.trim()
@@ -322,10 +290,18 @@ class PromptVoiceInputController(
                 AppLogger.log("Prompt voice WhisperLiveKit final available: chars=${final.length}", LogLevel.DEBUG, "Voice")
                 finalTranscript.complete(final.trim().takeIf { it.isNotBlank() })
             },
+            onConfig = {
+                if (_state.value.phase == PromptVoicePhase.Recording) {
+                    startLiveTranscription()
+                }
+            },
             onFailure = {
                 finalTranscript.complete(null)
                 liveKitWebmRecorder.stop()
                 liveKitStream = null
+                _state.value = _state.value.copy(
+                    transcriptionEndpoint = "Fallback ${url.trim().trimEnd('/')}/v1/audio/transcriptions",
+                )
                 if (liveKitFinalTranscript === finalTranscript) {
                     liveKitFinalTranscript = null
                 }
@@ -358,7 +334,7 @@ class PromptVoiceInputController(
 
     private fun resetState() {
         lastPartialTranscript = ""
-        _state.value = PromptVoiceInputState(threshold = vad.config.threshold)
+        _state.value = PromptVoiceInputState(threshold = 1f)
     }
 
     private fun setPhase(phase: PromptVoicePhase) {
@@ -371,4 +347,13 @@ class PromptVoiceInputController(
         const val LIVE_TRANSCRIPTION_MIN_SAMPLES = AudioCapture.SAMPLE_RATE
         const val LIVE_KIT_FINAL_TIMEOUT_MS = 8_000L
     }
+}
+
+internal fun normalizedAudioLevel(samples: FloatArray): Float {
+    if (samples.isEmpty()) return 0f
+    var sum = 0.0
+    for (sample in samples) {
+        sum += sample * sample
+    }
+    return kotlin.math.sqrt(sum / samples.size).toFloat().coerceIn(0f, 1f)
 }

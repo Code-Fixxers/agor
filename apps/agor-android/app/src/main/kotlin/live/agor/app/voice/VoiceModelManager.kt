@@ -22,26 +22,13 @@ class VoiceModelManager(
         .build(),
 ) {
     fun whisperModelFile(): File = whisperModelFile(context)
-    fun vadModelFile(): File = vadModelFile(context)
-
     fun isWhisperModelReady(): Boolean = isReady(whisperModelFile())
-    fun isVadModelReady(): Boolean = isReady(vadModelFile())
 
     suspend fun downloadWhisperModel(): File = downloadModel(
         url = WHISPER_BASE_EN_URL,
         dest = whisperModelFile(),
         label = "Whisper base.en",
     )
-
-    suspend fun ensureVadModelDownloaded(): Boolean {
-        if (isVadModelReady()) return true
-        return runCatching {
-            downloadModel(VAD_URL, vadModelFile(), "Silero VAD")
-            true
-        }.onFailure {
-            AppLogger.log("VAD model download failed: ${it.message}", LogLevel.WARNING, "Voice")
-        }.getOrDefault(false)
-    }
 
     private suspend fun downloadModel(url: String, dest: File, label: String): File = withContext(Dispatchers.IO) {
         if (isReady(dest)) return@withContext dest
@@ -72,13 +59,7 @@ class VoiceModelManager(
     companion object {
         private const val WHISPER_BASE_EN_URL =
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
-        private const val VAD_URL =
-            "https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx"
-
         fun whisperModelFile(context: Context): File =
             File(context.filesDir, "voice-models/whisper/ggml-base.en.bin")
-
-        fun vadModelFile(context: Context): File =
-            File(context.filesDir, "voice-models/vad/silero_vad.onnx")
     }
 }
