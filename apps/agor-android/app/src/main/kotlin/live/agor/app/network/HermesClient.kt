@@ -1,6 +1,7 @@
 package live.agor.app.network
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -291,10 +292,21 @@ class HermesClient(private val tokens: HermesTokenStore) {
         conversationId: String,
         prompt: String,
         imageDataUrls: List<String> = emptyList(),
+        messages: List<HermesMessage> = listOf(HermesMessage("user", prompt)),
     ): Flow<HermesResponseEvent> = flow {
         val (url, bearer) = requireConfig()
         val started = System.nanoTime()
         var events = 0
+        if (imageDataUrls.isEmpty()) {
+            AppLogger.log(
+                "Hermes chat-completions stream opening conversation=${conversationId.take(8)} messages=${messages.size}",
+                LogLevel.INFO,
+                "Hermes",
+            )
+            events = streamChatCompletionEvents(url, bearer, messages)
+            AppLogger.log("Hermes chat-completions stream closed events=$events elapsed=${elapsedMs(started)}ms", LogLevel.INFO, "Hermes")
+            return@flow
+        }
         AppLogger.log(
             "Hermes response stream opening conversation=${conversationId.take(8)} chars=${prompt.length} images=${imageDataUrls.size}",
             LogLevel.INFO,
@@ -331,6 +343,44 @@ class HermesClient(private val tokens: HermesTokenStore) {
         }
         AppLogger.log("Hermes response stream closed events=$events elapsed=${elapsedMs(started)}ms", LogLevel.INFO, "Hermes")
     }.flowOn(Dispatchers.IO)
+
+    private suspend fun FlowCollector<HermesResponseEvent>.streamChatCompletionEvents(
+        url: String,
+        bearer: String,
+        messages: List<HermesMessage>,
+    ): Int {
+        var events = 0
+        val body = ChatCompletionRequest(
+            model = model,
+            messages = messages,
+            stream = true,
+        )
+        val raw = json.encodeToString(ChatCompletionRequest.serializer(), body)
+        val req = Request.Builder()
+            .url("$url/v1/chat/completions")
+            .hermesAuthHeaders(bearer)
+            .header("Accept", "text/event-stream")
+            .post(raw.toRequestBody(jsonMedia))
+            .build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val text = resp.body?.string().orEmpty().take(400)
+                throw IOException(hermesHttpErrorMessage(resp.code, text))
+            }
+            val source = resp.body?.source() ?: throw IOException("empty response")
+            while (!source.exhausted()) {
+                val line = source.readUtf8Line() ?: break
+                if (line.isEmpty() || !line.startsWith("data:")) continue
+                val payload = line.removePrefix("data:").trim()
+                if (payload == "[DONE]") break
+                HermesResponseEventParser.parse(null, payload)?.let {
+                    events += 1
+                    emit(it)
+                }
+            }
+        }
+        return events
+    }
 
     private fun requireConfig(): Pair<String, String> {
         return requireConfig(tokens.hermesUrl, tokens.hermesToken)
@@ -695,6 +745,7 @@ private fun Request.Builder.hermesAuthHeaders(bearer: String): Request.Builder {
 internal object HermesResponseEventParser {
     fun parse(eventName: String?, payload: String): HermesResponseEvent? {
         val obj = runCatching { JSONObject(payload) }.getOrNull() ?: return null
+        parseChatCompletionChunk(obj)?.let { return it }
         val type = obj.optString("type", eventName.orEmpty())
         return when {
             type == "response.reasoning_text.delta" -> {
@@ -724,6 +775,15 @@ internal object HermesResponseEventParser {
             }
             else -> null
         }
+    }
+
+    private fun parseChatCompletionChunk(obj: JSONObject): HermesResponseEvent? {
+        if (obj.optString("object") != "chat.completion.chunk" && !obj.has("choices")) return null
+        val choice = obj.optJSONArray("choices")?.optJSONObject(0) ?: return null
+        val delta = choice.optJSONObject("delta") ?: return null
+        delta.optStringOrNull("reasoning_content")?.let { return HermesResponseEvent.ReasoningDelta(it) }
+        delta.optStringOrNull("content")?.let { return HermesResponseEvent.TextDelta(it) }
+        return null
     }
 
     private fun extractOutputText(response: JSONObject): String {

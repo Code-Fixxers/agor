@@ -1,9 +1,11 @@
 package live.agor.app.network
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.toList
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HermesClientRequestTest {
@@ -52,6 +54,57 @@ class HermesClientRequestTest {
         assertEquals("hermes-model", request.body.readUtf8().let { body ->
             Regex(""""model"\s*:\s*"([^"]+)"""").find(body)!!.groupValues[1]
         })
+        server.shutdown()
+    }
+
+    @Test
+    fun responseStreamUsesChatCompletionsForTextOnlyHermesTurns() = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody(
+                    """
+                    data: {"object":"chat.completion.chunk","choices":[{"delta":{"reasoning_content":"Thinking"}}]}
+
+                    data: {"object":"chat.completion.chunk","choices":[{"delta":{"content":"ok"}}]}
+
+                    data: [DONE]
+
+                    """.trimIndent(),
+                ),
+        )
+        val client = HermesClient(
+            FakeHermesTokenStore(
+                hermesUrl = server.url("/v1").toString(),
+                hermesToken = "litellm-key",
+                hermesModel = "hermes-model",
+            ),
+        )
+
+        val events = client.responseStream(
+            conversationId = "agor-android-session",
+            prompt = "new prompt",
+            messages = listOf(
+                HermesMessage("user", "previous prompt"),
+                HermesMessage("assistant", "previous answer"),
+                HermesMessage("user", "new prompt"),
+            ),
+        ).toList()
+
+        assertEquals(
+            listOf(
+                HermesResponseEvent.ReasoningDelta("Thinking"),
+                HermesResponseEvent.TextDelta("ok"),
+            ),
+            events,
+        )
+        val request = server.takeRequest()
+        assertEquals("/v1/chat/completions", request.path)
+        val body = request.body.readUtf8()
+        assertTrue(body.contains("previous prompt"))
+        assertTrue(body.contains("previous answer"))
+        assertTrue(body.contains(""""stream":true"""))
         server.shutdown()
     }
 

@@ -26,6 +26,26 @@ class HermesResponseEventParserTest {
     }
 
     @Test
+    fun parsesReasoningDeltaFromChatCompletionStream() {
+        val event = HermesResponseEventParser.parse(
+            null,
+            """{"object":"chat.completion.chunk","choices":[{"delta":{"reasoning_content":"Thinking"}}]}""",
+        )
+
+        assertEquals(HermesResponseEvent.ReasoningDelta("Thinking"), event)
+    }
+
+    @Test
+    fun parsesTextDeltaFromChatCompletionStream() {
+        val event = HermesResponseEventParser.parse(
+            null,
+            """{"object":"chat.completion.chunk","choices":[{"delta":{"content":"ok"}}]}""",
+        )
+
+        assertEquals(HermesResponseEvent.TextDelta("ok"), event)
+    }
+
+    @Test
     fun parsesCompletedOutputTextFromNestedResponse() {
         val event = HermesResponseEventParser.parse(
             "response.completed",
