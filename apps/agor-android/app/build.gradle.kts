@@ -46,6 +46,12 @@ val agorVersionName: String = (project.findProperty("versionName") as? String)
 val skipWhisperBundle: Boolean = System.getenv("SKIP_WHISPER")?.let {
     it.equals("1") || it.equals("true", ignoreCase = true)
 } ?: false
+val androidAbiFilters = System.getenv("AGOR_ANDROID_ABIS")
+    ?.split(',')
+    ?.map { it.trim() }
+    ?.filter { it.isNotEmpty() }
+    ?.takeIf { it.isNotEmpty() }
+    ?: listOf("arm64-v8a", "armeabi-v7a", "x86_64")
 val androidRootDir = rootProject.layout.projectDirectory
 val whisperCppDir = layout.projectDirectory.dir("src/main/cpp/whisper.cpp")
 val syncWhisperScript = androidRootDir.file("scripts/sync-whisper.sh")
@@ -112,7 +118,7 @@ android {
         }
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            abiFilters += androidAbiFilters
         }
     }
 
