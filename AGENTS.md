@@ -18,6 +18,21 @@ This file is intentionally high-level. There are three places to look:
 
 ---
 
+## Upstream PR Hygiene
+
+When preparing PRs for the upstream `preset-io/agor` repository, never include
+private, personal, or Code-Fixxers-specific configuration. This includes real
+endpoint URLs, API keys or key fragments, internal gateway names, private model
+IDs, local `.env` defaults, customer/team names, machine paths, and branch-local
+test fixtures copied from a private environment.
+
+Before pushing an upstream PR branch, scrub the diff for personalized values.
+Use neutral examples such as `https://openai-compatible.example.com`,
+`example-primary-model`, and `example-fast-model`, and prefer generic wording
+like "OpenAI-compatible endpoint" over provider- or gateway-specific labels.
+
+---
+
 ## Quick Start
 
 **Simplified 2-process workflow:**

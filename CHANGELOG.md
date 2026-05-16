@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.17.5 (2026-05-16)
+
+### Chores
+- Bump published Agor package versions so NixOS deployments pick up the latest `cfx/agor` build.
+
 ## 0.16.1 (2026-04-04)
 
 ### Features
