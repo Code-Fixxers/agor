@@ -253,3 +253,88 @@ fun encodeWav(samples: ShortArray, sampleRate: Int = AudioCapture.SAMPLE_RATE): 
     out.write(pcm.array())
     return out.toByteArray()
 }
+
+data class Pcm16Audio(
+    val samples: ShortArray,
+    val sampleRate: Int,
+)
+
+fun decodeWavPcm16Mono(wav: ByteArray, targetSampleRate: Int = AudioCapture.SAMPLE_RATE): Pcm16Audio {
+    require(wav.size >= 44) { "WAV file is too small" }
+    require(wav.ascii(0, 4) == "RIFF" && wav.ascii(8, 12) == "WAVE") { "Unsupported WAV header" }
+
+    var offset = 12
+    var audioFormat = 0
+    var channels = 0
+    var sourceSampleRate = 0
+    var bitsPerSample = 0
+    var dataOffset = -1
+    var dataSize = 0
+
+    while (offset + 8 <= wav.size) {
+        val chunkId = wav.ascii(offset, offset + 4)
+        val chunkSize = wav.intLe(offset + 4)
+        val chunkData = offset + 8
+        require(chunkSize >= 0 && chunkData + chunkSize <= wav.size) { "Invalid WAV chunk size" }
+        when (chunkId) {
+            "fmt " -> {
+                require(chunkSize >= 16) { "Invalid WAV fmt chunk" }
+                audioFormat = wav.shortLe(chunkData)
+                channels = wav.shortLe(chunkData + 2)
+                sourceSampleRate = wav.intLe(chunkData + 4)
+                bitsPerSample = wav.shortLe(chunkData + 14)
+            }
+            "data" -> {
+                dataOffset = chunkData
+                dataSize = chunkSize
+            }
+        }
+        offset = chunkData + chunkSize + (chunkSize and 1)
+    }
+
+    require(audioFormat == 1) { "Only PCM WAV is supported" }
+    require(channels > 0) { "WAV channel count is missing" }
+    require(sourceSampleRate > 0) { "WAV sample rate is missing" }
+    require(bitsPerSample == 16) { "Only 16-bit PCM WAV is supported" }
+    require(dataOffset >= 0 && dataSize > 0) { "WAV data chunk is missing" }
+
+    val frameSize = channels * 2
+    val frameCount = dataSize / frameSize
+    val samples = ShortArray(frameCount)
+    var read = dataOffset
+    for (i in 0 until frameCount) {
+        samples[i] = wav.shortLeSigned(read)
+        read += frameSize
+    }
+
+    if (sourceSampleRate == targetSampleRate) return Pcm16Audio(samples, sourceSampleRate)
+    return Pcm16Audio(resampleLinear(samples, sourceSampleRate, targetSampleRate), targetSampleRate)
+}
+
+private fun resampleLinear(samples: ShortArray, sourceRate: Int, targetRate: Int): ShortArray {
+    if (samples.isEmpty() || sourceRate == targetRate) return samples
+    val outputSize = ((samples.size.toLong() * targetRate) / sourceRate).toInt().coerceAtLeast(1)
+    val out = ShortArray(outputSize)
+    val ratio = sourceRate.toDouble() / targetRate.toDouble()
+    for (i in out.indices) {
+        val pos = i * ratio
+        val left = pos.toInt().coerceAtMost(samples.lastIndex)
+        val right = (left + 1).coerceAtMost(samples.lastIndex)
+        val fraction = pos - left
+        val value = samples[left] * (1.0 - fraction) + samples[right] * fraction
+        out[i] = value.toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+    }
+    return out
+}
+
+private fun ByteArray.ascii(start: Int, end: Int): String =
+    copyOfRange(start, end).toString(Charsets.US_ASCII)
+
+private fun ByteArray.intLe(offset: Int): Int =
+    ByteBuffer.wrap(this, offset, 4).order(ByteOrder.LITTLE_ENDIAN).int
+
+private fun ByteArray.shortLe(offset: Int): Int =
+    ByteBuffer.wrap(this, offset, 2).order(ByteOrder.LITTLE_ENDIAN).short.toInt() and 0xffff
+
+private fun ByteArray.shortLeSigned(offset: Int): Short =
+    ByteBuffer.wrap(this, offset, 2).order(ByteOrder.LITTLE_ENDIAN).short

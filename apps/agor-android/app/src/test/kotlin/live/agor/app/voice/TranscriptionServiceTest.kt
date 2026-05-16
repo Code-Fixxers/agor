@@ -31,6 +31,26 @@ class TranscriptionServiceTest {
     }
 
     @Test
+    fun decodeWavPcm16MonoReadsChunkedWav() {
+        val encoded = encodeWav(shortArrayOf(1, -1, Short.MAX_VALUE, Short.MIN_VALUE), sampleRate = 16_000)
+
+        val decoded = decodeWavPcm16Mono(encoded)
+
+        assertEquals(16_000, decoded.sampleRate)
+        assertEquals(listOf(1, -1, Short.MAX_VALUE.toInt(), Short.MIN_VALUE.toInt()), decoded.samples.map { it.toInt() })
+    }
+
+    @Test
+    fun decodeWavPcm16MonoResamplesToCaptureRate() {
+        val encoded = encodeWav(shortArrayOf(0, 100, 200, 300, 400, 500), sampleRate = 24_000)
+
+        val decoded = decodeWavPcm16Mono(encoded, targetSampleRate = 16_000)
+
+        assertEquals(16_000, decoded.sampleRate)
+        assertEquals(4, decoded.samples.size)
+    }
+
+    @Test
     fun defaultRemoteWhisperUsesPublicLiteLlmGateway() {
         assertEquals("https://llm.bitp.cz", DEFAULT_REMOTE_WHISPER_URL)
         assertEquals("whisper-1", DEFAULT_REMOTE_WHISPER_MODEL)

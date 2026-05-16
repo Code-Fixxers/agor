@@ -11,10 +11,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import live.agor.app.AppContainer
 import live.agor.app.AgorApplication
 import live.agor.app.BuildConfig
+import live.agor.app.auth.SecureTokenStore
 import live.agor.app.data.HermesImageInput
 import live.agor.app.hermes.HermesForegroundService
+import live.agor.app.voice.RemoteWhisperTranscriber
+import live.agor.app.voice.TranscriptionService
+import live.agor.app.voice.VoiceModelManager
+import live.agor.app.voice.decodeWavPcm16Mono
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -32,12 +38,11 @@ class HermesControlReceiver : BroadcastReceiver() {
                 val json = resolveControlPayload(intent)
                     ?: throw IllegalArgumentException("Missing automation payload")
                 requestId = json.optString(AutomationProtocol.KEY_REQUEST_ID, null)
-                val app = context.applicationContext as AgorApplication
-                val container = app.container
                 val command = json.optString(AutomationProtocol.KEY_COMMAND).trim()
                 val data = when (command) {
                     AutomationProtocol.COMMAND_PING -> JSONObject().put("message", "PONG")
                     AutomationProtocol.COMMAND_LOGIN -> {
+                        val container = appContainer(context)
                         val serverUrl = json.optString(AutomationProtocol.KEY_SERVER_URL)
                         val email = json.optString(AutomationProtocol.KEY_EMAIL, null)
                         val password = json.optString(AutomationProtocol.KEY_PASSWORD, null)
@@ -53,21 +58,25 @@ class HermesControlReceiver : BroadcastReceiver() {
                         JSONObject().put("message", "Login successful")
                     }
                     AutomationProtocol.COMMAND_HERMES_CONFIGURE -> {
+                        val container = appContainer(context)
                         configureHermes(container, json)
                         JSONObject().put("message", "Hermes configured")
                     }
                     AutomationProtocol.COMMAND_HERMES_CAPABILITIES,
                     "hermes.capabilities" -> {
+                        val container = appContainer(context)
                         configureHermes(container, json, requireToken = false)
                         JSONObject(container.hermesClient.capabilities())
                     }
                     AutomationProtocol.COMMAND_HERMES_SESSION_CREATE,
                     "hermes.session.create" -> {
+                        val container = appContainer(context)
                         val session = container.hermesSessions.createSession(json.optString("title", null))
                         JSONObject().put("sessionId", session.id).put("conversationId", session.conversationId)
                     }
                     AutomationProtocol.COMMAND_HERMES_SESSION_LIST,
                     "hermes.session.list" -> {
+                        val container = appContainer(context)
                         val sessions = container.hermesSessions.load()
                         JSONObject().put(
                             "sessions",
@@ -82,12 +91,14 @@ class HermesControlReceiver : BroadcastReceiver() {
                     }
                     AutomationProtocol.COMMAND_HERMES_SESSION_DELETE,
                     "hermes.session.delete" -> {
+                        val container = appContainer(context)
                         val sessionId = requireSessionId(json)
                         container.hermesSessions.deleteSession(sessionId)
                         JSONObject().put("deleted", sessionId)
                     }
                     AutomationProtocol.COMMAND_HERMES_SEND,
                     "hermes.send" -> {
+                        val container = appContainer(context)
                         configureHermes(container, json, requireToken = false)
                         val prompt = json.optString(AutomationProtocol.KEY_PROMPT).ifBlank {
                             json.optString(AutomationProtocol.KEY_HERMES_PROMPT)
@@ -117,6 +128,7 @@ class HermesControlReceiver : BroadcastReceiver() {
                     }
                     AutomationProtocol.COMMAND_HERMES_STATUS,
                     "hermes.status" -> {
+                        val container = appContainer(context)
                         val session = container.hermesSessions.getSession(requireSessionId(json))
                             ?: throw IllegalArgumentException("Unknown Hermes session")
                         JSONObject()
@@ -134,6 +146,7 @@ class HermesControlReceiver : BroadcastReceiver() {
                     }
                     AutomationProtocol.COMMAND_HERMES_LAST_RESPONSE,
                     "hermes.last_response" -> {
+                        val container = appContainer(context)
                         val session = container.hermesSessions.getSession(requireSessionId(json))
                             ?: throw IllegalArgumentException("Unknown Hermes session")
                         val turn = session.turns.lastOrNull { it.role == "assistant" && it.content.isNotBlank() }
@@ -141,6 +154,31 @@ class HermesControlReceiver : BroadcastReceiver() {
                             .put("sessionId", session.id)
                             .put("active", session.active)
                             .put("response", turn?.content.orEmpty())
+                    }
+                    AutomationProtocol.COMMAND_VOICE_TRANSCRIBE_WAV,
+                    "voice.transcribe.wav" -> {
+                        val whisperUrl = json.optString(AutomationProtocol.KEY_WHISPER_URL, null)
+                        val whisperToken = json.optString(AutomationProtocol.KEY_WHISPER_TOKEN, null)
+                        val wav = resolveAudioBytes(json)
+                        val audio = decodeWavPcm16Mono(wav)
+                        val result = if (!whisperUrl.isNullOrBlank()) {
+                            RemoteWhisperTranscriber(whisperUrl.trim().trimEnd('/'), whisperToken)
+                                .transcribe(audio.samples)
+                        } else {
+                            val tokenStore = SecureTokenStore(context.applicationContext)
+                            configureWhisper(tokenStore, json)
+                            TranscriptionService(
+                                context.applicationContext,
+                                tokenStore,
+                                VoiceModelManager(context.applicationContext),
+                            ).transcribe(audio.samples)
+                        }
+                        JSONObject()
+                            .put("text", result.text)
+                            .put("source", result.source)
+                            .put("endpoint", result.endpoint)
+                            .put("samples", audio.samples.size)
+                            .put("sampleRate", audio.sampleRate)
                     }
                     else -> throw IllegalArgumentException("Unknown automation command: $command")
                 }
@@ -151,6 +189,19 @@ class HermesControlReceiver : BroadcastReceiver() {
                 pending.finish()
             }
         }
+    }
+
+    private fun appContainer(context: Context): AppContainer =
+        (context.applicationContext as AgorApplication).container
+
+    private fun configureWhisper(
+        tokenStore: SecureTokenStore,
+        json: JSONObject,
+    ) {
+        val rawUrl = json.optString(AutomationProtocol.KEY_WHISPER_URL, null)
+        val token = json.optString(AutomationProtocol.KEY_WHISPER_TOKEN, null)
+        if (!rawUrl.isNullOrBlank()) tokenStore.remoteWhisperUrl = rawUrl.trim().trimEnd('/')
+        if (!token.isNullOrBlank()) tokenStore.remoteWhisperTokenOverride = token.trim()
     }
 
     private fun configureHermes(
@@ -205,6 +256,14 @@ class HermesControlReceiver : BroadcastReceiver() {
             stringExtra(intent, AutomationProtocol.EXTRA_PASSWORD_LEGACY)?.let { put(AutomationProtocol.KEY_PASSWORD, it) }
             stringExtra(intent, AutomationProtocol.EXTRA_API_KEY_LEGACY)?.let { put(AutomationProtocol.KEY_API_KEY, it) }
         }
+    }
+
+    private fun resolveAudioBytes(json: JSONObject): ByteArray {
+        val base64 = json.optString(AutomationProtocol.KEY_AUDIO_DATA_BASE64, null)
+        if (!base64.isNullOrBlank()) return Base64.decode(base64.trim(), Base64.DEFAULT)
+        val path = json.optString(AutomationProtocol.KEY_AUDIO_FILE_PATH, null)
+        if (!path.isNullOrBlank()) return File(path).readBytes()
+        throw IllegalArgumentException("audioDataBase64 or audioFilePath is required")
     }
 
     private fun stringExtra(intent: Intent, key: String): String? {

@@ -24,7 +24,8 @@
 
         <receiver
             android:name=".automation.HermesControlReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:process=":automation">
             <intent-filter>
                 <action android:name="live.agor.app.action.AGOR_CONTROL" />
             </intent-filter>

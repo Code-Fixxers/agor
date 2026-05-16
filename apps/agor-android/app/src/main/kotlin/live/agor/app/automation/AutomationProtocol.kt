@@ -37,6 +37,10 @@ object AutomationProtocol {
     const val KEY_TIMEOUT_MS = "timeoutMs"
     const val KEY_IMAGES = "images"
     const val KEY_DATA_URL = "dataUrl"
+    const val KEY_WHISPER_URL = "whisperUrl"
+    const val KEY_WHISPER_TOKEN = "whisperToken"
+    const val KEY_AUDIO_DATA_BASE64 = "audioDataBase64"
+    const val KEY_AUDIO_FILE_PATH = "audioFilePath"
 
     const val COMMAND_LOGIN = "login"
     const val COMMAND_HERMES_CONFIGURE = "hermes.configure"
@@ -50,5 +54,6 @@ object AutomationProtocol {
     const val COMMAND_HERMES_STATUS = "hermes_status"
     const val COMMAND_HERMES_CANCEL = "hermes_cancel"
     const val COMMAND_HERMES_LAST_RESPONSE = "hermes_last_response"
+    const val COMMAND_VOICE_TRANSCRIBE_WAV = "voice.transcribe_wav"
     const val COMMAND_PING = "ping"
 }

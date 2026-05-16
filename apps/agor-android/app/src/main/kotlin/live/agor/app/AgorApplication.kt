@@ -10,6 +10,7 @@ import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
 import live.agor.app.notifications.NotificationChannels
 import live.agor.app.notifications.SessionTransitionPollWorker
+import live.agor.app.util.CrashLogStore
 
 class AgorApplication : Application(), ImageLoaderFactory {
 
@@ -17,11 +18,19 @@ class AgorApplication : Application(), ImageLoaderFactory {
 
     override fun onCreate() {
         super.onCreate()
-        container.crashLogs.install()
+        CrashLogStore(filesDir).install()
+        if (isAutomationProcess()) return
         registerNotificationChannels()
         if (ProductMode.current.agorEnabled) {
-            SessionTransitionPollWorker.schedule(this)
+            Thread({
+                SessionTransitionPollWorker.schedule(this)
+            }, "session-transition-scheduler").start()
         }
+    }
+
+    private fun isAutomationProcess(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return false
+        return getProcessName().endsWith(":automation")
     }
 
     private fun registerNotificationChannels() {
