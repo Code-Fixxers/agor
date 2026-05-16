@@ -42,8 +42,8 @@ import live.agor.app.network.HermesClient
 /**
  * One-screen connection wizard for the Hermes Agent endpoint.
  *
- * The user types the OpenAI-compatible base URL, a LiteLLM virtual key or
- * direct Hermes bearer token, and an optional model override. We probe
+ * The user types the OpenAI-compatible base URL, a direct Hermes bearer token
+ * or compatible gateway key, and an optional model override. We probe
  * `/v1/models` to validate before saving.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -65,7 +65,7 @@ fun HermesSetupScreen(
     var statusOk by remember { mutableStateOf(false) }
     val partialConfigMessage = when {
         url.isBlank() && token.isNotBlank() -> "Hermes is partially configured: add the base URL before saving or testing."
-        url.isNotBlank() && token.isBlank() -> "Hermes is partially configured: add a LiteLLM API key before saving or testing."
+        url.isNotBlank() && token.isBlank() -> "Hermes is partially configured: add the Hermes bearer token before saving or testing."
         else -> null
     }
 
@@ -91,7 +91,7 @@ fun HermesSetupScreen(
         ) {
             Text(
                 partialConfigMessage
-                    ?: "Hermes uses an OpenAI-compatible API. Enter the LiteLLM /v1 URL and a virtual key, or a direct Hermes root URL and bearer token.",
+                    ?: "Hermes uses its OpenAI-compatible API server. Enter the direct Hermes root or /v1 URL, usually over Tailscale, and the gateway bearer token.",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (partialConfigMessage == null) MaterialTheme.colorScheme.onSurfaceVariant
                 else MaterialTheme.colorScheme.error,
@@ -101,7 +101,7 @@ fun HermesSetupScreen(
                 value = url,
                 onValueChange = { url = it; status = null },
                 label = { Text("Base URL") },
-                placeholder = { Text("https://llm.bitp.cz/v1") },
+                placeholder = { Text("http://100.x.y.z:8642/v1") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 modifier = Modifier.fillMaxWidth(),
@@ -110,8 +110,8 @@ fun HermesSetupScreen(
             OutlinedTextField(
                 value = token,
                 onValueChange = { token = it; status = null },
-                label = { Text("API key") },
-                placeholder = { Text("sk-...") },
+                label = { Text("Bearer token") },
+                placeholder = { Text("Hermes API_SERVER_KEY") },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),

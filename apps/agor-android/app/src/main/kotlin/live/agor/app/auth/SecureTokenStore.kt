@@ -65,7 +65,7 @@ class SecureTokenStore(context: Context) : AgorTokenStore, HermesTokenStore {
         get() = prefs.getString(KEY_HERMES_TOKEN, null)
         set(value) = prefs.edit().putString(KEY_HERMES_TOKEN, value).apply()
 
-    /** Hermes model name as advertised by the gateway. Default: hermes-model. */
+    /** Hermes model name as advertised by the gateway. Default: hermes-agent. */
     override var hermesModel: String?
         get() = prefs.getString(KEY_HERMES_MODEL, null)
         set(value) = prefs.edit().putString(KEY_HERMES_MODEL, value).apply()

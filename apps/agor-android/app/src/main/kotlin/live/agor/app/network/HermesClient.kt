@@ -1,7 +1,6 @@
 package live.agor.app.network
 
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -19,9 +18,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.EOFException
 import java.io.IOException
-import java.net.ProtocolException
 import java.util.concurrent.TimeUnit
 import java.net.URLEncoder
 import kotlin.text.Charsets
@@ -298,45 +295,10 @@ class HermesClient(private val tokens: HermesTokenStore) {
         conversationId: String,
         prompt: String,
         imageDataUrls: List<String> = emptyList(),
-        messages: List<HermesMessage> = listOf(HermesMessage("user", prompt)),
     ): Flow<HermesResponseEvent> = flow {
         val (url, bearer) = requireConfig()
         val started = System.nanoTime()
         var events = 0
-        if (imageDataUrls.isEmpty()) {
-            AppLogger.log(
-                "Hermes chat-completions stream opening conversation=${conversationId.take(8)} messages=${messages.size}",
-                LogLevel.INFO,
-                "Hermes",
-            )
-            val streamResult = runCatching {
-                streamChatCompletionEvents(url, bearer, messages)
-            }.getOrElse { error ->
-                if (!isPrematureStreamEnd(error)) throw error
-                AppLogger.log(
-                    "Hermes chat-completions stream ended early; retrying non-streaming completion: ${error.message}",
-                    LogLevel.WARNING,
-                    "Hermes",
-                )
-                val fallback = chat(messages = messages, rawUrl = url, bearer = bearer, rawModel = model)
-                emit(HermesResponseEvent.Completed(responseId = null, outputText = fallback))
-                AppLogger.log("Hermes chat-completions fallback completed chars=${fallback.length}", LogLevel.INFO, "Hermes")
-                return@flow
-            }
-            events = streamResult.events
-            if (!streamResult.completed) {
-                AppLogger.log(
-                    "Hermes chat-completions stream closed without DONE; retrying non-streaming completion",
-                    LogLevel.WARNING,
-                    "Hermes",
-                )
-                val fallback = chat(messages = messages, rawUrl = url, bearer = bearer, rawModel = model)
-                emit(HermesResponseEvent.Completed(responseId = null, outputText = fallback))
-                return@flow
-            }
-            AppLogger.log("Hermes chat-completions stream closed events=$events elapsed=${elapsedMs(started)}ms", LogLevel.INFO, "Hermes")
-            return@flow
-        }
         AppLogger.log(
             "Hermes response stream opening conversation=${conversationId.take(8)} chars=${prompt.length} images=${imageDataUrls.size}",
             LogLevel.INFO,
@@ -366,6 +328,9 @@ class HermesClient(private val tokens: HermesTokenStore) {
                         HermesResponseEventParser.parse(eventName, payload)?.let {
                             events += 1
                             emit(it)
+                            if (it is HermesResponseEvent.Completed || it is HermesResponseEvent.Failed) {
+                                return@use
+                            }
                         }
                     }
                 }
@@ -373,70 +338,6 @@ class HermesClient(private val tokens: HermesTokenStore) {
         }
         AppLogger.log("Hermes response stream closed events=$events elapsed=${elapsedMs(started)}ms", LogLevel.INFO, "Hermes")
     }.flowOn(Dispatchers.IO)
-
-    private suspend fun FlowCollector<HermesResponseEvent>.streamChatCompletionEvents(
-        url: String,
-        bearer: String,
-        messages: List<HermesMessage>,
-    ): ChatStreamResult {
-        var events = 0
-        var completed = false
-        val body = ChatCompletionRequest(
-            model = model,
-            messages = messages,
-            stream = true,
-        )
-        val raw = json.encodeToString(ChatCompletionRequest.serializer(), body)
-        val req = Request.Builder()
-            .url("$url/v1/chat/completions")
-            .hermesAuthHeaders(bearer)
-            .header("Accept", "text/event-stream")
-            .post(raw.toRequestBody(jsonMedia))
-            .build()
-        http.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                val text = resp.body?.string().orEmpty().take(400)
-                throw IOException(hermesHttpErrorMessage(resp.code, text))
-            }
-            val source = resp.body?.source() ?: throw IOException("empty response")
-            while (true) {
-                val line = source.readUtf8Line() ?: break
-                if (line.isEmpty() || !line.startsWith("data:")) continue
-                val payload = line.removePrefix("data:").trim()
-                if (payload == "[DONE]") {
-                    completed = true
-                    break
-                }
-                HermesResponseEventParser.parse(null, payload)?.let {
-                    events += 1
-                    emit(it)
-                }
-            }
-        }
-        return ChatStreamResult(events = events, completed = completed)
-    }
-
-    private fun isPrematureStreamEnd(error: Throwable): Boolean {
-        var current: Throwable? = error
-        while (current != null) {
-            if (current is EOFException || current is ProtocolException) return true
-            val message = current.message.orEmpty().lowercase()
-            if (
-                "unexpected end of stream" in message ||
-                "unexpected end of input" in message ||
-                "stream was reset" in message
-            ) {
-                return true
-            }
-            current = current.cause
-        }
-        return false
-    }
-
-    private data class ChatStreamResult(
-        val events: Int,
-        val completed: Boolean,
-    )
 
     private fun requireConfig(): Pair<String, String> {
         return requireConfig(tokens.hermesUrl, tokens.hermesToken)
@@ -784,7 +685,7 @@ class HermesClient(private val tokens: HermesTokenStore) {
     private fun encodeQuery(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.toString())
 
     companion object {
-        const val DEFAULT_MODEL = "hermes-model"
+        const val DEFAULT_MODEL = "hermes-agent"
     }
 }
 

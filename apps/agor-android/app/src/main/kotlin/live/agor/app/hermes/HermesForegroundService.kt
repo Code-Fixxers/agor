@@ -19,7 +19,6 @@ import live.agor.app.MainActivity
 import live.agor.app.R
 import live.agor.app.data.HermesAttachment
 import live.agor.app.network.AgorJson
-import live.agor.app.network.HermesMessage
 import live.agor.app.network.HermesResponseEvent
 import live.agor.app.notifications.NotificationChannels
 import live.agor.app.util.AppLogger
@@ -68,11 +67,6 @@ class HermesForegroundService : Service() {
             val session = container.hermesSessions.getSession(sessionId)
             ?: container.hermesSessions.createSession(prompt)
             val turnId = container.hermesSessions.beginTurn(session.id, prompt, attachments)
-            val messages = session.turns
-                .filter { it.role == "user" || it.role == "assistant" }
-                .mapNotNull { turn ->
-                    turn.content.trim().takeIf { it.isNotBlank() }?.let { HermesMessage(turn.role, it) }
-                } + HermesMessage("user", prompt)
             val streamText = HermesStreamTextState()
             var completed = false
             try {
@@ -80,7 +74,6 @@ class HermesForegroundService : Service() {
                     conversationId = session.conversationId,
                     prompt = prompt,
                     imageDataUrls = imageDataUrls,
-                    messages = messages,
                 ).collect { event ->
                     when (event) {
                         is HermesResponseEvent.ReasoningDelta -> {

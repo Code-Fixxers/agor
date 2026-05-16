@@ -4,7 +4,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.toList
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
-import okhttp3.mockwebserver.SocketPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -34,7 +33,7 @@ class HermesClientRequestTest {
     }
 
     @Test
-    fun chatUsesConfiguredOpenAiV1BaseUrlAndCurrentHermesGatewayDefaultModel() = runBlocking {
+    fun chatUsesConfiguredOpenAiV1BaseUrlAndHermesAgentDefaultModel() = runBlocking {
         val server = MockWebServer()
         server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"pong"}}]}"""))
         val client = HermesClient(
@@ -52,25 +51,28 @@ class HermesClientRequestTest {
         assertEquals("/v1/chat/completions", request.path)
         assertEquals("Bearer litellm-key", request.getHeader("Authorization"))
         assertEquals("litellm-key", request.getHeader("x-litellm-api-key"))
-        assertEquals("hermes-model", request.body.readUtf8().let { body ->
+        assertEquals("hermes-agent", request.body.readUtf8().let { body ->
             Regex(""""model"\s*:\s*"([^"]+)"""").find(body)!!.groupValues[1]
         })
         server.shutdown()
     }
 
     @Test
-    fun responseStreamUsesChatCompletionsForTextOnlyHermesTurns() = runBlocking {
+    fun responseStreamUsesHermesResponsesApiWithConversationForTextTurns() = runBlocking {
         val server = MockWebServer()
         server.enqueue(
             MockResponse()
                 .setHeader("Content-Type", "text/event-stream")
                 .setBody(
                     """
-                    data: {"object":"chat.completion.chunk","choices":[{"delta":{"reasoning_content":"Thinking"}}]}
+                    event: response.reasoning_text.delta
+                    data: {"type":"response.reasoning_text.delta","delta":"Thinking"}
 
-                    data: {"object":"chat.completion.chunk","choices":[{"delta":{"content":"ok"}}]}
+                    event: response.output_text.delta
+                    data: {"type":"response.output_text.delta","delta":"ok"}
 
-                    data: [DONE]
+                    event: response.completed
+                    data: {"type":"response.completed","response":{"id":"resp_123","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}}
 
                     """.trimIndent(),
                 ),
@@ -86,47 +88,42 @@ class HermesClientRequestTest {
         val events = client.responseStream(
             conversationId = "agor-android-session",
             prompt = "new prompt",
-            messages = listOf(
-                HermesMessage("user", "previous prompt"),
-                HermesMessage("assistant", "previous answer"),
-                HermesMessage("user", "new prompt"),
-            ),
         ).toList()
 
         assertEquals(
             listOf(
                 HermesResponseEvent.ReasoningDelta("Thinking"),
                 HermesResponseEvent.TextDelta("ok"),
+                HermesResponseEvent.Completed(responseId = "resp_123", outputText = "ok"),
             ),
             events,
         )
         val request = server.takeRequest()
-        assertEquals("/v1/chat/completions", request.path)
+        assertEquals("/v1/responses", request.path)
         val body = request.body.readUtf8()
-        assertTrue(body.contains("previous prompt"))
-        assertTrue(body.contains("previous answer"))
+        assertTrue(body.contains(""""conversation":"agor-android-session""""))
+        assertTrue(body.contains(""""type":"input_text""""))
+        assertTrue(body.contains("new prompt"))
         assertTrue(body.contains(""""stream":true"""))
         server.shutdown()
     }
 
     @Test
-    fun responseStreamFallsBackToNonStreamingChatCompletionWhenSseEndsUnexpectedly() = runBlocking {
+    fun responseStreamUsesHermesResponsesApiForImagesToo() = runBlocking {
         val server = MockWebServer()
         server.enqueue(
             MockResponse()
                 .setHeader("Content-Type", "text/event-stream")
-                .setChunkedBody(
+                .setBody(
                     """
-                    data: {"object":"chat.completion.chunk","choices":[{"delta":{"reasoning_content":"Thinking"}}]}
+                    event: response.output_text.delta
+                    data: {"type":"response.output_text.delta","delta":"seen"}
+
+                    event: response.completed
+                    data: {"type":"response.completed","response":{"id":"resp_img","output_text":"seen"}}
 
                     """.trimIndent(),
-                    8,
-                )
-                .setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY),
-        )
-        server.enqueue(
-            MockResponse()
-                .setBody("""{"choices":[{"message":{"role":"assistant","content":"fallback answer"}}]}"""),
+                ),
         )
         val client = HermesClient(
             FakeHermesTokenStore(
@@ -138,18 +135,22 @@ class HermesClientRequestTest {
 
         val events = client.responseStream(
             conversationId = "agor-android-session",
-            prompt = "new prompt",
-            messages = listOf(HermesMessage("user", "new prompt")),
+            prompt = "describe this",
+            imageDataUrls = listOf("data:image/png;base64,abc"),
         ).toList()
 
         assertEquals(
-            listOf(HermesResponseEvent.Completed(responseId = null, outputText = "fallback answer")),
+            listOf(
+                HermesResponseEvent.TextDelta("seen"),
+                HermesResponseEvent.Completed(responseId = "resp_img", outputText = "seen"),
+            ),
             events,
         )
-        assertEquals("/v1/chat/completions", server.takeRequest().path)
-        val fallbackRequest = server.takeRequest()
-        assertEquals("/v1/chat/completions", fallbackRequest.path)
-        assertTrue(!fallbackRequest.body.readUtf8().contains(""""stream":true"""))
+        val request = server.takeRequest()
+        assertEquals("/v1/responses", request.path)
+        val body = request.body.readUtf8()
+        assertTrue(body.contains(""""type":"input_image""""))
+        assertTrue(body.contains("data:image/png;base64,abc"))
         server.shutdown()
     }
 
