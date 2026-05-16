@@ -22,6 +22,7 @@ import {
   encryptApiKey,
   eq,
   hash,
+  inArray,
   insert,
   select,
   update,
@@ -94,11 +95,21 @@ export class UsersService {
     const email = params?.query?.email as string | undefined;
     const includePassword = !!email; // Include password when looking up by email (for authentication)
 
+    // Check if filtering by array of IDs (e.g. from worktree-owners.ts)
+    // Feathers translates $in queries into an array structure
+    const userIdsIn = params?.query?.user_id?.$in as string[] | undefined;
+
     let rows: (typeof users.$inferSelect)[];
     if (email) {
       // Find by email (for LocalStrategy)
       const row = await select(this.db).from(users).where(eq(users.email, email)).one();
       rows = row ? [row] : [];
+    } else if (userIdsIn && Array.isArray(userIdsIn) && userIdsIn.length > 0) {
+      // Find by multiple user IDs (for batched queries)
+      rows = await select(this.db).from(users).where(inArray(users.user_id, userIdsIn)).all();
+    } else if (userIdsIn && Array.isArray(userIdsIn) && userIdsIn.length === 0) {
+      // Early return for empty $in array
+      rows = [];
     } else {
       // Find all
       rows = await select(this.db).from(users).all();
