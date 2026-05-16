@@ -1,0 +1,15 @@
+[package]
+name = "agor-hermes-app"
+version = "0.1.0"
+edition = "2021"
+description = "Agor + Hermes Android client"
+
+[dependencies]
+agor-shared = { path = "../../crates/shared" }
+agor-lib = { path = "../../crates/agor" }
+agor-hermes = { path = "../../crates/hermes" }
+dioxus = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+dirs = { workspace = true }

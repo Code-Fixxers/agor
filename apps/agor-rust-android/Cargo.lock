@@ -3,9 +3,44 @@
 version = 4
 
 [[package]]
-name = "agor-android"
+name = "agor-hermes"
 version = "0.1.0"
 dependencies = [
+ "agor-shared",
+ "base64",
+ "chrono",
+ "dioxus",
+ "dirs",
+ "pulldown-cmark",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "agor-hermes-app"
+version = "0.1.0"
+dependencies = [
+ "agor-hermes",
+ "agor-lib",
+ "agor-shared",
+ "dioxus",
+ "dirs",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "agor-lib"
+version = "0.1.0"
+dependencies = [
+ "agor-shared",
  "base64",
  "chrono",
  "dioxus",
@@ -17,9 +52,19 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "agor-shared"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs",
+ "tracing",
+ "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
@@ -989,6 +1034,19 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "hermes-only-app"
+version = "0.1.0"
+dependencies = [
+ "agor-hermes",
+ "agor-shared",
+ "dioxus",
+ "dirs",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "http"
@@ -2006,6 +2064,17 @@ name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures",

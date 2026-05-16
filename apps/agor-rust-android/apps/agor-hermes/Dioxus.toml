@@ -1,0 +1,6 @@
+[application]
+name = "Agor"
+default_platform = "mobile"
+
+[application.asset_dir]
+path = "assets"
