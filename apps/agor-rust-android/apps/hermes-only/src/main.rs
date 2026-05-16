@@ -4,6 +4,7 @@ use agor_hermes::models::HermesConfig;
 use agor_hermes::session_store::HermesSessionStore;
 use agor_hermes::ui::hermes_screen::HermesScreen;
 use agor_hermes::ui::setup_screen::HermesSetupScreen;
+use agor_shared::update::AppMetadata;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -22,6 +23,13 @@ enum AppRoute {
 #[component]
 fn App() -> Element {
     let _hermes_store = use_context_provider(|| Signal::new(HermesSessionStore::new()));
+    let _meta = use_context_provider(|| {
+        Signal::new(AppMetadata {
+            version_code: env!("VERSION_CODE").parse().unwrap_or(0),
+            version_name: env!("VERSION_NAME").to_string(),
+            update_manifest_url: env!("UPDATE_MANIFEST_URL").to_string(),
+        })
+    });
 
     let mut config = use_signal(|| load_config());
 

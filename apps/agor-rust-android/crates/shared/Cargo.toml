@@ -9,3 +9,7 @@ tracing-subscriber = { workspace = true }
 dirs = { workspace = true }
 chrono = { workspace = true }
 url = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }

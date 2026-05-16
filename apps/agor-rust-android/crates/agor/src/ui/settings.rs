@@ -5,6 +5,7 @@ use crate::network::agor_client::AgorClient;
 use crate::state::auth::{self, AuthStore};
 use crate::state::storage::AppStorage;
 use agor_shared::logger::AppLogger;
+use agor_shared::update::{self, AppMetadata, UpdateState};
 
 #[component]
 pub fn SettingsScreen(
@@ -13,8 +14,10 @@ pub fn SettingsScreen(
 ) -> Element {
     let mut auth = use_context::<Signal<AuthStore>>();
     let mut storage = use_context::<Signal<AppStorage>>();
+    let meta = use_context::<Signal<AppMetadata>>();
     let mut show_add_server = use_signal(|| false);
     let mut show_debug_log = use_signal(|| false);
+    let update_state = use_signal(|| UpdateState::Idle);
 
     let user = use_memo(move || auth.read().user.clone());
     let profiles = use_memo(move || storage.read().profiles.clone());
@@ -131,17 +134,21 @@ pub fn SettingsScreen(
                     }
                 }
 
-                // App info
+                // App info & updates
                 div { class: "settings-section",
                     h3 { "About" }
                     div { class: "settings-row",
                         span { class: "settings-label", "Version" }
-                        span { class: "settings-value", {env!("CARGO_PKG_VERSION")} }
+                        span { class: "settings-value",
+                            "{meta.read().version_name} (build {meta.read().version_code})"
+                        }
                     }
                     div { class: "settings-row",
                         span { class: "settings-label", "Built with" }
                         span { class: "settings-value", "Rust + Dioxus" }
                     }
+
+                    {update_section(meta, update_state)}
                 }
             }
 
@@ -157,6 +164,78 @@ pub fn SettingsScreen(
                 }
             }
         }
+    }
+}
+
+fn update_section(meta: Signal<AppMetadata>, mut update_state: Signal<UpdateState>) -> Element {
+    let on_check = move |_| {
+        let url = meta.read().update_manifest_url.clone();
+        let code = meta.read().version_code;
+        update_state.set(UpdateState::Checking);
+        spawn(async move {
+            match update::check_for_update(&url, code).await {
+                Ok(Some(manifest)) => update_state.set(UpdateState::Available(manifest)),
+                Ok(None) => update_state.set(UpdateState::UpToDate),
+                Err(e) => update_state.set(UpdateState::Failed(e)),
+            }
+        });
+    };
+
+    let on_download = move |_| {
+        let manifest = match update_state.read().clone() {
+            UpdateState::Available(m) => m,
+            _ => return,
+        };
+        update_state.set(UpdateState::Downloading);
+        spawn(async move {
+            match update::download_apk(&manifest).await {
+                Ok(path) => update_state.set(UpdateState::Ready(path)),
+                Err(e) => update_state.set(UpdateState::Failed(e)),
+            }
+        });
+    };
+
+    match update_state.read().clone() {
+        UpdateState::Idle => rsx! {
+            button {
+                class: "btn-secondary",
+                onclick: on_check,
+                "Check for Updates"
+            }
+        },
+        UpdateState::Checking => rsx! {
+            p { class: "form-hint", "Checking for updates..." }
+        },
+        UpdateState::UpToDate => rsx! {
+            p { class: "form-hint", "You're up to date!" }
+        },
+        UpdateState::Available(manifest) => rsx! {
+            p { class: "form-hint",
+                "Update available: {manifest.version_name} (build {manifest.version_code})"
+            }
+            button {
+                class: "btn-primary",
+                onclick: on_download,
+                "Download Update"
+            }
+        },
+        UpdateState::Downloading => rsx! {
+            p { class: "form-hint", "Downloading update..." }
+        },
+        UpdateState::Ready(path) => {
+            let display = path.display().to_string();
+            rsx! {
+                p { class: "form-status ok", "Update downloaded: {display}" }
+            }
+        },
+        UpdateState::Failed(msg) => rsx! {
+            p { class: "form-status error", "Error: {msg}" }
+            button {
+                class: "btn-secondary",
+                onclick: on_check,
+                "Retry"
+            }
+        },
     }
 }
 

@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 
 use crate::client::HermesClient;
 use crate::models::HermesConfig;
+use agor_shared::update::{self, AppMetadata, UpdateState};
 
 #[component]
 pub fn HermesSetupScreen(
@@ -17,6 +18,8 @@ pub fn HermesSetupScreen(
     let mut probing = use_signal(|| false);
     let mut status = use_signal(|| Option::<String>::None);
     let mut status_ok = use_signal(|| false);
+    let meta = use_context::<Signal<AppMetadata>>();
+    let update_state = use_signal(|| UpdateState::Idle);
 
     let has_url = !url.read().trim().is_empty();
     let has_token = !token.read().trim().is_empty();
@@ -167,7 +170,90 @@ pub fn HermesSetupScreen(
                         "Save"
                     }
                 }
+
+                // About & update
+                div { class: "setup-about",
+                    p { class: "form-hint",
+                        "Version {meta.read().version_name} (build {meta.read().version_code})"
+                    }
+                    {setup_update_section(meta, update_state)}
+                }
             }
         }
+    }
+}
+
+fn setup_update_section(
+    meta: Signal<AppMetadata>,
+    mut update_state: Signal<UpdateState>,
+) -> Element {
+    let on_check = move |_| {
+        let url = meta.read().update_manifest_url.clone();
+        let code = meta.read().version_code;
+        update_state.set(UpdateState::Checking);
+        spawn(async move {
+            match update::check_for_update(&url, code).await {
+                Ok(Some(manifest)) => update_state.set(UpdateState::Available(manifest)),
+                Ok(None) => update_state.set(UpdateState::UpToDate),
+                Err(e) => update_state.set(UpdateState::Failed(e)),
+            }
+        });
+    };
+
+    let on_download = move |_| {
+        let manifest = match update_state.read().clone() {
+            UpdateState::Available(m) => m,
+            _ => return,
+        };
+        update_state.set(UpdateState::Downloading);
+        spawn(async move {
+            match update::download_apk(&manifest).await {
+                Ok(path) => update_state.set(UpdateState::Ready(path)),
+                Err(e) => update_state.set(UpdateState::Failed(e)),
+            }
+        });
+    };
+
+    match update_state.read().clone() {
+        UpdateState::Idle => rsx! {
+            button {
+                class: "btn-secondary",
+                onclick: on_check,
+                "Check for Updates"
+            }
+        },
+        UpdateState::Checking => rsx! {
+            p { class: "form-hint", "Checking..." }
+        },
+        UpdateState::UpToDate => rsx! {
+            p { class: "form-hint", "Up to date" }
+        },
+        UpdateState::Available(manifest) => rsx! {
+            p { class: "form-hint",
+                "Update: {manifest.version_name} (build {manifest.version_code})"
+            }
+            button {
+                class: "btn-primary",
+                onclick: on_download,
+                "Download"
+            }
+        },
+        UpdateState::Downloading => rsx! {
+            p { class: "form-hint", "Downloading..." }
+        },
+        UpdateState::Ready(path) => {
+            let display = path.display().to_string();
+            rsx! {
+                p { class: "form-status ok", "Downloaded: {display}" }
+            }
+        },
+        UpdateState::Failed(msg) => rsx! {
+            p { class: "form-status error", "{msg}" }
+            button {
+                class: "btn-secondary",
+                onclick: on_check,
+                "Retry"
+            }
+        },
     }
 }

@@ -62,6 +62,10 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dirs",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "url",
