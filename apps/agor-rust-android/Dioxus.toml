@@ -1,0 +1,14 @@
+[application]
+name = "Agor"
+default_platform = "mobile"
+
+[application.asset_dir]
+path = "assets"
+
+[web.app]
+title = "Agor"
+
+[mobile]
+# Android-specific configuration
+# Build with: dx build --platform android
+# Run with: dx serve --platform android

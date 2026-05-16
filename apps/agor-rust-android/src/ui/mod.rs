@@ -1,0 +1,8 @@
+pub mod app_shell;
+pub mod chat;
+pub mod common;
+pub mod file_browser;
+pub mod login;
+pub mod mcp_sheet;
+pub mod settings;
+pub mod sidebar;
