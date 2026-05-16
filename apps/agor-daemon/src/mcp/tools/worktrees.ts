@@ -79,6 +79,12 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
           .describe(
             'Filter to show ONLY archived worktrees. When true, returns only archived worktrees. Overrides includeArchived.'
           ),
+        detailLevel: z
+          .enum(['summary', 'full'])
+          .optional()
+          .describe(
+            'Level of detail to return (default: summary). Summary omits large text fields like notes.'
+          ),
       }),
     },
     async (args) => {
@@ -93,7 +99,25 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
       const worktrees = await ctx.app
         .service('worktrees')
         .find({ query, ...ctx.baseServiceParams });
-      return textResult(worktrees);
+
+      let allData = Array.isArray(worktrees) ? worktrees : worktrees.data;
+      const detailLevel = args.detailLevel ?? 'summary';
+
+      if (detailLevel === 'summary') {
+        allData = allData.map((worktree: unknown) => {
+          // biome-ignore lint/suspicious/noExplicitAny: Omitting fields dynamically
+          const { notes, ...rest } = worktree as any;
+          return rest;
+        });
+      }
+
+      if (Array.isArray(worktrees)) {
+        return textResult(allData);
+      }
+      return textResult({
+        ...worktrees,
+        data: allData,
+      });
     }
   );
 

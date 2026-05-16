@@ -46,11 +46,18 @@ export function registerAnalyticsTools(server: McpServer, ctx: McpContext): void
           .enum(['asc', 'desc'])
           .optional()
           .describe('Sort order ascending or descending (default: desc)'),
-        limit: z.number().optional().describe('Maximum number of results (default: 50)'),
+        limit: z
+          .number()
+          .optional()
+          .describe('Maximum number of results (default: 10 if detailLevel=summary, else 50)'),
         offset: z
           .number()
           .optional()
           .describe('Number of results to skip for pagination (default: 0)'),
+        detailLevel: z
+          .enum(['summary', 'full'])
+          .optional()
+          .describe('Level of detail to return (default: summary). Summary defaults limit to 10.'),
       }),
     },
     async (args) => {
@@ -64,7 +71,14 @@ export function registerAnalyticsTools(server: McpServer, ctx: McpContext): void
       if (args.bucket) query.bucket = args.bucket;
       if (args.sortBy) query.sortBy = args.sortBy;
       if (args.sortOrder) query.sortOrder = args.sortOrder;
-      if (args.limit) query.limit = args.limit;
+
+      const detailLevel = args.detailLevel ?? 'summary';
+      if (args.limit) {
+        query.limit = args.limit;
+      } else if (detailLevel === 'summary') {
+        query.limit = 10;
+      }
+
       if (args.offset) query.offset = args.offset;
 
       const leaderboard = await ctx.app
