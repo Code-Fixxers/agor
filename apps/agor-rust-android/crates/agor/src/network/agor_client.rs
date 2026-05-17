@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use std::sync::{Arc, RwLock};
 
 use crate::models::*;
+use crate::state::storage::AppStorage;
 use agor_shared::logger::{AppLogger, LogCategory};
 use agor_shared::url::agor_base_url_candidates;
 
@@ -69,6 +70,42 @@ impl From<reqwest::Error> for AgorError {
     }
 }
 
+fn load_active_tokens() -> AuthTokens {
+    let storage = AppStorage::load();
+    let Some(profile) = storage
+        .active_profile()
+        .or_else(|| storage.default_profile())
+    else {
+        return AuthTokens::default();
+    };
+    let Some(creds) = storage.credentials.get(&profile.id) else {
+        return AuthTokens::default();
+    };
+
+    AuthTokens {
+        access_token: creds.access_token.clone(),
+        refresh_token: creds.refresh_token.clone(),
+        server_url: Some(profile.url.clone()),
+        user_id: creds.user_id.clone(),
+        last_email: creds.user_email.clone(),
+    }
+}
+
+fn local_login_payload(email: &str, password: &str) -> Value {
+    json!({
+        "strategy": "local",
+        "email": email,
+        "password": password,
+    })
+}
+
+fn api_key_login_payload(api_key: &str) -> Value {
+    json!({
+        "strategy": "api-key",
+        "apiKey": api_key,
+    })
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn is_transient_network_error(e: &reqwest::Error) -> bool {
     e.is_connect() || e.is_timeout()
@@ -89,10 +126,11 @@ pub struct AgorClient {
 impl AgorClient {
     pub fn new(logger: AppLogger) -> Self {
         let http = build_http_client();
+        let tokens = load_active_tokens();
 
         Self {
             http,
-            tokens: Arc::new(RwLock::new(AuthTokens::default())),
+            tokens: Arc::new(RwLock::new(tokens)),
             logger,
         }
     }
@@ -204,7 +242,8 @@ impl AgorClient {
 
     async fn delete(&self, path: &str) -> Result<(), AgorError> {
         let url = format!("{}{path}", self.base_url());
-        self.logger.debug(LogCategory::Http, format!("DELETE {url}"));
+        self.logger
+            .debug(LogCategory::Http, format!("DELETE {url}"));
 
         let mut req = self.http.delete(&url);
         if let Some(auth) = self.auth_header() {
@@ -260,13 +299,18 @@ impl AgorClient {
     // --- Auth ---
 
     pub async fn login(&self, email: &str, password: &str) -> Result<LoginResult, AgorError> {
-        let payload = json!({
-            "strategy": "local",
-            "email": email,
-            "password": password,
-        });
+        let payload = local_login_payload(email, password);
         let resp = self.post_json("/authentication", &payload).await?;
+        self.parse_login_response(resp)
+    }
 
+    pub async fn login_with_api_key(&self, api_key: &str) -> Result<LoginResult, AgorError> {
+        let payload = api_key_login_payload(api_key);
+        let resp = self.post_json("/authentication", &payload).await?;
+        self.parse_login_response(resp)
+    }
+
+    fn parse_login_response(&self, resp: Value) -> Result<LoginResult, AgorError> {
         let access_token = resp["accessToken"]
             .as_str()
             .ok_or_else(|| AgorError::Auth("No accessToken in response".into()))?
@@ -493,11 +537,8 @@ impl AgorClient {
         if let Some(tid) = task_id {
             payload["taskId"] = json!(tid);
         }
-        self.post_json(
-            &format!("/sessions/{session_id}/input-response"),
-            &payload,
-        )
-        .await?;
+        self.post_json(&format!("/sessions/{session_id}/input-response"), &payload)
+            .await?;
         Ok(())
     }
 
@@ -565,4 +606,32 @@ fn build_http_client() -> Client {
         .timeout(std::time::Duration::from_secs(30));
 
     builder.build().expect("failed to build HTTP client")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_login_payload_uses_feathers_local_strategy() {
+        assert_eq!(
+            local_login_payload("user@example.com", "secret"),
+            json!({
+                "strategy": "local",
+                "email": "user@example.com",
+                "password": "secret",
+            })
+        );
+    }
+
+    #[test]
+    fn api_key_login_payload_uses_api_key_strategy() {
+        assert_eq!(
+            api_key_login_payload("agor_sk_test"),
+            json!({
+                "strategy": "api-key",
+                "apiKey": "agor_sk_test",
+            })
+        );
+    }
 }

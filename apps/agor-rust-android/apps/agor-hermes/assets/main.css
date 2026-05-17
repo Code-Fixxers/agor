@@ -1002,6 +1002,36 @@ textarea {
   margin-bottom: 20px;
 }
 
+.login-mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-input);
+  padding: 4px;
+}
+
+.mode-toggle {
+  min-height: 34px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mode-toggle:hover {
+  color: var(--text-primary);
+}
+
+.mode-toggle.active {
+  background: var(--surface-panel-3);
+  color: var(--text-primary);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+
 .login-header h1 {
   margin: 0;
   color: var(--text-primary);

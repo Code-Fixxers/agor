@@ -89,6 +89,7 @@ impl AppLogger {
             message: message.into(),
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
         tracing::debug!("{}", entry.format());
 
         let mut entries = self.entries.lock().unwrap();

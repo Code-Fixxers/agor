@@ -1,21 +1,49 @@
 use dioxus::prelude::*;
 
+use crate::network::agor_client::AgorClient;
 use crate::state::auth::AuthStore;
-use crate::state::navigation::{NavStore, SidebarRow};
+use crate::state::navigation::{self, NavStore, SidebarRow};
 use crate::state::storage::AppStorage;
 use crate::ui::common::agent_icon::agent_icon_class;
 use crate::ui::common::status_badge::status_class;
+use agor_shared::logger::AppLogger;
 
 #[component]
 pub fn Sidebar(
     on_select_session: EventHandler<String>,
     on_open_settings: EventHandler<()>,
 ) -> Element {
-    let nav = use_context::<Signal<NavStore>>();
+    let mut nav = use_context::<Signal<NavStore>>();
     let storage = use_context::<Signal<AppStorage>>();
     let auth = use_context::<Signal<AuthStore>>();
 
     let mut search_query = use_signal(|| String::new());
+    let mut did_load = use_signal(|| false);
+
+    use_effect(move || {
+        if *did_load.read() {
+            return;
+        }
+
+        did_load.set(true);
+        nav.write().is_loading = true;
+        spawn(async move {
+            let logger = AppLogger::new();
+            let client = AgorClient::new(logger.clone());
+            let mut loaded = NavStore::new();
+            let result = navigation::refresh_navigation(&client, &mut loaded, &logger).await;
+            let mut n = nav.write();
+            match result {
+                Ok(()) => {
+                    *n = loaded;
+                }
+                Err(e) => {
+                    n.is_loading = false;
+                    n.error = Some(e);
+                }
+            }
+        });
+    });
 
     let rows = use_memo(move || {
         let n = nav.read();
