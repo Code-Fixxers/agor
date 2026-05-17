@@ -1,6 +1,4 @@
 [application]
 name = "Hermes"
 default_platform = "mobile"
-
-[application.asset_dir]
-path = "assets"
+asset_dir = "assets"
