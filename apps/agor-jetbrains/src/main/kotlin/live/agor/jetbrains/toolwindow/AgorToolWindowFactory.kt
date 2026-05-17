@@ -1,25 +1,21 @@
 package live.agor.jetbrains.toolwindow
 
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.actionSystem.ActionManager
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.ide.projectView.ProjectView
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
-import com.intellij.ui.JBColor
 import com.intellij.ui.TreeSpeedSearch
 import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
+import com.intellij.ui.components.JBTextField
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.ui.content.ContentFactory
 import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.UIUtil
 import live.agor.jetbrains.client.AgorApiClient
 import live.agor.jetbrains.client.AgorCreateSessionRequest
 import live.agor.jetbrains.client.AgorCreateWorktreeRequest
@@ -34,6 +30,7 @@ import live.agor.jetbrains.client.AgorWorktree
 import live.agor.jetbrains.settings.AgorSettings
 import live.agor.jetbrains.settings.AgorSettingsDialog
 import java.awt.BorderLayout
+import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
@@ -44,6 +41,7 @@ import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
+import javax.swing.ScrollPaneConstants
 import javax.swing.JSplitPane
 import javax.swing.Timer
 import javax.swing.JTree
@@ -72,9 +70,13 @@ class AgorToolWindowFactory : ToolWindowFactory {
 private class AgorToolWindow(private val project: Project, private val toolWindow: ToolWindow) {
     private val settings = AgorSettings.getInstance()
     private val tree = Tree(DefaultMutableTreeNode("Agor"))
+    private val searchField = JBTextField()
+    private val listSummary = AgorTheme.label("", 11f, color = AgorTheme.TextMuted)
+    private val filterButtons = mutableMapOf<AgorObjectFilterMode, JButton>()
     private val inspector = JPanel(BorderLayout(8, 8))
     private lateinit var splitPane: JSplitPane
     private var snapshot = AgorSnapshot()
+    private var objectFilterMode = AgorObjectFilterMode.ALL
     private var socketClient: AgorSocketClient? = null
     private var socketConnectionKey: Pair<String, String?>? = null
     private var socketRefreshTimer: Timer? = null
@@ -82,46 +84,145 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
     private var activePromptSessionId: String? = null
     private var activePrompt: JBTextArea? = null
     private var promptFocusSessionToRestore: String? = null
-    val component: JPanel = JPanel(BorderLayout())
+    val component: JPanel = JPanel(BorderLayout()).apply {
+        background = AgorTheme.SurfaceBase
+    }
 
     init {
         tree.isRootVisible = false
         tree.showsRootHandles = true
-        tree.border = JBUI.Borders.empty(6)
+        tree.border = JBUI.Borders.empty(6, 8)
+        tree.background = AgorTheme.SurfacePanel
+        tree.foreground = AgorTheme.TextPrimary
         tree.addTreeSelectionListener { showSelection() }
         tree.cellRenderer = AgorTreeRenderer { snapshot }
         TreeSpeedSearch(tree)
 
-        val actions = DefaultActionGroup().apply {
-            add(object : DumbAwareAction("Refresh", "Refresh Agor", AgorIcons.Refresh) {
-                override fun actionPerformed(event: AnActionEvent) = refresh()
-            })
-            add(object : DumbAwareAction("New Worktree", "Create an Agor worktree", AgorIcons.NewWorktree) {
-                override fun actionPerformed(event: AnActionEvent) = showNewWorktree()
-            })
-            add(object : DumbAwareAction("New Session", "Create an Agor session", AgorIcons.NewSession) {
-                override fun actionPerformed(event: AnActionEvent) = selectedWorktree()?.let { showNewSession(it) } ?: showText("Agor", "Select a worktree first.")
-            })
-            add(object : DumbAwareAction("Layout", "Cycle Agor split layout", AgorIcons.Layout) {
-                override fun actionPerformed(event: AnActionEvent) = cycleSplitLayout()
-            })
-            addSeparator()
-            add(object : DumbAwareAction("Settings", "Configure Agor", AgorIcons.Settings) {
-                override fun actionPerformed(event: AnActionEvent) = showSettings()
-            })
-        }
-        val toolbar = ActionManager.getInstance().createActionToolbar("AgorToolbar", actions, true).apply {
-            targetComponent = component
-        }
+        AgorTheme.styleInput(searchField)
+        searchField.toolTipText = "Search boards, worktrees, sessions"
+        searchField.emptyText.text = "Search"
+        searchField.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(event: DocumentEvent) = refilterObjectList()
+            override fun removeUpdate(event: DocumentEvent) = refilterObjectList()
+            override fun changedUpdate(event: DocumentEvent) = refilterObjectList()
+        })
 
-        splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, JBScrollPane(tree), inspector).apply {
+        inspector.background = AgorTheme.SurfaceBase
+
+        splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, createObjectList(), inspector).apply {
             dividerSize = JBUI.scale(3)
             border = JBUI.Borders.empty()
+            background = AgorTheme.BorderSubtle
         }
-        component.add(toolbar.component, BorderLayout.NORTH)
+
+        component.add(createRail(), BorderLayout.WEST)
         component.add(splitPane, BorderLayout.CENTER)
         applySplitLayout()
         showEmptyInspector()
+    }
+
+    private fun createRail(): JPanel =
+        AgorTheme.panel(AgorTheme.SurfaceBase).apply {
+            layout = BorderLayout()
+            preferredSize = Dimension(JBUI.scale(48), 1)
+            border = AgorTheme.RightBorder
+
+            val top = AgorTheme.panel(AgorTheme.SurfaceBase).apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                border = JBUI.Borders.empty(8, 6)
+                add(railButton("Sessions", AgorIcons.Send, active = true) { })
+                add(Box.createVerticalStrut(JBUI.scale(8)))
+                add(railButton("Refresh", AgorIcons.Refresh) { refresh() })
+                add(Box.createVerticalStrut(JBUI.scale(8)))
+                add(railButton("New worktree", AgorIcons.NewWorktree) { showNewWorktree() })
+                add(Box.createVerticalStrut(JBUI.scale(8)))
+                add(railButton("New session", AgorIcons.NewSession) {
+                    selectedWorktree()?.let { showNewSession(it) } ?: showText("Agor", "Select a worktree first.")
+                })
+                add(Box.createVerticalStrut(JBUI.scale(8)))
+                add(railButton("Layout", AgorIcons.Layout) { cycleSplitLayout() })
+            }
+            val bottom = AgorTheme.panel(AgorTheme.SurfaceBase).apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                border = JBUI.Borders.empty(8, 6)
+                add(railButton("Settings", AgorIcons.Settings) { showSettings() })
+            }
+            add(top, BorderLayout.NORTH)
+            add(bottom, BorderLayout.SOUTH)
+        }
+
+    private fun createObjectList(): JPanel =
+        AgorTheme.panel(AgorTheme.SurfacePanel).apply {
+            layout = BorderLayout(0, 10)
+            border = JBUI.Borders.empty(12, 12)
+            preferredSize = Dimension(JBUI.scale(310), 1)
+            minimumSize = Dimension(JBUI.scale(220), JBUI.scale(180))
+
+            val header = AgorTheme.panel(AgorTheme.SurfacePanel).apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                add(AgorTheme.label("Agor", 15f, bold = true, color = AgorTheme.TextPrimary).leftAligned())
+                add(Box.createVerticalStrut(JBUI.scale(3)))
+                add(listSummary.leftAligned())
+                add(Box.createVerticalStrut(JBUI.scale(10)))
+                add(searchField.leftAligned())
+                add(Box.createVerticalStrut(JBUI.scale(10)))
+                add(filterRow().leftAligned())
+            }
+            val treeScroll = JBScrollPane(tree).apply {
+                border = JBUI.Borders.empty()
+                viewport.background = AgorTheme.SurfacePanel
+                background = AgorTheme.SurfacePanel
+                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+            }
+            add(header, BorderLayout.NORTH)
+            add(treeScroll, BorderLayout.CENTER)
+        }
+
+    private fun filterRow(): JPanel =
+        AgorTheme.panel(AgorTheme.SurfacePanel).apply {
+            layout = FlowLayout(FlowLayout.LEFT, 6, 0)
+            AgorObjectFilterMode.entries.forEach { mode ->
+                val button = pillButton(mode.label, objectFilterMode == mode) {
+                    objectFilterMode = mode
+                    updateFilterButtons()
+                    refilterObjectList()
+                }
+                filterButtons[mode] = button
+                add(button)
+            }
+        }
+
+    private fun updateFilterButtons() {
+        filterButtons.forEach { (mode, button) ->
+            stylePillButton(button, objectFilterMode == mode)
+        }
+    }
+
+    private fun railButton(label: String, icon: javax.swing.Icon, active: Boolean = false, action: () -> Unit): JButton =
+        JButton(icon).apply {
+            toolTipText = label
+            preferredSize = Dimension(JBUI.scale(36), JBUI.scale(36))
+            maximumSize = preferredSize
+            alignmentX = Component.CENTER_ALIGNMENT
+            AgorTheme.styleIconButton(this, active)
+            addActionListener { action() }
+        }
+
+    private fun pillButton(text: String, selected: Boolean, action: () -> Unit): JButton =
+        JButton(text).apply {
+            stylePillButton(this, selected)
+            addActionListener { action() }
+        }
+
+    private fun stylePillButton(button: JButton, selected: Boolean) {
+        button.isOpaque = true
+        button.background = if (selected) AgorTheme.AccentMuted else AgorTheme.SurfaceRaised
+        button.foreground = if (selected) AgorTheme.TextPrimary else AgorTheme.TextSecondary
+        button.border = JBUI.Borders.compound(
+            JBUI.Borders.customLine(if (selected) AgorTheme.Accent else AgorTheme.BorderSubtle),
+            JBUI.Borders.empty(4, 9),
+        )
+        button.isFocusPainted = false
     }
 
     fun refresh(interactive: Boolean = true, select: AgorNodeKey? = null) {
@@ -155,7 +256,28 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
         promptFocusToRestore: String?,
     ) {
         snapshot = loaded
-        val root = toSwingTree(AgorTreeModelBuilder().build(loaded.boards, loaded.worktrees, loaded.sessions))
+        updateListSummary()
+        renderObjectTree(selectionToRestore, expandedToRestore, promptFocusToRestore)
+    }
+
+    private fun refilterObjectList() {
+        updateListSummary()
+        renderObjectTree(selectedNodeRef()?.key(), expandedNodeRefs(), focusedPromptSessionId())
+    }
+
+    private fun updateListSummary() {
+        val activeSessions = snapshot.sessions.count { it.status == AgorSessionStatus.RUNNING || it.status == AgorSessionStatus.QUEUED }
+        val permissions = snapshot.permissionRequests.size
+        listSummary.text = "${snapshot.worktrees.size} worktrees  /  ${snapshot.sessions.size} sessions  /  $activeSessions active  /  $permissions approvals"
+    }
+
+    private fun renderObjectTree(
+        selectionToRestore: AgorNodeKey?,
+        expandedToRestore: Set<AgorNodeKey>,
+        promptFocusToRestore: String?,
+    ) {
+        val visible = AgorObjectListFilter.apply(snapshot, searchField.text, objectFilterMode)
+        val root = toSwingTree(AgorTreeModelBuilder().build(visible.boards, visible.worktrees, visible.sessions))
         tree.model = DefaultTreeModel(root)
         if (expandedToRestore.isEmpty() && selectionToRestore == null) {
             expandAll()
@@ -194,49 +316,61 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
         val sessionCount = snapshot.sessions.count { session ->
             snapshot.worktrees.any { it.worktreeId == session.worktreeId && (it.boardId == boardId || (boardId == "unassigned" && it.boardId.isNullOrBlank())) }
         }
-        val panel = detailPanel("Board", name, listOf("Worktrees: $worktreeCount", "Sessions: $sessionCount"))
-        panel.add(Box.createVerticalStrut(JBUI.scale(14)))
-        panel.add(buttonRow(
-            actionButton("New Worktree", AgorIcons.NewWorktree) { showNewWorktree(boardId.takeUnless { it == "unassigned" }) },
+        val body = messageStack().apply {
+            add(infoCard("Board overview", listOf("Worktrees: $worktreeCount", "Sessions: $sessionCount")))
+        }
+        replaceInspector(mainPane(
+            title = name,
+            context = "Board",
+            meta = listOf("$worktreeCount worktrees", "$sessionCount sessions"),
+            actions = buttonRow(actionButton("New Worktree", AgorIcons.NewWorktree) { showNewWorktree(boardId.takeUnless { it == "unassigned" }) }),
+            body = body,
         ))
-        replaceInspector(panel)
     }
 
     private fun showWorktree(worktree: AgorWorktree) {
         val sessions = snapshot.sessions.filter { it.worktreeId == worktree.worktreeId }
-        val panel = detailPanel(
-            "Worktree",
-            worktree.name,
-            listOf(
-                "Branch/ref: ${worktree.ref ?: "-"}",
-                "Sessions: ${sessions.size}",
-                "Path: ${worktree.path}",
+        val body = messageStack().apply {
+            add(infoCard(
+                "Worktree context",
+                listOf(
+                    "Branch/ref: ${worktree.ref ?: "-"}",
+                    "Sessions: ${sessions.size}",
+                    "Path: ${worktree.path}",
+                ),
+            ))
+        }
+        replaceInspector(mainPane(
+            title = worktree.name,
+            context = "Worktree",
+            meta = listOf(worktree.ref ?: "No branch", "${sessions.size} sessions"),
+            actions = buttonRow(
+                actionButton("New Session", AgorIcons.NewSession) { showNewSession(worktree) },
+                actionButton("Open Path", AgorIcons.OpenPath) {
+                        val file = File(worktree.path)
+                        if (file.exists()) {
+                            val virtualFile = com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file) ?: return@actionButton
+                            if (virtualFile.isDirectory) {
+                                ProjectView.getInstance(project).select(null, virtualFile, true)
+                            } else {
+                                FileEditorManager.getInstance(project).openFile(virtualFile, true)
+                            }
+                        }
+                },
             ),
-        )
-        panel.add(Box.createVerticalStrut(JBUI.scale(14)))
-        panel.add(buttonRow(
-            actionButton("New Session", AgorIcons.NewSession) { showNewSession(worktree) },
-            actionButton("Open Path", AgorIcons.OpenPath) {
-                    val file = File(worktree.path)
-                    if (file.exists()) {
-                        FileEditorManager.getInstance(project).openFile(com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file) ?: return@actionButton, true)
-                    }
-            },
+            body = body,
         ))
-        replaceInspector(panel)
     }
 
     private fun showSession(session: AgorSession) {
-        val panel = detailPanel(
-            "Session",
-            session.title,
-            listOf("Status: ${session.status}", "Agent: ${session.agenticTool}", "ID: ${session.sessionId}"),
-        )
         val prompt = JBTextArea(4, 32).apply {
             text = promptDrafts[session.sessionId].orEmpty()
             lineWrap = true
             wrapStyleWord = true
-            border = JBUI.Borders.empty(6)
+            border = JBUI.Borders.empty(8)
+            background = AgorTheme.SurfaceRaised
+            foreground = AgorTheme.TextPrimary
+            caretColor = AgorTheme.Accent
         }
         activePromptSessionId = session.sessionId
         activePrompt = prompt
@@ -249,32 +383,29 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
                 promptDrafts[session.sessionId] = prompt.text
             }
         })
-        val promptScroll = JBScrollPane(prompt).apply {
-            alignmentX = JComponent.LEFT_ALIGNMENT
-            preferredSize = Dimension(JBUI.scale(460), JBUI.scale(100))
-            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(120))
-            border = JBUI.Borders.customLine(JBColor.border())
+
+        val body = messageStack().apply {
+            add(infoCard(
+                "Session context",
+                listOf("Status: ${session.status}", "Agent: ${session.agenticTool}", "ID: ${session.sessionId}"),
+            ))
+            snapshot.permissionRequests
+                .filter { it.sessionId == session.sessionId }
+                .forEach { add(permissionPanel(session.sessionId, it)) }
         }
-        panel.add(Box.createVerticalStrut(JBUI.scale(16)))
-        panel.add(sectionLabel("Prompt"))
-        panel.add(Box.createVerticalStrut(JBUI.scale(6)))
-        panel.add(promptScroll)
-        panel.add(Box.createVerticalStrut(JBUI.scale(10)))
-        panel.add(buttonRow(
-            actionButton("Send", AgorIcons.Send) {
-                    val text = prompt.text.trim()
-                    if (text.isNotEmpty()) runClientAction(AgorNodeKey(AgorTreeNodeKind.SESSION, session.sessionId)) {
-                        promptSession(session.sessionId, text)
-                    }
-            },
-            actionButton("Stop", AgorIcons.Stop) { runClientAction { stopSession(session.sessionId) } },
-            actionButton("Fork", AgorIcons.Fork) { showForkSession(session) },
-            actionButton("Spawn", AgorIcons.Spawn) { showSpawnSession(session) },
+        val composer = composer(prompt, session)
+        replaceInspector(mainPane(
+            title = session.title,
+            context = "Agor session",
+            meta = listOf(session.status.name.lowercase(), session.agenticTool),
+            actions = buttonRow(
+                actionButton("Stop", AgorIcons.Stop) { runClientAction { stopSession(session.sessionId) } },
+                actionButton("Fork", AgorIcons.Fork) { showForkSession(session) },
+                actionButton("Spawn", AgorIcons.Spawn) { showSpawnSession(session) },
+            ),
+            body = body,
+            footer = composer,
         ))
-        snapshot.permissionRequests
-            .filter { it.sessionId == session.sessionId }
-            .forEach { panel.add(permissionPanel(session.sessionId, it)) }
-        replaceInspector(panel)
         if (promptFocusSessionToRestore == session.sessionId) {
             promptFocusSessionToRestore = null
             SwingUtilities.invokeLater {
@@ -284,19 +415,43 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
         }
     }
 
+    private fun composer(prompt: JBTextArea, session: AgorSession): JPanel {
+        val send = actionButton("Send", AgorIcons.Send, primary = true) {
+            val text = prompt.text.trim()
+            if (text.isNotEmpty()) runClientAction(AgorNodeKey(AgorTreeNodeKind.SESSION, session.sessionId)) {
+                promptSession(session.sessionId, text)
+                SwingUtilities.invokeLater {
+                    promptDrafts.remove(session.sessionId)
+                    prompt.text = ""
+                }
+            }
+        }
+        return AgorTheme.panel(AgorTheme.SurfaceBase).apply {
+            layout = BorderLayout(8, 0)
+            border = JBUI.Borders.empty(10, 14, 14, 14)
+            val promptScroll = JBScrollPane(prompt).apply {
+                border = JBUI.Borders.compound(AgorTheme.PanelBorder, JBUI.Borders.empty())
+                preferredSize = Dimension(JBUI.scale(420), JBUI.scale(96))
+                maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(120))
+                viewport.background = AgorTheme.SurfaceRaised
+            }
+            add(promptScroll, BorderLayout.CENTER)
+            add(send, BorderLayout.EAST)
+        }
+    }
+
     private fun permissionPanel(sessionId: String, permission: AgorPermissionRequest): JPanel {
-        val panel = detailPanel(
+        val panel = infoCard(
             "Permission Required",
-            permission.toolName,
             listOf(
+                "Tool: ${permission.toolName}",
                 "Request: ${permission.requestId}",
                 "Task: ${permission.taskId ?: "-"}",
                 "Input: ${permission.toolInputJson}",
             ),
         )
-        panel.add(Box.createVerticalStrut(JBUI.scale(10)))
         panel.add(buttonRow(
-            actionButton("Approve Once", AgorIcons.Approve) {
+            actionButton("Approve Once", AgorIcons.Approve, primary = true) {
                     runClientAction {
                         decidePermission(sessionId, permission.requestId, permission.taskId, true, AgorPermissionScope.ONCE)
                     }
@@ -427,9 +582,8 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
     private fun showEmptyInspector() {
         val activeSessions = snapshot.sessions.count { it.status == AgorSessionStatus.RUNNING || it.status == AgorSessionStatus.QUEUED }
         val pendingPermissions = snapshot.permissionRequests.size
-        replaceInspector(
-            detailPanel(
-                "Agor",
+        val body = messageStack().apply {
+            add(infoCard(
                 "Workspace",
                 listOf(
                     "Boards: ${snapshot.boards.size}",
@@ -438,41 +592,46 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
                     "Active: $activeSessions",
                     "Pending permissions: $pendingPermissions",
                 ),
-            ).apply {
-                add(Box.createVerticalStrut(JBUI.scale(14)))
-                add(buttonRow(
-                    actionButton("New Worktree", AgorIcons.NewWorktree) { showNewWorktree() },
-                ))
-            },
-        )
+            ))
+        }
+        replaceInspector(mainPane(
+            title = "Agor",
+            context = "Connected workspace",
+            meta = listOf("${snapshot.worktrees.size} worktrees", "${snapshot.sessions.size} sessions"),
+            actions = buttonRow(actionButton("New Worktree", AgorIcons.NewWorktree) { showNewWorktree() }),
+            body = body,
+        ))
     }
 
     private fun showText(title: String, body: String) {
-        replaceInspector(detailPanel(title, body, emptyList()))
+        replaceInspector(mainPane(title, "Agor", emptyList(), null, messageStack().apply { add(infoCard(body, emptyList())) }))
     }
 
     private fun showConnectionError(error: Throwable) {
-        val panel = detailPanel(
-            "Agor",
-            "Connection unavailable",
-            listOf(error.userFacingMessage("Could not load Agor")),
-        )
-        panel.add(Box.createVerticalStrut(JBUI.scale(14)))
-        panel.add(buttonRow(
-            actionButton("Configure", AgorIcons.Settings) { showSettings() },
-            actionButton("Retry", AgorIcons.Refresh) { refresh() },
+        replaceInspector(mainPane(
+            title = "Connection unavailable",
+            context = "Agor",
+            meta = listOf(settings.state.agorUrl),
+            actions = buttonRow(
+                actionButton("Configure", AgorIcons.Settings) { showSettings() },
+                actionButton("Retry", AgorIcons.Refresh, primary = true) { refresh() },
+            ),
+            body = messageStack().apply {
+                add(infoCard("Could not load Agor", listOf(error.userFacingMessage("Could not load Agor"))))
+            },
         ))
-        replaceInspector(panel)
     }
 
     private fun showActionError(error: Throwable) {
-        replaceInspector(
-            detailPanel(
-                "Agor",
-                "Action failed",
-                listOf(error.userFacingMessage("Agor action failed")),
-            ),
-        )
+        replaceInspector(mainPane(
+            title = "Action failed",
+            context = "Agor",
+            meta = emptyList(),
+            actions = null,
+            body = messageStack().apply {
+                add(infoCard("Agor action failed", listOf(error.userFacingMessage("Agor action failed"))))
+            },
+        ))
     }
 
     private fun showSettings() {
@@ -501,60 +660,80 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
         splitPane.resizeWeight = layout.resizeWeight
         tree.minimumSize = layout.treeMinimumSize
         inspector.border = if (layout.splitPaneOrientation == JSplitPane.HORIZONTAL_SPLIT) {
-            JBUI.Borders.customLine(JBColor.border(), 0, 1, 0, 0)
+            AgorTheme.LeftBorder
         } else {
-            JBUI.Borders.customLine(JBColor.border(), 1, 0, 0, 0)
+            AgorTheme.TopBorder
         }
         splitPane.revalidate()
         splitPane.repaint()
     }
 
-    private fun detailPanel(kicker: String, title: String, lines: List<String>): JPanel {
-        val panel = JPanel().apply {
+    private fun mainPane(
+        title: String,
+        context: String,
+        meta: List<String>,
+        actions: JPanel?,
+        body: JPanel,
+        footer: JPanel? = null,
+    ): JPanel =
+        AgorTheme.panel(AgorTheme.SurfaceBase).apply {
+            layout = BorderLayout()
+            add(chatTopbar(title, context, meta, actions), BorderLayout.NORTH)
+            add(JBScrollPane(body).apply {
+                border = JBUI.Borders.empty()
+                viewport.background = AgorTheme.SurfaceBase
+                background = AgorTheme.SurfaceBase
+            }, BorderLayout.CENTER)
+            footer?.let { add(it, BorderLayout.SOUTH) }
+        }
+
+    private fun chatTopbar(title: String, context: String, meta: List<String>, actions: JPanel?): JPanel =
+        AgorTheme.panel(AgorTheme.SurfaceBase).apply {
+            layout = BorderLayout(12, 0)
+            border = JBUI.Borders.compound(AgorTheme.TopBorder, JBUI.Borders.empty(12, 16))
+            val titleBox = AgorTheme.panel(AgorTheme.SurfaceBase).apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                add(AgorTheme.label(context.uppercase(), 10f, bold = true, color = AgorTheme.TextMuted).leftAligned())
+                add(Box.createVerticalStrut(JBUI.scale(4)))
+                add(AgorTheme.label(title, 17f, bold = true, color = AgorTheme.TextPrimary).leftAligned())
+                if (meta.isNotEmpty()) {
+                    add(Box.createVerticalStrut(JBUI.scale(5)))
+                    add(AgorTheme.label(meta.joinToString("  /  "), 11f, color = AgorTheme.TextSecondary).leftAligned())
+                }
+            }
+            add(titleBox, BorderLayout.CENTER)
+            actions?.let { add(it, BorderLayout.EAST) }
+        }
+
+    private fun messageStack(): JPanel =
+        AgorTheme.panel(AgorTheme.SurfaceBase).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = JBUI.Borders.empty(14, 18, 18, 18)
-            background = UIUtil.getPanelBackground()
-        }
-        panel.add(JLabel(kicker.uppercase()).apply {
-            alignmentX = JComponent.LEFT_ALIGNMENT
-            foreground = JBColor.GRAY
-            font = font.deriveFont(Font.BOLD, 11f)
-        })
-        panel.add(Box.createVerticalStrut(JBUI.scale(8)))
-        panel.add(JLabel(title).apply {
-            alignmentX = JComponent.LEFT_ALIGNMENT
-            foreground = UIUtil.getLabelForeground()
-            font = font.deriveFont(Font.BOLD, 18f)
-        })
-        panel.add(Box.createVerticalStrut(JBUI.scale(12)))
-        lines.forEach { panel.add(metaLabel(it)) }
-        return panel
-    }
-
-    private fun metaLabel(text: String): JLabel =
-        JLabel(text).apply {
-            alignmentX = JComponent.LEFT_ALIGNMENT
-            foreground = JBColor.namedColor("Label.infoForeground", JBColor(0x6B7280, 0x9CA3AF))
-            border = JBUI.Borders.emptyBottom(4)
+            border = JBUI.Borders.empty(14, 16, 16, 16)
         }
 
-    private fun sectionLabel(text: String): JLabel =
-        JLabel(text).apply {
+    private fun infoCard(title: String, lines: List<String>): JPanel =
+        AgorTheme.panel(AgorTheme.SurfaceRaised).apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
             alignmentX = JComponent.LEFT_ALIGNMENT
-            foreground = UIUtil.getLabelForeground()
-            font = font.deriveFont(Font.BOLD, 12f)
+            border = JBUI.Borders.compound(AgorTheme.PanelBorder, JBUI.Borders.empty(12, 14))
+            add(AgorTheme.label(title, 12f, bold = true, color = AgorTheme.TextPrimary).leftAligned())
+            if (lines.isNotEmpty()) add(Box.createVerticalStrut(JBUI.scale(8)))
+            lines.forEach { add(AgorTheme.label(it, 11f, color = AgorTheme.TextSecondary).leftAligned()) }
+            add(Box.createVerticalStrut(JBUI.scale(8)))
+            maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
         }
 
     private fun buttonRow(vararg buttons: JButton): JPanel =
-        JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+        AgorTheme.panel(AgorTheme.SurfaceBase).apply {
+            layout = FlowLayout(FlowLayout.LEFT, 8, 0)
             alignmentX = JComponent.LEFT_ALIGNMENT
-            isOpaque = false
             buttons.forEach { add(it) }
             maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
         }
 
-    private fun actionButton(text: String, icon: javax.swing.Icon, action: () -> Unit): JButton =
+    private fun actionButton(text: String, icon: javax.swing.Icon, primary: Boolean = false, action: () -> Unit): JButton =
         JButton(text, icon).apply {
+            AgorTheme.styleActionButton(this, primary)
             addActionListener { action() }
         }
 
@@ -739,6 +918,9 @@ internal fun findNodePath(root: DefaultMutableTreeNode, target: AgorNodeKey): Tr
     return null
 }
 
+private fun <T : JComponent> T.leftAligned(): T =
+    apply { alignmentX = Component.LEFT_ALIGNMENT }
+
 private fun String.escapeHtml(): String =
     replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -746,6 +928,8 @@ private fun Throwable.userFacingMessage(fallback: String): String =
     message?.takeIf { it.isNotBlank() } ?: fallback
 
 private fun fallbackPanel(message: String): JPanel =
-    JPanel(BorderLayout()).apply {
-        add(JLabel(message), BorderLayout.NORTH)
+    AgorTheme.panel(AgorTheme.SurfaceBase).apply {
+        layout = BorderLayout()
+        border = JBUI.Borders.empty(16)
+        add(AgorTheme.label(message, 12f, color = AgorTheme.Error), BorderLayout.NORTH)
     }
