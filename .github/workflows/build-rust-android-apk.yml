@@ -80,12 +80,17 @@ jobs:
 
       - name: Install Dioxus CLI
         run: |
-          WANT="0.6"
+          set -euo pipefail
           if dx --version 2>/dev/null | grep -q "^dioxus 0\.6\."; then
             echo "dx 0.6.x already cached"
-          else
-            cargo install dioxus-cli --version "~${WANT}"
+            exit 0
           fi
+
+          # dioxus-cli 0.6.3 can't compile from crates.io with latest serde
+          # (swc_common references removed serde::__private). Install from
+          # git with the published Cargo.lock that pins compatible versions.
+          cargo install --git https://github.com/DioxusLabs/dioxus \
+            --tag v0.6.3 dioxus-cli --locked
 
       - name: Set up Android NDK environment
         run: |
