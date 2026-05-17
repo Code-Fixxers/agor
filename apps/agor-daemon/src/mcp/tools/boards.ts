@@ -84,13 +84,15 @@ export function registerBoardTools(server: McpServer, ctx: McpContext): void {
       }
       const boards = await ctx.app.service('boards').find({ query, ...ctx.baseServiceParams });
 
-      let allData = Array.isArray(boards) ? boards : boards.data;
+      type BoardSummary = Omit<import('@agor/core/types').Board, 'objects'>;
+      let allData: import('@agor/core/types').Board[] | BoardSummary[] = Array.isArray(boards)
+        ? boards
+        : boards.data;
       const detailLevel = args.detailLevel ?? 'summary';
 
       if (detailLevel === 'summary') {
-        allData = allData.map((board: unknown) => {
-          // biome-ignore lint/suspicious/noExplicitAny: Omitting fields dynamically
-          const { objects, ...rest } = board as any;
+        allData = (allData as import('@agor/core/types').Board[]).map((board) => {
+          const { objects, ...rest } = board;
           return rest;
         });
       }

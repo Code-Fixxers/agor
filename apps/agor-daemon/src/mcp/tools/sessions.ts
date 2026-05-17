@@ -153,23 +153,23 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       }
       const result = await ctx.app.service('sessions').find({ query, ...ctx.baseServiceParams });
 
-      let allData: Session[] = Array.isArray(result) ? result : result.data;
+      type SessionSummary = Omit<Session, 'notes' | 'last_message'>;
+      let allData: Session[] | SessionSummary[] = Array.isArray(result) ? result : result.data;
 
       // Apply sessionType filter (post-query since custom_context/scheduled_from_worktree aren't in query schema)
       if (args.sessionType) {
         const targetType = args.sessionType as SessionType;
         const filterFn = (s: Session) => getSessionType(s) === targetType;
-        const filtered = allData.filter(filterFn);
+        const filtered = (allData as Session[]).filter(filterFn);
         allData = requestedLimit ? filtered.slice(0, requestedLimit) : filtered;
       }
 
       const detailLevel = args.detailLevel ?? 'summary';
       if (detailLevel === 'summary') {
-        allData = allData.map((session) => {
-          // biome-ignore lint/suspicious/noExplicitAny: Omitting fields dynamically
-          const { notes, last_message, ...rest } = session as any;
+        allData = (allData as Session[]).map((session) => {
+          const { notes, last_message, ...rest } = session;
           return rest;
-        }) as Session[];
+        });
       }
 
       if (Array.isArray(result)) {

@@ -73,7 +73,7 @@ export function registerAnalyticsTools(server: McpServer, ctx: McpContext): void
       if (args.sortOrder) query.sortOrder = args.sortOrder;
 
       const detailLevel = args.detailLevel ?? 'summary';
-      if (args.limit) {
+      if (args.limit !== undefined) {
         query.limit = args.limit;
       } else if (detailLevel === 'summary') {
         query.limit = 10;

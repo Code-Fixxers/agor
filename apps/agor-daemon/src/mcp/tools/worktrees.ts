@@ -100,15 +100,18 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
         .service('worktrees')
         .find({ query, ...ctx.baseServiceParams });
 
-      let allData = Array.isArray(worktrees) ? worktrees : worktrees.data;
+      type WorktreeSummary = Omit<import('@agor/core/db').WorktreeWithZoneAndSessions, 'notes'>;
+      let allData: import('@agor/core/db').WorktreeWithZoneAndSessions[] | WorktreeSummary[] =
+        Array.isArray(worktrees) ? worktrees : worktrees.data;
       const detailLevel = args.detailLevel ?? 'summary';
 
       if (detailLevel === 'summary') {
-        allData = allData.map((worktree: unknown) => {
-          // biome-ignore lint/suspicious/noExplicitAny: Omitting fields dynamically
-          const { notes, ...rest } = worktree as any;
-          return rest;
-        });
+        allData = (allData as import('@agor/core/db').WorktreeWithZoneAndSessions[]).map(
+          (worktree) => {
+            const { notes, ...rest } = worktree;
+            return rest;
+          }
+        );
       }
 
       if (Array.isArray(worktrees)) {
