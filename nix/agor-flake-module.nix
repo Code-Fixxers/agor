@@ -499,7 +499,7 @@ let
 
     echo "Running focused Junie/core checks..."
     pnpm --filter @agor/core test src/types/session.test.ts src/utils/permission-mode-mapper.test.ts src/config/config-manager.test.ts
-    pnpm --filter @agor/executor test src/payload-types.test.ts src/sdk-handlers/junie/profile.test.ts src/sdk-handlers/junie/normalizer.test.ts src/sdk-handlers/junie/junie-tool.test.ts
+    pnpm --filter @agor/executor test src/payload-types.test.ts src/handlers/sdk/junie.test.ts src/sdk-handlers/junie/profile.test.ts src/sdk-handlers/junie/normalizer.test.ts src/sdk-handlers/junie/junie-tool.test.ts
     pnpm --filter @agor/daemon test src/utils/spawn-executor.secrets.test.ts src/services/config.test.ts
     pnpm --filter agor-ui typecheck
 

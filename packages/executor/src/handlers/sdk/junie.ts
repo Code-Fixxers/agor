@@ -27,6 +27,55 @@ interface JunieSettings {
   apiType?: JunieApiType;
 }
 
+interface JunieOutputLine {
+  stream: 'stdout' | 'stderr';
+  line: string;
+}
+
+const MAX_JUNIE_PROGRESS_LINES = 8;
+
+function redactJunieOutputLine(line: string): string {
+  return line
+    .replace(/sk-[A-Za-z0-9_-]+/g, 'sk-...')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer ...');
+}
+
+function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function formatJunieRunningMessage(params: {
+  model: string;
+  startedAt: number;
+  lines: JunieOutputLine[];
+}): string {
+  const messageLines = [
+    'Junie is running...',
+    '',
+    `Model: ${params.model}`,
+    `Elapsed: ${formatElapsed(Date.now() - params.startedAt)}`,
+  ];
+
+  const recentLines = params.lines.slice(-MAX_JUNIE_PROGRESS_LINES);
+  if (recentLines.length === 0) {
+    return [...messageLines, '', 'Waiting for Junie output...'].join('\n');
+  }
+
+  return [
+    ...messageLines,
+    '',
+    'Recent Junie output:',
+    ...recentLines.map((entry) => {
+      const prefix = entry.stream === 'stderr' ? '[stderr] ' : '';
+      return `${prefix}${entry.line}`;
+    }),
+  ].join('\n');
+}
+
 async function resolveJunieApiKey(client: AgorClient, taskId: TaskID): Promise<string> {
   const result = (await client.service('config/resolve-api-key').create({
     taskId,
@@ -137,7 +186,8 @@ function runJunieProcess(
   command: string,
   args: string[],
   cwd: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  onOutputLine?: (line: JunieOutputLine) => void
 ): Promise<{
   exitCode: number | null;
   stdout: string;
@@ -152,15 +202,46 @@ function runJunieProcess(
     });
     let stdout = '';
     let stderr = '';
+    let stdoutLineBuffer = '';
+    let stderrLineBuffer = '';
+
+    const emitBufferedLines = (stream: 'stdout' | 'stderr', text: string, flush = false) => {
+      let buffer = stream === 'stdout' ? stdoutLineBuffer : stderrLineBuffer;
+      buffer += text;
+      const lines = buffer.split(/\r?\n/);
+      const completeLines = flush ? lines : lines.slice(0, -1);
+      const nextBuffer = flush ? '' : lines.at(-1) || '';
+
+      for (const line of completeLines) {
+        const redacted = redactJunieOutputLine(line.trim());
+        if (redacted) {
+          onOutputLine?.({ stream, line: redacted });
+        }
+      }
+
+      if (stream === 'stdout') {
+        stdoutLineBuffer = nextBuffer;
+      } else {
+        stderrLineBuffer = nextBuffer;
+      }
+    };
 
     child.stdout?.on('data', (chunk) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      emitBufferedLines('stdout', text);
     });
     child.stderr?.on('data', (chunk) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      emitBufferedLines('stderr', text);
     });
     child.on('error', reject);
-    child.on('close', (exitCode) => resolve({ exitCode, stdout, stderr }));
+    child.on('close', (exitCode) => {
+      emitBufferedLines('stdout', '', true);
+      emitBufferedLines('stderr', '', true);
+      resolve({ exitCode, stdout, stderr });
+    });
   });
 }
 
@@ -277,12 +358,67 @@ export async function executeJunieTask(params: {
       prompt: juniePrompt,
     });
 
-    const processResult = await runJunieProcess(
-      executable,
-      args,
-      worktree.path,
-      params.abortController.signal
-    );
+    const assistantMessageId = generateId() as MessageID;
+    const startedAt = Date.now();
+    const outputLines: JunieOutputLine[] = [];
+    const messagesService = client.service('messages');
+    let progressPatchChain = Promise.resolve();
+
+    const patchAssistantMessage = async (content: string): Promise<void> => {
+      await messagesService.patch(assistantMessageId, {
+        content_preview: content.substring(0, 200),
+        content,
+      });
+    };
+
+    const queueProgressPatch = () => {
+      const content = formatJunieRunningMessage({
+        model,
+        startedAt,
+        lines: outputLines,
+      });
+      progressPatchChain = progressPatchChain
+        .then(() => patchAssistantMessage(content))
+        .catch((error) => {
+          console.warn('[junie] Failed to update running message:', error);
+        });
+      return progressPatchChain;
+    };
+
+    await messagesService.create({
+      message_id: assistantMessageId,
+      session_id: sessionId,
+      task_id: taskId,
+      type: 'assistant',
+      role: MessageRole.ASSISTANT,
+      index: nextIndex,
+      timestamp: new Date().toISOString(),
+      content_preview: 'Junie is running...',
+      content: formatJunieRunningMessage({ model, startedAt, lines: outputLines }),
+    });
+
+    const heartbeat = setInterval(() => {
+      void queueProgressPatch();
+    }, 30_000);
+    heartbeat.unref?.();
+
+    let processResult: Awaited<ReturnType<typeof runJunieProcess>>;
+    try {
+      processResult = await runJunieProcess(
+        executable,
+        args,
+        worktree.path,
+        params.abortController.signal,
+        (line) => {
+          outputLines.push(line);
+          void queueProgressPatch();
+        }
+      );
+    } finally {
+      clearInterval(heartbeat);
+      await progressPatchChain;
+    }
+
     const parsedOutput = await readJunieOutput(files.outputPath);
     const rawSdkResponse: JunieRawResponse = {
       ...((parsedOutput && typeof parsedOutput === 'object' ? parsedOutput : {}) as Record<
@@ -302,21 +438,12 @@ export async function executeJunieTask(params: {
 
     if (processResult.exitCode !== 0) {
       const message = processResult.stderr.trim() || processResult.stdout.trim() || 'Junie failed';
+      await patchAssistantMessage(`Junie failed.\n\n${message}`);
       throw new Error(message);
     }
 
     const assistantText = extractJunieAssistantText(rawSdkResponse, processResult.stdout);
-    await client.service('messages').create({
-      message_id: generateId() as MessageID,
-      session_id: sessionId,
-      task_id: taskId,
-      type: 'assistant',
-      role: MessageRole.ASSISTANT,
-      index: nextIndex,
-      timestamp: new Date().toISOString(),
-      content_preview: assistantText.substring(0, 200),
-      content: assistantText,
-    });
+    await patchAssistantMessage(assistantText);
 
     const shaAtEnd = await getGitState(worktree.path).catch(() => undefined);
     const normalized = normalizeRawSdkResponse('junie', rawSdkResponse);
