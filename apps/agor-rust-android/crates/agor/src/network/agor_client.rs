@@ -56,17 +56,27 @@ pub enum AgorError {
 
 impl From<reqwest::Error> for AgorError {
     fn from(e: reqwest::Error) -> Self {
-        if e.is_connect() || e.is_timeout() {
-            AgorError::Network(e.to_string())
-        } else if let Some(status) = e.status() {
+        if let Some(status) = e.status() {
             AgorError::Http {
                 status: status.as_u16(),
                 message: e.to_string(),
             }
+        } else if is_transient_network_error(&e) {
+            AgorError::Network(e.to_string())
         } else {
             AgorError::Network(e.to_string())
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn is_transient_network_error(e: &reqwest::Error) -> bool {
+    e.is_connect() || e.is_timeout()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn is_transient_network_error(_e: &reqwest::Error) -> bool {
+    true
 }
 
 #[derive(Clone)]
@@ -78,11 +88,7 @@ pub struct AgorClient {
 
 impl AgorClient {
     pub fn new(logger: AppLogger) -> Self {
-        let http = Client::builder()
-            .danger_accept_invalid_certs(cfg!(debug_assertions))
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .expect("failed to build HTTP client");
+        let http = build_http_client();
 
         Self {
             http,
@@ -548,4 +554,15 @@ impl AgorClient {
         .await?;
         Ok(())
     }
+}
+
+fn build_http_client() -> Client {
+    let builder = Client::builder();
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let builder = builder
+        .danger_accept_invalid_certs(cfg!(debug_assertions))
+        .timeout(std::time::Duration::from_secs(30));
+
+    builder.build().expect("failed to build HTTP client")
 }

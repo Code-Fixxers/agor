@@ -15,7 +15,7 @@ serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1", features = ["v4", "v7", "serde"] }
+uuid = { version = "1", features = ["v4", "v7", "serde", "js"] }
 url = { version = "2", features = ["serde"] }
 dirs = "5"
 tracing = "0.1"
@@ -24,3 +24,15 @@ base64 = "0.22"
 pulldown-cmark = "0.12"
 thiserror = "2"
 sha2 = "0.10"
+
+[profile]
+
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+
+[profile.server-dev]
+inherits = "dev"
+
+[profile.android-dev]
+inherits = "dev"

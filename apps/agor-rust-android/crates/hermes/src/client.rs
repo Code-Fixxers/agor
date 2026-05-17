@@ -70,11 +70,7 @@ pub struct HermesClient {
 
 impl HermesClient {
     pub fn new() -> Self {
-        let http = Client::builder()
-            .timeout(std::time::Duration::from_secs(180))
-            .connect_timeout(std::time::Duration::from_secs(15))
-            .build()
-            .expect("failed to build HTTP client");
+        let http = build_http_client();
         Self { http }
     }
 
@@ -248,4 +244,15 @@ impl HermesClient {
         }
         url
     }
+}
+
+fn build_http_client() -> Client {
+    let builder = Client::builder();
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let builder = builder
+        .timeout(std::time::Duration::from_secs(180))
+        .connect_timeout(std::time::Duration::from_secs(15));
+
+    builder.build().expect("failed to build HTTP client")
 }

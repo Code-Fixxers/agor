@@ -106,12 +106,26 @@ pub fn HermesScreen(
             let client_clone = client.clone();
             let config_clone = config.clone();
             let tx_clone = tx.clone();
+
+            #[cfg(not(target_arch = "wasm32"))]
             let stream_task = tokio::spawn(async move {
                 client_clone.chat_stream(&config_clone, &messages, &tx_clone).await
             });
 
+            #[cfg(target_arch = "wasm32")]
+            spawn(async move {
+                if let Err(e) = client_clone.chat_stream(&config_clone, &messages, &tx_clone).await {
+                    let _ = tx_clone.send(HermesResponseEvent::Failed(e.to_string()));
+                }
+            });
+
             let mut state = HermesStreamTextState::new();
             while let Ok(event) = rx.recv().await {
+                let terminal_event = matches!(
+                    &event,
+                    HermesResponseEvent::Completed { .. } | HermesResponseEvent::Failed(_)
+                );
+
                 match event {
                     HermesResponseEvent::ReasoningDelta(delta) => {
                         if let Some(update) = state.on_reasoning_delta(&delta) {
@@ -143,8 +157,13 @@ pub fn HermesScreen(
                     }
                 }
                 sessions.set(store.read().sessions());
+
+                if terminal_event {
+                    break;
+                }
             }
 
+            #[cfg(not(target_arch = "wasm32"))]
             if let Err(e) = stream_task.await {
                 let msg = format!("Stream error: {e}");
                 store.read().fail_assistant(&sid, &turn_id, &msg);

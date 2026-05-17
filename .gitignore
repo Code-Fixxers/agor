@@ -39,6 +39,7 @@ yarn-error.log*
 # Monorepo
 .turbo/
 .pnpm-store/
+target/
 
 # Agor specific
 .agor/
