@@ -22,6 +22,7 @@ import {
   encryptApiKey,
   eq,
   hash,
+  inArray,
   insert,
   select,
   update,
@@ -125,6 +126,19 @@ export class UsersService {
     }
 
     return this.rowToUser(row);
+  }
+
+  /**
+   * Get multiple users by ID
+   */
+  async getMany(ids: UserID[]): Promise<User[]> {
+    if (!ids || ids.length === 0) {
+      return [];
+    }
+
+    const rows = await select(this.db).from(users).where(inArray(users.user_id, ids)).all();
+
+    return rows.map((row: typeof users.$inferSelect) => this.rowToUser(row));
   }
 
   /**

@@ -5,7 +5,7 @@
  */
 
 import type { EnvVarMetadata, User, UUID } from '@agor/core/types';
-import { eq, like } from 'drizzle-orm';
+import { eq, inArray, like } from 'drizzle-orm';
 import { normalizeStoredEnvMap, type RawStoredEnvVar } from '../../config/env-vars';
 import { generateId } from '../../lib/ids';
 import type { Database } from '../client';
@@ -211,6 +211,21 @@ export class UsersRepository implements BaseRepository<User, Partial<User>> {
       }
       throw error;
     }
+  }
+
+  /**
+   * Find multiple users by their IDs
+   */
+  async findByIds(ids: string[]): Promise<User[]> {
+    if (!ids || ids.length === 0) {
+      return [];
+    }
+
+    // Assume ids passed here are full UUIDs since this is usually called from internal services
+    // rather than user input.
+    const results = await select(this.db).from(users).where(inArray(users.user_id, ids)).all();
+
+    return results.map((row: UserRow) => this.rowToUser(row));
   }
 
   /**

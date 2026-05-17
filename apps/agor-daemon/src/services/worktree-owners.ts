@@ -20,7 +20,7 @@
 
 import type { WorktreeRepository } from '@agor/core/db';
 import { type Application, Forbidden, NotAuthenticated } from '@agor/core/feathers';
-import type { HookContext, User, UUID, WorktreeID } from '@agor/core/types';
+import type { HookContext, User, UserID, UUID, WorktreeID } from '@agor/core/types';
 import {
   createServiceToken,
   getDaemonUrl,
@@ -170,20 +170,21 @@ export function setupWorktreeOwnersService(
         const ownerIds = await worktreeRepo.getOwners(worktreeId as UUID);
 
         // Fetch user details for each owner (access service lazily)
-        const usersService = app.service('users');
-        const owners = await Promise.all(
-          ownerIds.map(async (userId): Promise<User | null> => {
-            try {
-              return (await usersService.get(userId)) as User;
-            } catch (error) {
-              console.error(`Failed to fetch user ${userId}:`, error);
-              return null;
-            }
-          })
-        );
+        // Cast to unknown then to specific interface to bypass Feathers strict interface and access the custom getMany method
+        const usersService = app.service('users') as unknown as {
+          getMany: (ids: UserID[]) => Promise<User[]>;
+        };
 
-        // Filter out any null users
-        return owners.filter((user): user is User => user !== null);
+        // ⚡ Bolt Performance Optimization:
+        // Replaced N+1 queries loop with a single batched lookup using usersService.getMany()
+        // This avoids making multiple sequential database round-trips for each owner ID.
+        try {
+          const owners = await usersService.getMany(ownerIds as UserID[]);
+          return owners;
+        } catch (error) {
+          console.error(`Failed to fetch owners for worktree ${worktreeId}:`, error);
+          return [];
+        }
       },
 
       async create(data: WorktreeOwnerCreateData, params: WorktreeOwnerParams): Promise<User> {
