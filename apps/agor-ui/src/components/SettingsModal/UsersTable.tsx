@@ -20,7 +20,7 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { mapToSortedArray } from '@/utils/mapHelpers';
 import { FormEmojiPickerInput } from '../EmojiPickerInput';
 import { UserSettingsModal } from './UserSettingsModal';
@@ -33,6 +33,8 @@ interface UsersTableProps {
   onCreate?: (data: CreateUserInput) => void;
   onUpdate?: (userId: string, updates: UpdateUserInput) => void;
   onDelete?: (userId: string) => void;
+  activeItemId?: string | null;
+  onCloseItem?: () => void;
 }
 
 export const UsersTable: React.FC<UsersTableProps> = ({
@@ -43,10 +45,18 @@ export const UsersTable: React.FC<UsersTableProps> = ({
   onCreate,
   onUpdate,
   onDelete,
+  activeItemId,
+  onCloseItem,
 }) => {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [form] = Form.useForm();
+
+  useEffect(() => {
+    if (activeItemId && userById.has(activeItemId)) {
+      setEditingUser(userById.get(activeItemId) || null);
+    }
+  }, [activeItemId, userById]);
 
   const handleDelete = (userId: string) => {
     onDelete?.(userId);
@@ -257,7 +267,10 @@ export const UsersTable: React.FC<UsersTableProps> = ({
       {/* Edit User Modal - reuses UserSettingsModal */}
       <UserSettingsModal
         open={!!editingUser}
-        onClose={() => setEditingUser(null)}
+        onClose={() => {
+          setEditingUser(null);
+          onCloseItem?.();
+        }}
         user={editingUser}
         mcpServerById={mcpServerById}
         client={client}
