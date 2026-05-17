@@ -282,7 +282,66 @@ class AgorApiClientTest {
         assertEquals("POST", request.method())
         assertEquals("/sessions/sess/1/prompt", request.uri().path)
         assertEquals("Bearer secret", request.headers().firstValue("authorization").orElse(null))
-        assertEquals("""{"prompt":"hello\nthere","messageSource":"agor"}""", request.bodyText())
+        assertEquals("""{"prompt":"hello\nthere","stream":true,"messageSource":"agor"}""", request.bodyText())
+    }
+
+    @Test
+    fun `loads all messages for a session as ordered chat transcript`() {
+        val transport = RecordingTransport(
+            ArrayDeque(
+                listOf(
+                    response(
+                        """
+                        {
+                          "data": [
+                            {
+                              "message_id": "msg-2",
+                              "session_id": "sess-1",
+                              "task_id": "task-1",
+                              "type": "assistant",
+                              "role": "assistant",
+                              "index": 2,
+                              "timestamp": "2026-05-17T10:00:01Z",
+                              "content_preview": "I can do that.",
+                              "content": [
+                                {"type": "text", "text": "I can do that."},
+                                {"type": "tool_use", "id": "tool-1", "name": "Read", "input": {"file_path": "/tmp/a.txt"}}
+                              ],
+                              "status": "complete"
+                            },
+                            {
+                              "message_id": "msg-1",
+                              "session_id": "sess-1",
+                              "type": "user",
+                              "role": "user",
+                              "index": 1,
+                              "timestamp": "2026-05-17T10:00:00Z",
+                              "content": "Please inspect this file."
+                            }
+                          ],
+                          "total": 2,
+                          "limit": 250,
+                          "skip": 0
+                        }
+                        """.trimIndent(),
+                    ),
+                ),
+            ),
+        )
+
+        val messages = AgorApiClient("http://localhost:3030", "secret", transport).loadSessionMessages("sess-1")
+
+        assertEquals(listOf("msg-1", "msg-2"), messages.map { it.messageId })
+        assertEquals(AgorMessageRole.USER, messages[0].role)
+        assertEquals("Please inspect this file.", messages[0].text)
+        assertEquals(AgorMessageRole.ASSISTANT, messages[1].role)
+        assertTrue(messages[1].text.contains("I can do that."))
+        assertTrue(messages[1].text.contains("Tool use: Read"))
+        assertTrue(messages[1].text.contains("\"file_path\":\"/tmp/a.txt\""))
+        assertEquals("complete", messages[1].status)
+        val query = transport.requests.single().uri().rawQuery
+        assertTrue(query.contains("session_id=sess-1"))
+        assertTrue(query.contains("%24sort%5Bindex%5D=1"))
     }
 
     @Test

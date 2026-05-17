@@ -50,12 +50,21 @@ class AgorApiClient(
     fun loadRepos(): List<AgorRepo> =
         getAllPages("/repos", RepoDto::class.java).map { it.toModel() }
 
+    fun loadSessionMessages(sessionId: String): List<AgorMessage> =
+        getAllPages(
+            "/messages",
+            MessageDto::class.java,
+            mapOf("session_id" to sessionId, "\$limit" to "250", "\$sort[index]" to "1"),
+        )
+            .map { it.toMessage(gson) }
+            .sortedBy { it.index }
+
     fun connectionBaseUrl(): String = normalizedBaseUrl.trimEnd('/')
 
     fun currentBearerToken(): String? = resolvedBearerToken
 
     fun promptSession(sessionId: String, prompt: String) {
-        postJson("/sessions/${sessionId.encodePath()}/prompt", """{"prompt":${prompt.json()},"messageSource":"agor"}""")
+        postJson("/sessions/${sessionId.encodePath()}/prompt", """{"prompt":${prompt.json()},"stream":true,"messageSource":"agor"}""")
     }
 
     fun stopSession(sessionId: String) {
@@ -331,11 +340,45 @@ class AgorApiClient(
         @SerializedName("session_id") val sessionId: String?,
         @SerializedName("task_id") val taskId: String?,
         val type: String?,
-        val content: JsonObject?,
+        val role: String?,
+        val index: Int?,
+        val timestamp: String?,
+        @SerializedName("content_preview") val contentPreview: String?,
+        val content: JsonElement?,
+        val status: String?,
     ) {
+        fun toMessage(gson: Gson): AgorMessage {
+            val extracted = content.toTranscriptText(gson).ifBlank { contentPreview.orEmpty() }
+            return AgorMessage(
+                messageId = messageId.orEmpty(),
+                sessionId = sessionId.orEmpty(),
+                taskId = taskId,
+                type = when (type) {
+                    "user" -> AgorMessageType.USER
+                    "assistant" -> AgorMessageType.ASSISTANT
+                    "system" -> AgorMessageType.SYSTEM
+                    "file-history-snapshot" -> AgorMessageType.FILE_HISTORY_SNAPSHOT
+                    "permission_request" -> AgorMessageType.PERMISSION_REQUEST
+                    "input_request" -> AgorMessageType.INPUT_REQUEST
+                    else -> AgorMessageType.UNKNOWN
+                },
+                role = when (role ?: type) {
+                    "user" -> AgorMessageRole.USER
+                    "assistant" -> AgorMessageRole.ASSISTANT
+                    "system" -> AgorMessageRole.SYSTEM
+                    else -> AgorMessageRole.UNKNOWN
+                },
+                index = index ?: 0,
+                timestamp = timestamp,
+                contentPreview = contentPreview.orEmpty(),
+                text = extracted,
+                status = status,
+            )
+        }
+
         fun toPermissionRequest(gson: Gson): AgorPermissionRequest? {
             if (type != "permission_request") return null
-            val contentObj = content ?: return null
+            val contentObj = content?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
             val status = contentObj.string("status")
             if (status != "pending") return null
             val requestId = contentObj.string("request_id") ?: return null
@@ -409,4 +452,62 @@ private fun JsonObject.string(key: String): String? {
 private fun JsonObject.int(key: String): Int? {
     val value = get(key) ?: return null
     return if (value.isJsonPrimitive && value.asJsonPrimitive.isNumber) value.asInt else null
+}
+
+private fun JsonElement?.toTranscriptText(gson: Gson): String {
+    val value = this ?: return ""
+    return when {
+        value.isJsonNull -> ""
+        value.isJsonPrimitive -> {
+            val primitive = value.asJsonPrimitive
+            if (primitive.isString) primitive.asString else primitive.toString()
+        }
+        value.isJsonArray -> value.asJsonArray
+            .mapNotNull { it.toContentBlockText(gson).takeIf(String::isNotBlank) }
+            .joinToString("\n\n")
+        value.isJsonObject -> value.asJsonObject.toStructuredContentText(gson)
+        else -> gson.toJson(value)
+    }
+}
+
+private fun JsonElement.toContentBlockText(gson: Gson): String {
+    if (!isJsonObject) return toTranscriptText(gson)
+    val obj = asJsonObject
+    return when (obj.string("type")) {
+        "text" -> obj.string("text").orEmpty()
+        "tool_use" -> buildString {
+            append("Tool use: ")
+            append(obj.string("name") ?: "tool")
+            obj.get("input")?.let {
+                append('\n')
+                append(gson.toJson(it))
+            }
+        }
+        "tool_result" -> buildString {
+            append("Tool result")
+            obj.get("content")?.let {
+                append('\n')
+                append(it.toTranscriptText(gson))
+            }
+        }
+        "thinking" -> obj.string("thinking")?.let { "Thinking\n$it" }.orEmpty()
+        "image" -> "Image"
+        else -> gson.toJson(obj)
+    }
+}
+
+private fun JsonObject.toStructuredContentText(gson: Gson): String {
+    val toolName = string("tool_name")
+    val requestId = string("request_id")
+    if (!toolName.isNullOrBlank() || !requestId.isNullOrBlank()) {
+        return listOfNotNull(
+            toolName?.let { "Tool: $it" },
+            requestId?.let { "Request: $it" },
+            string("status")?.let { "Status: $it" },
+            get("tool_input")?.let { "Input: ${gson.toJson(it)}" },
+        ).joinToString("\n")
+    }
+    string("text")?.let { return it }
+    string("message")?.let { return it }
+    return gson.toJson(this)
 }

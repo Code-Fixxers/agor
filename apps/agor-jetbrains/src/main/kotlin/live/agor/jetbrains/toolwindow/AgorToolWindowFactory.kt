@@ -19,17 +19,21 @@ import com.intellij.util.ui.JBUI
 import live.agor.jetbrains.client.AgorApiClient
 import live.agor.jetbrains.client.AgorCreateSessionRequest
 import live.agor.jetbrains.client.AgorCreateWorktreeRequest
+import live.agor.jetbrains.client.AgorMessage
+import live.agor.jetbrains.client.AgorMessageRole
 import live.agor.jetbrains.client.AgorPermissionRequest
 import live.agor.jetbrains.client.AgorPermissionScope
 import live.agor.jetbrains.client.AgorSession
 import live.agor.jetbrains.client.AgorSessionStatus
 import live.agor.jetbrains.client.AgorSocketClient
+import live.agor.jetbrains.client.AgorSocketEvent
 import live.agor.jetbrains.client.AgorSpawnSessionRequest
 import live.agor.jetbrains.client.AgorSnapshot
 import live.agor.jetbrains.client.AgorWorktree
 import live.agor.jetbrains.settings.AgorSettings
 import live.agor.jetbrains.settings.AgorSettingsDialog
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
@@ -84,6 +88,10 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
     private var activePromptSessionId: String? = null
     private var activePrompt: JBTextArea? = null
     private var promptFocusSessionToRestore: String? = null
+    private val sessionMessages = mutableMapOf<String, List<AgorMessage>>()
+    private val sessionMessageErrors = mutableMapOf<String, String>()
+    private val loadingSessionMessages = mutableSetOf<String>()
+    private val streamingMessages = mutableMapOf<String, LiveSessionMessage>()
     val component: JPanel = JPanel(BorderLayout()).apply {
         background = AgorTheme.SurfaceBase
     }
@@ -363,6 +371,7 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
     }
 
     private fun showSession(session: AgorSession) {
+        ensureSessionMessages(session.sessionId)
         val prompt = JBTextArea(4, 32).apply {
             text = promptDrafts[session.sessionId].orEmpty()
             lineWrap = true
@@ -385,10 +394,20 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
         })
 
         val body = messageStack().apply {
-            add(infoCard(
-                "Session context",
-                listOf("Status: ${session.status}", "Agent: ${session.agenticTool}", "ID: ${session.sessionId}"),
-            ))
+            val messages = sessionMessages[session.sessionId]
+            val error = sessionMessageErrors[session.sessionId]
+            when {
+                messages != null && messages.isNotEmpty() -> {
+                    messages.forEach { add(messageCard(it)) }
+                }
+                messages != null -> add(infoCard("No messages yet", listOf("This session has no persisted conversation messages.")))
+                error != null -> add(infoCard("Could not load conversation", listOf(error)))
+                else -> add(infoCard("Loading conversation", listOf("Fetching previous messages from Agor...")))
+            }
+            streamingMessages.values
+                .filter { it.sessionId == session.sessionId }
+                .sortedWith(compareBy<LiveSessionMessage> { it.index ?: Int.MAX_VALUE }.thenBy { it.messageId ?: it.sessionId })
+                .forEach { add(streamingMessageCard(it)) }
             snapshot.permissionRequests
                 .filter { it.sessionId == session.sessionId }
                 .forEach { add(permissionPanel(session.sessionId, it)) }
@@ -419,6 +438,10 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
         val send = actionButton("Send", AgorIcons.Send, primary = true) {
             val text = prompt.text.trim()
             if (text.isNotEmpty()) runClientAction(AgorNodeKey(AgorTreeNodeKind.SESSION, session.sessionId)) {
+                SwingUtilities.invokeLater {
+                    sessionMessages.remove(session.sessionId)
+                    sessionMessageErrors.remove(session.sessionId)
+                }
                 promptSession(session.sessionId, text)
                 SwingUtilities.invokeLater {
                     promptDrafts.remove(session.sessionId)
@@ -579,6 +602,35 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
         }
     }
 
+    private fun ensureSessionMessages(sessionId: String) {
+        if (sessionMessages.containsKey(sessionId) || sessionMessageErrors.containsKey(sessionId) || !loadingSessionMessages.add(sessionId)) return
+        val agorUrl = settings.state.agorUrl
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val client = AgorApiClient(agorUrl, settings.agorToken)
+            runCatching { client.loadSessionMessages(sessionId) }
+                .onSuccess { loaded ->
+                    SwingUtilities.invokeLater {
+                        loadingSessionMessages.remove(sessionId)
+                        sessionMessageErrors.remove(sessionId)
+                        sessionMessages[sessionId] = loaded
+                        val persistedIds = loaded.map { it.messageId }.toSet()
+                        streamingMessages.entries.removeIf { (_, live) ->
+                            live.sessionId == sessionId && live.messageId != null && live.messageId in persistedIds
+                        }
+                        rerenderSessionIfSelected(sessionId)
+                    }
+                }
+                .onFailure { error ->
+                    SwingUtilities.invokeLater {
+                        loadingSessionMessages.remove(sessionId)
+                        sessionMessageErrors[sessionId] = error.userFacingMessage("Could not load conversation")
+                        LOG.warn("Could not load Agor session messages", error)
+                        rerenderSessionIfSelected(sessionId)
+                    }
+                }
+        }
+    }
+
     private fun showEmptyInspector() {
         val activeSessions = snapshot.sessions.count { it.status == AgorSessionStatus.RUNNING || it.status == AgorSessionStatus.QUEUED }
         val pendingPermissions = snapshot.permissionRequests.size
@@ -716,10 +768,58 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             alignmentX = JComponent.LEFT_ALIGNMENT
             border = JBUI.Borders.compound(AgorTheme.PanelBorder, JBUI.Borders.empty(12, 14))
-            add(AgorTheme.label(title, 12f, bold = true, color = AgorTheme.TextPrimary).leftAligned())
+            add(selectableText(title, 12f, AgorTheme.TextPrimary, bold = true).leftAligned())
             if (lines.isNotEmpty()) add(Box.createVerticalStrut(JBUI.scale(8)))
-            lines.forEach { add(AgorTheme.label(it, 11f, color = AgorTheme.TextSecondary).leftAligned()) }
+            lines.forEach { add(selectableText(it, 11f, AgorTheme.TextSecondary).leftAligned()) }
             add(Box.createVerticalStrut(JBUI.scale(8)))
+            maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }
+
+    private fun messageCard(message: AgorMessage): JPanel =
+        chatCard(message.role.displayName(), message.timestamp, message.text.ifBlank { message.contentPreview }, message.status)
+
+    private fun streamingMessageCard(message: LiveSessionMessage): JPanel {
+        val text = buildString {
+            if (message.thinking.isNotBlank()) {
+                append("Thinking\n")
+                append(message.thinking)
+                if (message.text.isNotBlank()) append("\n\n")
+            }
+            append(message.text.ifBlank { "Streaming..." })
+            message.error?.let {
+                append("\n\n")
+                append(it)
+            }
+        }
+        return chatCard("Agent", message.timestamp, text, if (message.finished) "stream complete" else "streaming")
+    }
+
+    private fun chatCard(author: String, timestamp: String?, text: String, status: String?): JPanel =
+        AgorTheme.panel(AgorTheme.SurfaceRaised).apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            alignmentX = JComponent.LEFT_ALIGNMENT
+            border = JBUI.Borders.compound(AgorTheme.PanelBorder, JBUI.Borders.empty(12, 14))
+
+            val header = listOfNotNull(author, timestamp, status?.takeIf { it.isNotBlank() }).joinToString("  /  ")
+            add(selectableText(header, 11f, AgorTheme.TextMuted, bold = true).leftAligned())
+            add(Box.createVerticalStrut(JBUI.scale(8)))
+            add(selectableText(text, 12f, AgorTheme.TextPrimary).leftAligned())
+            add(Box.createVerticalStrut(JBUI.scale(10)))
+            maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }
+
+    private fun selectableText(text: String, size: Float, color: Color, bold: Boolean = false): JBTextArea =
+        JBTextArea(text).apply {
+            isEditable = false
+            isOpaque = false
+            lineWrap = true
+            wrapStyleWord = true
+            foreground = color
+            caretColor = AgorTheme.Accent
+            selectedTextColor = AgorTheme.TextPrimary
+            selectionColor = AgorTheme.AccentMuted
+            border = JBUI.Borders.empty()
+            font = font.deriveFont(if (bold) Font.BOLD else Font.PLAIN, size)
             maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
         }
 
@@ -771,8 +871,8 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
 
         socketClient?.disconnect()
         socketConnectionKey = connectionKey
-        socketClient = AgorSocketClient(agorUrl, agorToken) {
-            SwingUtilities.invokeLater { scheduleBackgroundRefresh() }
+        socketClient = AgorSocketClient(agorUrl, agorToken) { event ->
+            SwingUtilities.invokeLater { handleSocketEvent(event) }
         }.also {
             runCatching { it.connect() }
                 .onFailure { error ->
@@ -783,15 +883,81 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
         }
     }
 
+    private fun handleSocketEvent(event: AgorSocketEvent) {
+        when (event) {
+            is AgorSocketEvent.SnapshotChanged -> {
+                event.messageId?.let { streamingMessages.remove(it) }
+                event.sessionId?.let {
+                    sessionMessages.remove(it)
+                    sessionMessageErrors.remove(it)
+                }
+                scheduleBackgroundRefresh()
+            }
+            is AgorSocketEvent.StreamingStarted -> {
+                if (event.sessionId.isBlank()) return
+                val key = event.streamKey()
+                streamingMessages[key] = streamingMessages[key]?.copy(
+                    taskId = event.taskId,
+                    index = event.index,
+                    timestamp = event.timestamp,
+                    finished = false,
+                    error = null,
+                ) ?: LiveSessionMessage(
+                    sessionId = event.sessionId,
+                    messageId = event.messageId,
+                    taskId = event.taskId,
+                    index = event.index,
+                    timestamp = event.timestamp,
+                )
+                rerenderSessionIfSelected(event.sessionId)
+            }
+            is AgorSocketEvent.StreamingChunk -> {
+                val key = event.streamKey()
+                val current = streamingMessages[key] ?: LiveSessionMessage(
+                    sessionId = event.sessionId,
+                    messageId = event.messageId,
+                )
+                streamingMessages[key] = if (event.thinking) {
+                    current.copy(thinking = current.thinking + event.text, finished = false)
+                } else {
+                    current.copy(text = current.text + event.text, finished = false)
+                }
+                rerenderSessionIfSelected(event.sessionId)
+            }
+            is AgorSocketEvent.StreamingEnded -> {
+                streamingMessages[event.streamKey()]?.let {
+                    streamingMessages[event.streamKey()] = it.copy(finished = true)
+                }
+                scheduleBackgroundRefresh()
+                rerenderSessionIfSelected(event.sessionId)
+            }
+            is AgorSocketEvent.StreamingFailed -> {
+                val key = event.streamKey()
+                val current = streamingMessages[key] ?: LiveSessionMessage(
+                    sessionId = event.sessionId,
+                    messageId = event.messageId,
+                )
+                streamingMessages[key] = current.copy(error = event.error, finished = true)
+                rerenderSessionIfSelected(event.sessionId)
+            }
+        }
+    }
+
     private fun scheduleBackgroundRefresh() {
         socketRefreshTimer?.stop()
-        socketRefreshTimer = Timer(750) {
+        socketRefreshTimer = Timer(250) {
             socketRefreshTimer = null
             refresh(interactive = false)
         }.apply {
             isRepeats = false
             start()
         }
+    }
+
+    private fun rerenderSessionIfSelected(sessionId: String) {
+        val ref = selectedNodeRef() ?: return
+        if (ref.kind != AgorTreeNodeKind.SESSION || ref.id != sessionId) return
+        snapshot.sessions.firstOrNull { it.sessionId == sessionId }?.let { showSession(it) }
     }
 
     private fun selectedWorktree(): AgorWorktree? {
@@ -846,6 +1012,34 @@ internal data class AgorNodeRef(val kind: AgorTreeNodeKind, val id: String, val 
 internal data class AgorNodeKey(val kind: AgorTreeNodeKind, val id: String)
 
 internal fun AgorNodeRef.key(): AgorNodeKey = AgorNodeKey(kind, id)
+
+private data class LiveSessionMessage(
+    val sessionId: String,
+    val messageId: String? = null,
+    val taskId: String? = null,
+    val index: Int? = null,
+    val timestamp: String? = null,
+    val text: String = "",
+    val thinking: String = "",
+    val finished: Boolean = false,
+    val error: String? = null,
+)
+
+private fun AgorSocketEvent.StreamingStarted.streamKey(): String = messageId ?: sessionId
+
+private fun AgorSocketEvent.StreamingChunk.streamKey(): String = messageId ?: sessionId
+
+private fun AgorSocketEvent.StreamingEnded.streamKey(): String = messageId ?: sessionId
+
+private fun AgorSocketEvent.StreamingFailed.streamKey(): String = messageId ?: sessionId
+
+private fun AgorMessageRole.displayName(): String =
+    when (this) {
+        AgorMessageRole.USER -> "You"
+        AgorMessageRole.ASSISTANT -> "Agent"
+        AgorMessageRole.SYSTEM -> "System"
+        AgorMessageRole.UNKNOWN -> "Message"
+    }
 
 private class AgorTreeRenderer(
     private val snapshotProvider: () -> AgorSnapshot,

@@ -38,6 +38,57 @@ data class AgorSession(
     val status: AgorSessionStatus,
 )
 
+enum class AgorMessageRole {
+    USER,
+    ASSISTANT,
+    SYSTEM,
+    UNKNOWN,
+}
+
+enum class AgorMessageType {
+    USER,
+    ASSISTANT,
+    SYSTEM,
+    FILE_HISTORY_SNAPSHOT,
+    PERMISSION_REQUEST,
+    INPUT_REQUEST,
+    UNKNOWN,
+}
+
+data class AgorMessage(
+    val messageId: String,
+    val sessionId: String,
+    val taskId: String?,
+    val type: AgorMessageType,
+    val role: AgorMessageRole,
+    val index: Int,
+    val timestamp: String?,
+    val contentPreview: String,
+    val text: String,
+    val status: String?,
+)
+
+sealed class AgorSocketEvent {
+    data class SnapshotChanged(val sessionId: String? = null, val messageId: String? = null) : AgorSocketEvent()
+    data class StreamingStarted(
+        val sessionId: String,
+        val messageId: String?,
+        val taskId: String?,
+        val index: Int?,
+        val timestamp: String?,
+    ) : AgorSocketEvent()
+
+    data class StreamingChunk(
+        val sessionId: String,
+        val messageId: String?,
+        val text: String,
+        val thinking: Boolean = false,
+    ) : AgorSocketEvent()
+
+    data class StreamingEnded(val sessionId: String, val messageId: String?) : AgorSocketEvent()
+    data class StreamingFailed(val sessionId: String, val messageId: String?, val error: String) : AgorSocketEvent()
+}
+
 enum class AgorPermissionScope(val wireName: String) {
     ONCE("once"),
     PROJECT("project"),

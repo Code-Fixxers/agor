@@ -10,7 +10,7 @@ import java.net.URI
 class AgorSocketClient(
     private val baseUrl: String,
     private val token: String?,
-    private val onAgorEvent: () -> Unit,
+    private val onAgorEvent: (AgorSocketEvent) -> Unit,
 ) {
     private var socket: Socket? = null
 
@@ -27,14 +27,49 @@ class AgorSocketClient(
 
         socket = IO.socket(URI(baseUrl), options).apply {
             on(Socket.EVENT_CONNECT) { authenticate(this) }
-            on("sessions patched") { onAgorEvent() }
-            on("tasks created") { onAgorEvent() }
-            on("tasks patched") { onAgorEvent() }
-            on("messages created") { onAgorEvent() }
-            on("messages patched") { onAgorEvent() }
-            on("messages permission_resolved") { onAgorEvent() }
-            on("sessions permission:request") { onAgorEvent() }
-            on("sessions permission:timeout") { onAgorEvent() }
+            on("sessions patched") { onAgorEvent(AgorSocketEvent.SnapshotChanged(it.sessionId())) }
+            on("tasks created") { onAgorEvent(AgorSocketEvent.SnapshotChanged(it.sessionId())) }
+            on("tasks patched") { onAgorEvent(AgorSocketEvent.SnapshotChanged(it.sessionId())) }
+            on("messages created") { onAgorEvent(AgorSocketEvent.SnapshotChanged(it.sessionId(), it.messageId())) }
+            on("messages patched") { onAgorEvent(AgorSocketEvent.SnapshotChanged(it.sessionId(), it.messageId())) }
+            on("messages permission_resolved") { onAgorEvent(AgorSocketEvent.SnapshotChanged(it.sessionId())) }
+            on("sessions permission:request") { onAgorEvent(AgorSocketEvent.SnapshotChanged(it.sessionId())) }
+            on("sessions permission:timeout") { onAgorEvent(AgorSocketEvent.SnapshotChanged(it.sessionId())) }
+            on("messages streaming:start") { args ->
+                args.jsonObject()?.let {
+                    onAgorEvent(
+                        AgorSocketEvent.StreamingStarted(
+                            sessionId = it.optString("session_id"),
+                            messageId = it.optNullableString("message_id"),
+                            taskId = it.optNullableString("task_id"),
+                            index = it.optNullableInt("index"),
+                            timestamp = it.optNullableString("timestamp"),
+                        ),
+                    )
+                }
+            }
+            on("messages streaming:chunk") { args ->
+                args.streamingChunk(thinking = false)?.let(onAgorEvent)
+            }
+            on("messages thinking:chunk") { args ->
+                args.streamingChunk(thinking = true)?.let(onAgorEvent)
+            }
+            on("messages streaming:end") { args ->
+                args.jsonObject()?.let {
+                    onAgorEvent(AgorSocketEvent.StreamingEnded(it.optString("session_id"), it.optNullableString("message_id")))
+                }
+            }
+            on("messages streaming:error") { args ->
+                args.jsonObject()?.let {
+                    onAgorEvent(
+                        AgorSocketEvent.StreamingFailed(
+                            sessionId = it.optString("session_id"),
+                            messageId = it.optNullableString("message_id"),
+                            error = it.optString("error", "Streaming failed"),
+                        ),
+                    )
+                }
+            }
             connect()
         }
     }
@@ -52,3 +87,27 @@ class AgorSocketClient(
         socket.emit("create", "authentication", payload)
     }
 }
+
+private fun Array<Any>.jsonObject(): JSONObject? = firstOrNull() as? JSONObject
+
+private fun Array<Any>.sessionId(): String? = jsonObject()?.optNullableString("session_id")
+
+private fun Array<Any>.messageId(): String? = jsonObject()?.optNullableString("message_id")
+
+private fun Array<Any>.streamingChunk(thinking: Boolean): AgorSocketEvent.StreamingChunk? {
+    val obj = jsonObject() ?: return null
+    val sessionId = obj.optString("session_id").takeIf { it.isNotBlank() } ?: return null
+    val text = obj.optNullableString("chunk") ?: obj.optNullableString("text") ?: return null
+    return AgorSocketEvent.StreamingChunk(
+        sessionId = sessionId,
+        messageId = obj.optNullableString("message_id"),
+        text = text,
+        thinking = thinking,
+    )
+}
+
+private fun JSONObject.optNullableString(key: String): String? =
+    optString(key).takeIf { it.isNotBlank() && it != "null" }
+
+private fun JSONObject.optNullableInt(key: String): Int? =
+    if (has(key) && !isNull(key)) optInt(key) else null
