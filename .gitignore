@@ -35,6 +35,7 @@ yarn-error.log*
 
 # Claude Code
 .claude/
+.superpowers/
 
 # Monorepo
 .turbo/
