@@ -1121,15 +1121,8 @@ export class UnixIntegrationService {
     const worktreesDir = getUserWorktreesDir(user.unix_username, this.config.homeBase);
 
     // Get all worktrees the user owns
-    const allWorktrees = await this.worktreeRepo.findAll();
-    const ownedWorktreeIds = new Set<string>();
-
-    for (const wt of allWorktrees) {
-      const isOwner = await this.worktreeRepo.isOwner(wt.worktree_id, userId);
-      if (isOwner) {
-        ownedWorktreeIds.add(wt.worktree_id);
-      }
-    }
+    const ownedWorktrees = await this.worktreeRepo.findOwnedWorktrees(userId);
+    const ownedWorktreeIds = new Set<string>(ownedWorktrees.map((wt) => wt.worktree_id));
 
     // Remove broken symlinks
     await this.executor.exec(SymlinkCommands.removeBrokenSymlinks(worktreesDir));

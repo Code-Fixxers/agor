@@ -518,6 +518,29 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
    * @param filter.archived - If true, return only archived. If false, only non-archived. If undefined, return all.
    * @returns Array of accessible worktrees
    */
+  /**
+   * Find all worktrees owned by a user
+   *
+   * Uses an INNER JOIN to fetch worktrees directly in one query
+   *
+   * @param userId - User ID to check ownership for
+   * @returns Array of owned worktrees
+   */
+  async findOwnedWorktrees(userId: UUID): Promise<Worktree[]> {
+    const rows = await select(this.db, getTableColumns(worktrees))
+      .from(worktrees)
+      .innerJoin(
+        worktreeOwners,
+        and(
+          eq(worktreeOwners.worktree_id, worktrees.worktree_id),
+          eq(worktreeOwners.user_id, userId)
+        )
+      )
+      .all();
+
+    return rows.map((row: WorktreeRow) => this.rowToWorktree(row));
+  }
+
   async findAccessibleWorktrees(
     userId: UUID,
     filter?: { archived?: boolean }
