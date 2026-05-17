@@ -189,7 +189,7 @@ jobs:
           STABLE_APK="dist/agor-rust-android.apk"
           cp "$APK_PATH" "$STABLE_APK"
           APK_SIZE=$(stat -c%s "$STABLE_APK")
-          cat > dist/agor-rust-android-manifest.json <<EOF
+          cat > dist/agor-android-manifest.json <<EOF
           {
             "versionCode": ${VERSION_CODE},
             "versionName": "${VERSION_NAME}",
@@ -203,7 +203,7 @@ jobs:
             --notes "$NOTES" \
             --prerelease \
             "$STABLE_APK" \
-            "dist/agor-rust-android-manifest.json"
+            "dist/agor-android-manifest.json"
 
       - name: Publish rolling rust-hermes-android-latest release
         if: github.ref == 'refs/heads/rust-android-client' || github.ref == 'refs/heads/cfx/agor'
@@ -232,7 +232,7 @@ jobs:
           STABLE_APK="dist/hermes-rust-android.apk"
           cp "$APK_PATH" "$STABLE_APK"
           APK_SIZE=$(stat -c%s "$STABLE_APK")
-          cat > dist/hermes-rust-android-manifest.json <<EOF
+          cat > dist/hermes-android-manifest.json <<EOF
           {
             "versionCode": ${VERSION_CODE},
             "versionName": "${VERSION_NAME}",
@@ -246,7 +246,7 @@ jobs:
             --notes "$NOTES" \
             --prerelease \
             "$STABLE_APK" \
-            "dist/hermes-rust-android-manifest.json"
+            "dist/hermes-android-manifest.json"
 
       - name: Summary
         env:
