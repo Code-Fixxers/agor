@@ -39,11 +39,7 @@ pub fn Sidebar(
     let user_info = use_memo(move || {
         let a = auth.read();
         match &a.user {
-            Some(u) => format!(
-                "{} {}",
-                u.emoji.as_deref().unwrap_or(""),
-                u.name
-            ),
+            Some(u) => format!("{} {}", u.emoji.as_deref().unwrap_or(""), u.name),
             None => "Not connected".to_string(),
         }
     });
@@ -53,7 +49,10 @@ pub fn Sidebar(
     rsx! {
         div { class: "sidebar",
             div { class: "sidebar-header",
-                span { class: "user-info", "{user_info}" }
+                div { class: "sidebar-heading",
+                    span { class: "sidebar-title", "Agor" }
+                    span { class: "user-info", "{user_info}" }
+                }
                 button {
                     class: "icon-btn",
                     onclick: move |_| on_open_settings.call(()),
@@ -75,7 +74,7 @@ pub fn Sidebar(
             div { class: "sidebar-search",
                 input {
                     r#type: "text",
-                    placeholder: "Search sessions...",
+                    placeholder: "Filter worktrees or sessions...",
                     value: "{search_query}",
                     oninput: move |e| search_query.set(e.value()),
                 }

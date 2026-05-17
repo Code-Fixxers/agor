@@ -19,7 +19,7 @@ pub fn PromptInputBar(enabled: bool, session_status: SessionStatus) -> Element {
         SessionStatus::AwaitingPermission => "Agent needs permission...",
         SessionStatus::AwaitingInput => "Agent needs input...",
         SessionStatus::Stopping => "Stopping...",
-        _ => "Send a message...",
+        _ => "Prompt this Agor session...",
     };
 
     let can_send = enabled && !draft.read().trim().is_empty() && !*sending.read();
@@ -65,6 +65,7 @@ pub fn PromptInputBar(enabled: bool, session_status: SessionStatus) -> Element {
         div { class: "prompt-input-bar",
             div { class: "input-row",
                 button { class: "icon-btn attach-btn", "📎" }
+                button { class: "icon-btn intent-btn", "⚡" }
 
                 textarea {
                     class: "prompt-textarea",

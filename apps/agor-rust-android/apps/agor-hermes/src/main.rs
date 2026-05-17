@@ -1,16 +1,18 @@
 use dioxus::prelude::*;
 
+use agor_hermes::models::HermesConfig;
+use agor_hermes::session_store::HermesSessionStore;
+use agor_hermes::ui::hermes_screen::HermesScreen;
+use agor_hermes::ui::setup_screen::HermesSetupScreen;
 use agor_lib::state::auth::{AuthState, AuthStore};
 use agor_lib::state::chat::ChatStore;
 use agor_lib::state::navigation::NavStore;
 use agor_lib::state::storage::AppStorage;
 use agor_lib::ui::app_shell::AppShell;
 use agor_lib::ui::login::LoginScreen;
-use agor_hermes::models::HermesConfig;
-use agor_hermes::session_store::HermesSessionStore;
-use agor_hermes::ui::hermes_screen::HermesScreen;
-use agor_hermes::ui::setup_screen::HermesSetupScreen;
 use agor_shared::update::AppMetadata;
+
+const MAIN_CSS: Asset = asset!("/assets/main.css");
 
 fn main() {
     tracing_subscriber::fmt()
@@ -45,69 +47,79 @@ fn App() -> Element {
     let mut hermes_config = use_signal(|| load_hermes_config());
     let mut active_tab = use_signal(|| AppTab::Agor);
 
-    let is_authenticated = use_memo(move || {
-        matches!(auth.read().state, AuthState::Authenticated { .. })
-    });
+    let is_authenticated =
+        use_memo(move || matches!(auth.read().state, AuthState::Authenticated { .. }));
 
     let hermes_configured = use_memo(move || {
         let c = hermes_config.read();
         c.base_url.is_some() && c.token.is_some()
     });
 
-    if !is_authenticated() {
-        return rsx! { LoginScreen {} };
-    }
-
     rsx! {
-        div { class: "app-root",
-            // Tab bar at the bottom
-            div { class: "tab-bar",
-                button {
-                    class: if *active_tab.read() == AppTab::Agor { "tab active" } else { "tab" },
-                    onclick: move |_| active_tab.set(AppTab::Agor),
-                    "Agor"
-                }
-                button {
-                    class: if matches!(*active_tab.read(), AppTab::Hermes | AppTab::HermesSetup) { "tab active" } else { "tab" },
-                    onclick: move |_| {
-                        if hermes_configured() {
-                            active_tab.set(AppTab::Hermes);
-                        } else {
-                            active_tab.set(AppTab::HermesSetup);
-                        }
-                    },
-                    "Hermes"
-                }
-            }
+        document::Stylesheet { href: MAIN_CSS }
 
-            // Content
-            match active_tab.read().clone() {
-                AppTab::Agor => rsx! {
-                    AppShell {}
-                },
-                AppTab::Hermes => rsx! {
-                    HermesScreen {
-                        config: hermes_config.read().clone(),
-                        on_open_settings: move |_| active_tab.set(AppTab::HermesSetup),
+        if !is_authenticated() {
+            LoginScreen {}
+        } else {
+            div { class: "app-root connected-shell",
+                nav { class: "app-rail", "aria-label": "App surfaces",
+                    button {
+                        class: if *active_tab.read() == AppTab::Agor { "rail-item active" } else { "rail-item" },
+                        title: "Agor",
+                        onclick: move |_| active_tab.set(AppTab::Agor),
+                        span { class: "rail-mark", "A" }
                     }
-                },
-                AppTab::HermesSetup => rsx! {
-                    HermesSetupScreen {
-                        config: hermes_config.read().clone(),
-                        on_save: move |new_config: HermesConfig| {
-                            save_hermes_config(&new_config);
-                            hermes_config.set(new_config);
-                            active_tab.set(AppTab::Hermes);
-                        },
-                        on_close: move |_| {
+                    button {
+                        class: if matches!(*active_tab.read(), AppTab::Hermes | AppTab::HermesSetup) { "rail-item active" } else { "rail-item" },
+                        title: "Hermes",
+                        onclick: move |_| {
                             if hermes_configured() {
                                 active_tab.set(AppTab::Hermes);
                             } else {
-                                active_tab.set(AppTab::Agor);
+                                active_tab.set(AppTab::HermesSetup);
+                            }
+                        },
+                        span { class: "rail-mark", "H" }
+                    }
+                    div { class: "rail-spacer" }
+                    button {
+                        class: if *active_tab.read() == AppTab::HermesSetup { "rail-item active" } else { "rail-item" },
+                        title: "Hermes settings",
+                        onclick: move |_| active_tab.set(AppTab::HermesSetup),
+                        span { class: "rail-mark", "⚙" }
+                    }
+                }
+
+                main { class: "app-surface",
+                    match active_tab.read().clone() {
+                        AppTab::Agor => rsx! {
+                            AppShell {}
+                        },
+                        AppTab::Hermes => rsx! {
+                            HermesScreen {
+                                config: hermes_config.read().clone(),
+                                on_open_settings: move |_| active_tab.set(AppTab::HermesSetup),
+                            }
+                        },
+                        AppTab::HermesSetup => rsx! {
+                            HermesSetupScreen {
+                                config: hermes_config.read().clone(),
+                                on_save: move |new_config: HermesConfig| {
+                                    save_hermes_config(&new_config);
+                                    hermes_config.set(new_config);
+                                    active_tab.set(AppTab::Hermes);
+                                },
+                                on_close: move |_| {
+                                    if hermes_configured() {
+                                        active_tab.set(AppTab::Hermes);
+                                    } else {
+                                        active_tab.set(AppTab::Agor);
+                                    }
+                                },
                             }
                         },
                     }
-                },
+                }
             }
         }
     }

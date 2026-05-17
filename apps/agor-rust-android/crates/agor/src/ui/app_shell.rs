@@ -44,15 +44,16 @@ pub fn AppShell() -> Element {
                     Route::Empty => rsx! {
                         div { class: "empty-home",
                             div { class: "empty-home-content",
-                                h2 { "Agor" }
-                                p { "Select a session from the sidebar to start chatting." }
+                                span { class: "empty-kicker", "AGOR" }
+                                h2 { "What can I help with?" }
+                                p { "Select a session or worktree from the list to continue orchestration." }
                                 button {
-                                    class: "btn-primary",
+                                    class: "btn-secondary nav-open-btn",
                                     onclick: move |_| {
                                         let current = *drawer_open.read();
                                         drawer_open.set(!current);
                                     },
-                                    "Open Navigation"
+                                    "Open list"
                                 }
                             }
                         }
