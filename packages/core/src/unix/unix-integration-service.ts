@@ -734,11 +734,15 @@ export class UnixIntegrationService {
     // Get all worktrees for this repo
     const worktrees = await this.worktreeRepo.findAll({ repo_id: repoId });
 
-    // Check if user is owner of any worktree in this repo
-    for (const wt of worktrees) {
-      const isOwner = await this.worktreeRepo.isOwner(wt.worktree_id, userId as UserID);
-      if (isOwner) {
-        return true;
+    if (worktrees.length > 0) {
+      const worktreeIds = worktrees.map((wt) => wt.worktree_id);
+      const ownersMap = await this.worktreeRepo.bulkLoadOwners(worktreeIds);
+
+      // Check if user is owner of any worktree in this repo
+      for (const owners of ownersMap.values()) {
+        if (owners.includes(userId)) {
+          return true;
+        }
       }
     }
 
@@ -760,10 +764,14 @@ export class UnixIntegrationService {
     const worktrees = await this.worktreeRepo.findAll({ repo_id: repoId });
     const ownerIds = new Set<string>();
 
-    for (const wt of worktrees) {
-      const wtOwners = await this.worktreeRepo.getOwners(wt.worktree_id);
-      for (const ownerId of wtOwners) {
-        ownerIds.add(ownerId);
+    if (worktrees.length > 0) {
+      const worktreeIds = worktrees.map((wt) => wt.worktree_id);
+      const ownersMap = await this.worktreeRepo.bulkLoadOwners(worktreeIds);
+
+      for (const owners of ownersMap.values()) {
+        for (const ownerId of owners) {
+          ownerIds.add(ownerId);
+        }
       }
     }
 
@@ -795,10 +803,14 @@ export class UnixIntegrationService {
     const worktrees = await this.worktreeRepo.findAll({ repo_id: repoId });
     const ownerIds = new Set<string>();
 
-    for (const wt of worktrees) {
-      const wtOwners = await this.worktreeRepo.getOwners(wt.worktree_id);
-      for (const ownerId of wtOwners) {
-        ownerIds.add(ownerId);
+    if (worktrees.length > 0) {
+      const worktreeIds = worktrees.map((wt) => wt.worktree_id);
+      const ownersMap = await this.worktreeRepo.bulkLoadOwners(worktreeIds);
+
+      for (const owners of ownersMap.values()) {
+        for (const ownerId of owners) {
+          ownerIds.add(ownerId);
+        }
       }
     }
 
