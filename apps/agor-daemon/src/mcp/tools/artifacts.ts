@@ -86,8 +86,7 @@ export function registerArtifactTools(server: McpServer, ctx: McpContext): void 
   server.registerTool(
     'agor_artifacts_publish',
     {
-      description:
-        'Publish or update a live Sandpack artifact from a folder. Use artifactId to update; omit it to create. Supports declarative env requirements, agorGrants, and sandpackConfig. Artifact secrets are injected per viewer at render time, not sent to the LLM.',
+      description: 'Publish or update a live Sandpack artifact from a folder.',
       inputSchema: z.object({
         folderPath: z.string().describe('Absolute path to folder containing artifact files'),
         boardId: z
@@ -184,8 +183,7 @@ export function registerArtifactTools(server: McpServer, ctx: McpContext): void 
   server.registerTool(
     'agor_artifacts_check_build',
     {
-      description:
-        'Check build readiness of artifact files in a folder. Verifies source files exist and are non-empty (does not run a real build or syntax check). Use this before publishing to verify basic structure.',
+      description: 'Check build readiness of artifact files in a folder.',
       inputSchema: z.object({
         folderPath: z
           .string()
@@ -209,8 +207,7 @@ export function registerArtifactTools(server: McpServer, ctx: McpContext): void 
   server.registerTool(
     'agor_artifacts_status',
     {
-      description:
-        'Get artifact build state, Sandpack errors, and recent console logs. Live Sandpack/runtime fields require a browser to be actively viewing the artifact.',
+      description: 'Get artifact build state, Sandpack errors, and recent console logs.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         artifactId: z.string().describe('Artifact ID'),
@@ -228,7 +225,7 @@ export function registerArtifactTools(server: McpServer, ctx: McpContext): void 
     'agor_artifacts_delete',
     {
       description:
-        "Delete an artifact. Owner or admin only — calling as a different user returns 'Forbidden'. Removes database record and board placement. Does not touch the filesystem.",
+        'Delete an artifact. Removes database record and board placement. Does not touch the filesystem.',
       annotations: { destructiveHint: true },
       inputSchema: z.object({
         artifactId: z.string().describe('Artifact ID to delete'),
@@ -258,8 +255,7 @@ export function registerArtifactTools(server: McpServer, ctx: McpContext): void 
   server.registerTool(
     'agor_artifacts_get',
     {
-      description:
-        'Get an artifact by ID, including its file map and declarative metadata. Respects visibility: public artifacts are readable by anyone; private artifacts only by their creator.',
+      description: 'Get an artifact by ID, including its file map and declarative metadata.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         artifactId: z.string().describe('Artifact ID (full UUID or short prefix)'),
@@ -296,7 +292,7 @@ export function registerArtifactTools(server: McpServer, ctx: McpContext): void 
     'agor_artifacts_update',
     {
       description:
-        'Update artifact metadata without re-reading files from disk. Use this for board moves, renames, visibility, placement, archive state, or declarative config changes. For file changes, use agor_artifacts_publish.',
+        'Update artifact metadata without re-reading files from disk. For file changes, use agor_artifacts_publish.',
       inputSchema: z.object({
         artifactId: z.string().describe('Artifact ID to update (full UUID or short prefix)'),
         boardId: z.string().optional().describe('Move the artifact to a different board'),
@@ -364,8 +360,7 @@ export function registerArtifactTools(server: McpServer, ctx: McpContext): void 
   server.registerTool(
     'agor_artifacts_land',
     {
-      description:
-        "Materialize an artifact's stored files into a worktree. Use this to edit artifact code locally, then republish with the same artifactId. Writes an agor.artifact.json sidecar so metadata survives round trips.",
+      description: "Materialize an artifact's stored files into a worktree.",
       inputSchema: z.object({
         artifactId: z.string().describe('Artifact ID to materialize (full UUID or short prefix)'),
         worktreeId: z.string().describe('Destination worktree ID (full UUID or short prefix)'),
@@ -448,19 +443,22 @@ export function registerArtifactTools(server: McpServer, ctx: McpContext): void 
   server.registerTool(
     'agor_artifacts_list',
     {
-      description:
-        'List artifacts, optionally filtered by board. Respects visibility: shows public artifacts plus private artifacts owned by you.',
+      description: 'List artifacts, optionally filtered by board.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         boardId: z.string().optional().describe('Filter by board ID'),
-        limit: z.number().optional().describe('Maximum number of results (default: 50)'),
+        limit: z.number().optional().describe('Maximum number of results (default: 10)'),
+        detail: z
+          .enum(['list', 'full'])
+          .optional()
+          .describe('"list" (default) returns summaries; "full" returns declarative metadata.'),
       }),
     },
     async (args) => {
       const service = ctx.app.service('artifacts') as unknown as ArtifactsService;
       const boardIdRaw = coerceString(args.boardId);
       const boardId = boardIdRaw ? await resolveBoardId(ctx, boardIdRaw) : undefined;
-      const limit = typeof args.limit === 'number' ? args.limit : 50;
+      const limit = typeof args.limit === 'number' ? args.limit : 10;
 
       let artifactsList: unknown[];
       if (boardId) {
@@ -469,12 +467,20 @@ export function registerArtifactTools(server: McpServer, ctx: McpContext): void 
         artifactsList = await service.findVisible(ctx.userId, { limit });
       }
 
-      const stripped = (artifactsList as Record<string, unknown>[]).map(
-        ({ files: _f, ...rest }) => rest
-      );
+      const detail = args.detail ?? 'list';
+
+      const shaped = (artifactsList as Record<string, unknown>[]).map((a) => {
+        const { files: _f, ...rest } = a;
+        if (detail === 'list') {
+          const { description, sandpack_config, required_env_vars, ...minimal } = rest;
+          return minimal;
+        }
+        return rest;
+      });
+
       return textResult({
-        total: stripped.length,
-        data: stripped,
+        total: shaped.length,
+        data: shaped,
       });
     }
   );

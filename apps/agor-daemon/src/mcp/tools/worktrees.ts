@@ -66,7 +66,10 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         repoId: z.string().optional().describe('Repository ID to filter by'),
-        limit: z.number().optional().describe('Maximum number of results (default: 50)'),
+        limit: z
+          .number()
+          .optional()
+          .describe('Maximum number of results (default: 10 for summary, 50 for full)'),
         includeArchived: z
           .boolean()
           .optional()
@@ -90,12 +93,29 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
     async (args) => {
       const query: Record<string, unknown> = {};
       if (args.repoId) query.repo_id = await resolveRepoId(ctx, args.repoId);
-      query.$limit = args.limit ?? 50;
+      const detailLevel = args.detailLevel ?? 'summary';
+      query.$limit = args.limit ?? (detailLevel === 'summary' ? 10 : 50);
       if (args.archived === true) {
         query.archived = true;
       } else if (!args.includeArchived) {
         query.archived = false;
       }
+
+      if (detailLevel === 'summary') {
+        query.$select = [
+          'worktree_id',
+          'repo_id',
+          'board_id',
+          'name',
+          'ref',
+          'path',
+          'url',
+          'created_at',
+          'updated_at',
+          'archived',
+        ];
+      }
+
       const worktrees = await ctx.app
         .service('worktrees')
         .find({ query, ...ctx.baseServiceParams });
@@ -103,8 +123,6 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
       type WorktreeSummary = Omit<import('@agor/core/db').WorktreeWithZoneAndSessions, 'notes'>;
       let allData: import('@agor/core/db').WorktreeWithZoneAndSessions[] | WorktreeSummary[] =
         Array.isArray(worktrees) ? worktrees : worktrees.data;
-      const detailLevel = args.detailLevel ?? 'summary';
-
       if (detailLevel === 'summary') {
         allData = (allData as import('@agor/core/db').WorktreeWithZoneAndSessions[]).map(
           (worktree) => {
@@ -565,7 +583,7 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
     'agor_worktrees_set_zone',
     {
       description:
-        "Pin a worktree to a zone on a board and optionally trigger the zone's prompt template. Calculates zone center position automatically and creates board association. If the zone has an 'always_new' trigger, a new session is automatically created and the prompt template is executed (matching UI drag-drop behavior). For 'show_picker' zones, use triggerTemplate + targetSessionId to send to an existing session.",
+        "Pin a worktree to a board zone. Optionally trigger the zone's prompt template ('always_new' creates a session, 'show_picker' needs targetSessionId).",
       inputSchema: z.object({
         worktreeId: z.string().describe('Worktree ID to pin to the zone (UUIDv7 or short ID)'),
         zoneId: z.string().describe('Zone ID to pin the worktree to (e.g., "zone-1770152859108")'),
@@ -960,6 +978,54 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
         total: shaped.length,
         assistants: shaped,
       });
+    }
+  );
+
+  // Tool 7: agor_worktrees_bulk_update
+  server.registerTool(
+    'agor_worktrees_bulk_update',
+    {
+      description: 'Update multiple worktrees in one operation (e.g. for batch zone reassignment).',
+      annotations: { idempotentHint: true },
+      inputSchema: z.object({
+        updates: z
+          .array(
+            z.object({
+              worktreeId: z.string().describe('Worktree ID'),
+              boardId: z.string().nullable().optional().describe('Board ID. null to unplace.'),
+              archived: z.boolean().optional().describe('Archive state'),
+            })
+          )
+          .describe('List of updates'),
+      }),
+    },
+    async (args) => {
+      const results = [];
+      const worktreesService = ctx.app.service('worktrees') as unknown as WorktreesServiceImpl;
+
+      for (const update of args.updates) {
+        let worktree = await ctx.app
+          .service('worktrees')
+          .patch(update.worktreeId, { board_id: update.boardId }, ctx.baseServiceParams);
+
+        if (update.archived !== undefined) {
+          if (update.archived) {
+            worktree = await worktreesService.archiveOrDelete(
+              update.worktreeId as WorktreeID,
+              { metadataAction: 'archive', filesystemAction: 'cleaned' },
+              ctx.baseServiceParams
+            );
+          } else {
+            worktree = await worktreesService.unarchive(
+              update.worktreeId as WorktreeID,
+              { boardId: update.boardId || undefined },
+              ctx.baseServiceParams
+            );
+          }
+        }
+        results.push(worktree);
+      }
+      return textResult({ updated: results.length, worktrees: results });
     }
   );
 }

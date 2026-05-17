@@ -359,13 +359,76 @@ function createMcpServer(
 
   if (toolSearchEnabled) {
     const { registry, toolsList } = getRegistry(servicesConfig);
+    const activeDomains = new Set<string>();
 
     // Register search/execute tools with the shared cached registry
     registerSearchTools(server, registry);
 
-    // Override tools/list with the pre-computed, deterministic response.
+    server.registerTool(
+      'agor_load_domains',
+      {
+        description:
+          'Load specific tool domains into the current session to avoid using agor_execute_tool for every call. The client tool list will automatically refresh.',
+        inputSchema: z.object({
+          domains: z
+            .array(z.string())
+            .describe('List of domains to load (e.g. ["boards", "cards"])'),
+        }),
+      },
+      async (args) => {
+        const domains = args.domains as string[];
+        let loaded = 0;
+        for (const d of domains) {
+          if (!activeDomains.has(d)) {
+            activeDomains.add(d);
+            loaded++;
+          }
+        }
+
+        // Notify the client to reload its tools list
+        server.server.sendToolListChanged().catch((err) => {
+          console.error('Failed to send tools/list_changed notification:', err);
+        });
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Loaded ${loaded} new domains into the session. Client tool list is refreshing. Currently active domains: ${Array.from(activeDomains).join(', ')}`,
+            },
+          ],
+        };
+      }
+    );
+
+    // Override tools/list with the deterministic response PLUS any dynamically loaded domains
     // All tools remain registered and callable via tools/call.
-    server.server.setRequestHandler(ListToolsRequestSchema, async () => toolsList);
+    server.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      if (activeDomains.size === 0) {
+        return toolsList;
+      }
+
+      // biome-ignore lint/suspicious/noExplicitAny: generic map
+      const dynamicTools = registry
+        .getAll()
+        .filter(
+          (t) =>
+            activeDomains.has(t.domain) &&
+            !toolsList.tools.some((ext: Record<string, unknown>) => ext.name === t.name)
+        );
+
+      return {
+        tools: [
+          ...toolsList.tools,
+          ...dynamicTools.map((t) => ({
+            name: t.name,
+            description: t.description,
+            inputSchema: t.inputSchema,
+            annotations: t.annotations,
+          })),
+        ],
+      };
+    });
   }
 
   return server;

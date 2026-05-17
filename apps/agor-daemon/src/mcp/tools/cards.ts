@@ -100,6 +100,12 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
         archived: z.boolean().optional().describe('ONLY archived (overrides includeArchived)'),
         limit: z.number().optional().describe('Default: 50'),
         offset: z.number().optional().describe('Default: 0'),
+        detail: z
+          .enum(['list', 'full'])
+          .optional()
+          .describe(
+            '"list" (default) returns summaries; "full" returns descriptions, notes, and full data object.'
+          ),
       }),
     },
     async (args) => {
@@ -152,6 +158,14 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
         if (archivedFilter !== undefined) query.archived = archivedFilter;
         const result = await cardsService.find({ query } as never);
         cardsList = 'data' in result ? result.data : result;
+      }
+
+      const detail = args.detail ?? 'list';
+      if (detail === 'list') {
+        cardsList = cardsList.map((c: Record<string, unknown>) => {
+          const { description, note, data, ...rest } = c;
+          return rest;
+        }) as Card[];
       }
 
       return textResult({
