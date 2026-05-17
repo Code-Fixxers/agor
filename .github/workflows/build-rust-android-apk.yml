@@ -80,8 +80,11 @@ jobs:
 
       - name: Install Dioxus CLI
         run: |
-          if ! command -v dx &>/dev/null; then
-            cargo install dioxus-cli
+          WANT="0.6"
+          if dx --version 2>/dev/null | grep -q "^dioxus 0\.6\."; then
+            echo "dx 0.6.x already cached"
+          else
+            cargo install dioxus-cli --version "~${WANT}"
           fi
 
       - name: Set up Android NDK environment
