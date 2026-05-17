@@ -100,6 +100,136 @@
           export PATH="$JAVA_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/35.0.0:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:''${PATH:-}"
         '';
 
+        # ------------------------------------------------------------------
+        # Rust + Dioxus Android build environment
+        #
+        # Uses nixpkgs rustc/cargo with -Z build-std to cross-compile for
+        # Android without needing pre-built target std libraries. A merged
+        # sysroot provides rust-src from nixpkgs alongside the compiler.
+        # ------------------------------------------------------------------
+        rustLibSrc = pkgs.rustPlatform.rustLibSrc;
+
+        # Detect the real rustc sysroot at shell entry time. On NixOS,
+        # "${pkgs.rustc}" resolves to the *wrapper* derivation, not the
+        # actual sysroot that contains lib/rustlib/. `rustc --print sysroot`
+        # always returns the real path.
+        setupRustAndroidSysroot = ''
+          NIXPKGS_SYSROOT="$(rustc --print sysroot)"
+          RUST_ANDROID_SYSROOT="''${XDG_CACHE_HOME:-$HOME/.cache}/rust-android-sysroot"
+          MARKER_HASH=$(echo "$NIXPKGS_SYSROOT" | sha256sum | cut -c1-12)
+          MARKER="$RUST_ANDROID_SYSROOT/.marker-$MARKER_HASH"
+
+          if [ ! -f "$MARKER" ]; then
+            rm -rf "$RUST_ANDROID_SYSROOT"
+            mkdir -p "$RUST_ANDROID_SYSROOT/lib/rustlib/src/rust"
+            mkdir -p "$RUST_ANDROID_SYSROOT/bin"
+            for f in "$NIXPKGS_SYSROOT"/bin/*; do
+              ln -sf "$f" "$RUST_ANDROID_SYSROOT/bin/"
+            done
+            mkdir -p "$RUST_ANDROID_SYSROOT/lib"
+            for f in "$NIXPKGS_SYSROOT"/lib/*; do
+              base="$(basename "$f")"
+              [ "$base" = "rustlib" ] && continue
+              ln -sf "$f" "$RUST_ANDROID_SYSROOT/lib/$base"
+            done
+            mkdir -p "$RUST_ANDROID_SYSROOT/lib/rustlib"
+            for f in "$NIXPKGS_SYSROOT"/lib/rustlib/*; do
+              base="$(basename "$f")"
+              [ "$base" = "src" ] && continue
+              ln -sf "$f" "$RUST_ANDROID_SYSROOT/lib/rustlib/$base"
+            done
+            ln -sf "${rustLibSrc}" "$RUST_ANDROID_SYSROOT/lib/rustlib/src/rust/library"
+            cp "${rustLibSrc}/Cargo.lock" "$RUST_ANDROID_SYSROOT/lib/rustlib/src/rust/Cargo.lock"
+            touch "$MARKER"
+          fi
+
+          REAL_RUSTC="$NIXPKGS_SYSROOT/bin/rustc"
+          RUSTC_ANDROID="$RUST_ANDROID_SYSROOT/bin/rustc-android"
+          cat > "$RUSTC_ANDROID" <<RCEOF
+#!/bin/sh
+exec "$REAL_RUSTC" --sysroot "$RUST_ANDROID_SYSROOT" "\$@"
+RCEOF
+          chmod +x "$RUSTC_ANDROID"
+          export RUSTC="$RUSTC_ANDROID"
+          unset RUSTC_WRAPPER
+        '';
+
+        rustAndroidBuildInputs = [
+          pkgs.rustc
+          pkgs.cargo
+          pkgs.rustPlatform.rustLibSrc
+          pkgs.jdk17
+          pkgs.pkg-config
+          pkgs.openssl
+          androidComposition.androidsdk
+        ] ++ (with pkgs; [ git findutils coreutils bash cacert ]);
+
+        ndkToolchainBin = "${androidNdkRoot}/toolchains/llvm/prebuilt/linux-x86_64/bin";
+
+        rustAndroidEnvHook = ''
+          ${androidEnvHook}
+          export PATH="${ndkToolchainBin}:''${PATH:-}"
+
+          # Tell the `cc` crate (used by ring, openssl-sys, etc.) which
+          # compiler and archiver to use for each Android target. Without
+          # these, cc falls back to the host x86_64 compiler and produces
+          # incompatible object files.
+          export CC_aarch64_linux_android="${ndkToolchainBin}/aarch64-linux-android21-clang"
+          export AR_aarch64_linux_android="${ndkToolchainBin}/llvm-ar"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${ndkToolchainBin}/aarch64-linux-android21-clang"
+
+          export CC_armv7_linux_androideabi="${ndkToolchainBin}/armv7a-linux-androideabi21-clang"
+          export AR_armv7_linux_androideabi="${ndkToolchainBin}/llvm-ar"
+          export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="${ndkToolchainBin}/armv7a-linux-androideabi21-clang"
+
+          export CC_x86_64_linux_android="${ndkToolchainBin}/x86_64-linux-android21-clang"
+          export AR_x86_64_linux_android="${ndkToolchainBin}/llvm-ar"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="${ndkToolchainBin}/x86_64-linux-android21-clang"
+
+          export CC_i686_linux_android="${ndkToolchainBin}/i686-linux-android21-clang"
+          export AR_i686_linux_android="${ndkToolchainBin}/llvm-ar"
+          export CARGO_TARGET_I686_LINUX_ANDROID_LINKER="${ndkToolchainBin}/i686-linux-android21-clang"
+
+          ${setupRustAndroidSysroot}
+        '';
+
+        buildRustAndroidApkScript = pkgs.writeShellApplication {
+          name = "build-rust-android-apk";
+          runtimeInputs = rustAndroidBuildInputs;
+          text = ''
+            set -euo pipefail
+
+            ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+            APP_DIR="$ROOT/apps/agor-rust-android"
+
+            if [ ! -d "$APP_DIR" ]; then
+              echo "Could not find apps/agor-rust-android from: $ROOT"
+              exit 1
+            fi
+
+            ${rustAndroidEnvHook}
+
+            VERSION_CODE=$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 0)
+            SHORT_SHA=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo dev)
+            export VERSION_CODE VERSION_NAME="$SHORT_SHA"
+            export RUSTC_BOOTSTRAP=1
+
+            echo "Building Rust Android libs (version $VERSION_CODE / $SHORT_SHA)..."
+            cd "$APP_DIR"
+
+            cargo build --target aarch64-linux-android --release \
+              -Z build-std=std,panic_abort
+
+            echo ""
+            echo "Built Android libraries at:"
+            ls -la target/aarch64-linux-android/release/agor-hermes-app 2>/dev/null || true
+            ls -la target/aarch64-linux-android/release/hermes-only-app 2>/dev/null || true
+            echo ""
+            echo "To produce APKs, install dx (cargo install dioxus-cli) and run:"
+            echo "  cd apps/agor-hermes && dx build --platform android --release"
+          '';
+        };
+
         buildAgorAndroidApkScript = pkgs.writeShellApplication {
           name = "build-agor-android-apk";
           runtimeInputs = androidBuildInputs;
@@ -268,6 +398,7 @@ NPMRC
           run-agor-live-wrapper = runScript;
           publish-agor-live-wrapper = publishScript;
           build-agor-android-apk = buildAgorAndroidApkScript;
+          build-rust-android-apk = buildRustAndroidApkScript;
           agor-android-smoke = agorAndroidSmokeScript;
           default = runScript;
         };
@@ -288,6 +419,10 @@ NPMRC
           build-agor-android-apk = {
             type = "app";
             program = "${buildAgorAndroidApkScript}/bin/build-agor-android-apk";
+          };
+          build-rust-android-apk = {
+            type = "app";
+            program = "${buildRustAndroidApkScript}/bin/build-rust-android-apk";
           };
           agor-android-smoke = {
             type = "app";
@@ -317,7 +452,7 @@ NPMRC
               echo ""
               echo "   Diagnostics: adb shell dumpsys/gfxinfo, scrcpy, strace, lsof, sqlite, imagemagick, python3"
               echo "   Shell tooling: direnv"
-              echo "📱 Agor Android dev shell"
+              echo "📱 Agor Android dev shell (Kotlin/Gradle)"
               echo "   ANDROID_SDK_ROOT = $ANDROID_SDK_ROOT"
               echo "   ANDROID_NDK_HOME = $ANDROID_NDK_HOME"
               echo "   JAVA_HOME        = $JAVA_HOME"
@@ -333,6 +468,26 @@ NPMRC
               echo ""
               echo "   Device smoke/perf harness:"
               echo "     nix run .#agor-android-smoke"
+              echo ""
+            '';
+          };
+
+          rust-android = pkgs.mkShell {
+            packages = rustAndroidBuildInputs;
+            RUSTC_BOOTSTRAP = "1";
+            shellHook = ''
+              ${rustAndroidEnvHook}
+              echo ""
+              echo "Rust Android dev shell (build-std cross-compilation)"
+              echo "  cargo: $(cargo --version)"
+              echo "  rustc: $($RUSTC --version)"
+              echo "  ANDROID_SDK_ROOT = $ANDROID_SDK_ROOT"
+              echo "  ANDROID_NDK_HOME = $ANDROID_NDK_HOME"
+              echo "  RUSTC = $RUSTC (sysroot wrapper)"
+              echo ""
+              echo "  Build:  RUSTC_BOOTSTRAP=1 cargo build --target aarch64-linux-android -Z build-std=std,panic_abort"
+              echo "  Check:  RUSTC_BOOTSTRAP=1 cargo check --target aarch64-linux-android -Z build-std=std,panic_abort"
+              echo "  One-shot: nix run .#build-rust-android-apk"
               echo ""
             '';
           };

@@ -84,12 +84,29 @@ jobs:
             cargo install dioxus-cli
           fi
 
+      - name: Set up Android NDK environment
+        run: |
+          set -euo pipefail
+          NDK_HOME="${ANDROID_HOME}/ndk/26.1.10909125"
+          NDK_BIN="${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          echo "ANDROID_NDK_HOME=${NDK_HOME}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${NDK_HOME}" >> "$GITHUB_ENV"
+          echo "${NDK_BIN}" >> "$GITHUB_PATH"
+
+          # CC/AR per target — needed by the `cc` crate (used by ring, etc.)
+          echo "CC_aarch64_linux_android=${NDK_BIN}/aarch64-linux-android21-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=${NDK_BIN}/llvm-ar" >> "$GITHUB_ENV"
+          echo "CC_armv7_linux_androideabi=${NDK_BIN}/armv7a-linux-androideabi21-clang" >> "$GITHUB_ENV"
+          echo "AR_armv7_linux_androideabi=${NDK_BIN}/llvm-ar" >> "$GITHUB_ENV"
+          echo "CC_x86_64_linux_android=${NDK_BIN}/x86_64-linux-android21-clang" >> "$GITHUB_ENV"
+          echo "AR_x86_64_linux_android=${NDK_BIN}/llvm-ar" >> "$GITHUB_ENV"
+
       - name: Build Agor+Hermes APK
         working-directory: apps/agor-rust-android/apps/agor-hermes
         env:
           VERSION_CODE: ${{ steps.version.outputs.version_code }}
           VERSION_NAME: ${{ steps.version.outputs.version_name }}
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
         run: dx build --platform android --release
 
       - name: Build Hermes-only APK
@@ -97,7 +114,6 @@ jobs:
         env:
           VERSION_CODE: ${{ steps.version.outputs.version_code }}
           VERSION_NAME: ${{ steps.version.outputs.version_name }}
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
         run: dx build --platform android --release
 
       - name: Collect APKs
