@@ -14,15 +14,17 @@
  */
 
 import { formatShortId, generateId } from '../../lib/ids';
-import type { Session, TaskID, UserID, WorktreeID } from '../../types';
+import type { Repo, Session, TaskID, UserID, Worktree, WorktreeID } from '../../types';
 import { SessionStatus, TaskStatus } from '../../types';
 import { createDatabase } from '../client';
 import { initializeDatabase, seedInitialData } from '../migrate';
 import {
+  BoardObjectRepository,
   BoardRepository,
   RepoRepository,
   SessionRepository,
   TaskRepository,
+  WorktreeRepository,
 } from '../repositories';
 
 // Test database path
@@ -74,7 +76,27 @@ async function testIdGeneration() {
   console.log('  ✅ Time-ordered');
 }
 
-async function testSessionRepository(db: ReturnType<typeof createDatabase>) {
+async function testWorktreeRepository(db: ReturnType<typeof createDatabase>, repoData: Repo) {
+  console.log('\n🌲 Testing Worktree Repository...');
+
+  const repo = new WorktreeRepository(db);
+
+  // Create worktree
+  const worktree = await repo.create({
+    repo_id: repoData.repo_id,
+    name: 'test-worktree',
+    ref: 'main',
+    ref_type: 'branch',
+    created_by: 'test-user' as UserID,
+    worktree_unique_id: 1,
+  });
+
+  console.log(`  ✅ Created worktree: ${formatShortId(worktree.worktree_id)}`);
+
+  return worktree;
+}
+
+async function testSessionRepository(db: ReturnType<typeof createDatabase>, worktree: Worktree) {
   console.log('\n📦 Testing Session Repository...');
 
   const repo = new SessionRepository(db);
@@ -84,7 +106,7 @@ async function testSessionRepository(db: ReturnType<typeof createDatabase>) {
     agentic_tool: 'claude-code',
     status: SessionStatus.IDLE,
     created_by: 'test-user' as UserID,
-    worktree_id: 'test-worktree-id' as WorktreeID,
+    worktree_id: worktree.worktree_id,
     git_state: {
       ref: 'main',
       base_sha: 'abc123',
@@ -143,6 +165,7 @@ async function testTaskRepository(db: ReturnType<typeof createDatabase>, session
   // Create task
   const task = await repo.create({
     session_id: session.session_id,
+    created_by: 'test-user' as UserID,
     full_prompt: 'This is a test task',
     status: TaskStatus.CREATED,
     message_range: {
@@ -183,7 +206,7 @@ async function testTaskRepository(db: ReturnType<typeof createDatabase>, session
   return task;
 }
 
-async function testBoardRepository(db: ReturnType<typeof createDatabase>, session: Session) {
+async function testBoardRepository(db: ReturnType<typeof createDatabase>, worktree: Worktree) {
   console.log('\n🗂️  Testing Board Repository...');
 
   const repo = new BoardRepository(db);
@@ -196,6 +219,7 @@ async function testBoardRepository(db: ReturnType<typeof createDatabase>, sessio
   const board = await repo.create({
     name: 'Test Board',
     slug: 'test-board',
+    created_by: 'test-user' as UserID,
     description: 'A test board',
     color: '#ff0000',
     icon: 'rocket',
@@ -203,17 +227,19 @@ async function testBoardRepository(db: ReturnType<typeof createDatabase>, sessio
 
   console.log(`  ✅ Created board: ${formatShortId(board.board_id)}`);
 
-  // TODO: Update board tests for worktree-centric model
-  // Old session-based board API is deprecated
-  /*
-  // Add session to board
-  const updated = await repo.addSession(board.board_id, session.session_id);
-  if (!updated.sessions.includes(session.session_id)) {
-    throw new Error('addSession failed');
-  }
-  */
+  // Test Board Objects (Worktree-centric model)
+  const boardObjectsRepo = new BoardObjectRepository(db);
+  const boardObject = await boardObjectsRepo.create({
+    board_id: board.board_id,
+    worktree_id: worktree.worktree_id,
+    position: { x: 100, y: 100 },
+  });
 
-  console.log('  ✅ Board test skipped (TODO: update for worktree-centric model)');
+  if (boardObject.worktree_id !== worktree.worktree_id || boardObject.board_id !== board.board_id) {
+    throw new Error('BoardObject creation failed');
+  }
+
+  console.log(`  ✅ Added worktree to board: ${formatShortId(boardObject.object_id)}`);
 
   // Test findBySlug
   const foundBySlug = await repo.findBySlug('test-board');
@@ -257,7 +283,7 @@ async function testRepoRepository(db: ReturnType<typeof createDatabase>) {
   return repoData;
 }
 
-async function testGenealogy(db: ReturnType<typeof createDatabase>) {
+async function testGenealogy(db: ReturnType<typeof createDatabase>, worktree: Worktree) {
   console.log('\n🌳 Testing Session Genealogy...');
 
   const repo = new SessionRepository(db);
@@ -267,7 +293,7 @@ async function testGenealogy(db: ReturnType<typeof createDatabase>) {
     agentic_tool: 'claude-code',
     status: TaskStatus.COMPLETED,
     created_by: 'test-user' as UserID,
-    worktree_id: 'test-worktree-id' as WorktreeID,
+    worktree_id: worktree.worktree_id,
     git_state: { ref: 'main', base_sha: 'abc', current_sha: 'def' },
     genealogy: { children: [] },
     contextFiles: [],
@@ -281,7 +307,7 @@ async function testGenealogy(db: ReturnType<typeof createDatabase>) {
     agentic_tool: 'claude-code',
     status: SessionStatus.IDLE,
     created_by: 'test-user' as UserID,
-    worktree_id: 'test-worktree-id' as WorktreeID,
+    worktree_id: worktree.worktree_id,
     git_state: { ref: 'main', base_sha: 'def', current_sha: 'def' },
     genealogy: {
       forked_from_session_id: parent.session_id,
@@ -299,7 +325,7 @@ async function testGenealogy(db: ReturnType<typeof createDatabase>) {
     agentic_tool: 'codex',
     status: SessionStatus.IDLE,
     created_by: 'test-user' as UserID,
-    worktree_id: 'test-worktree-id' as WorktreeID,
+    worktree_id: worktree.worktree_id,
     git_state: { ref: 'main', base_sha: 'def', current_sha: 'def' },
     genealogy: {
       parent_session_id: parent.session_id,
@@ -355,22 +381,24 @@ async function main() {
     // Run tests
     await testIdGeneration();
 
-    const session = await testSessionRepository(db);
-    const task = await testTaskRepository(db, session);
-    const board = await testBoardRepository(db, session);
     const repo = await testRepoRepository(db);
+    const worktree = await testWorktreeRepository(db, repo);
+    const session = await testSessionRepository(db, worktree);
+    const task = await testTaskRepository(db, session);
+    const board = await testBoardRepository(db, worktree);
 
-    await testGenealogy(db);
+    await testGenealogy(db, worktree);
 
     // Summary
     console.log('\n=====================================');
     console.log('✅ All tests passed!');
     console.log('');
     console.log('📊 Test Summary:');
+    console.log(`  - Repo: ${formatShortId(repo.repo_id)}`);
+    console.log(`  - Worktree: ${formatShortId(worktree.worktree_id)}`);
     console.log(`  - Session: ${formatShortId(session.session_id)}`);
     console.log(`  - Task: ${formatShortId(task.task_id)}`);
     console.log(`  - Board: ${formatShortId(board.board_id)}`);
-    console.log(`  - Repo: ${formatShortId(repo.repo_id)}`);
     console.log('');
     console.log('✨ Sprint 1 Complete - Ready for Sprint 2!');
 
