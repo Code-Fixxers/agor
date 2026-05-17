@@ -25,12 +25,15 @@
 
 import type { Database } from '@agor/core/db';
 import {
+  BoardObjectRepository,
+  BoardRepository,
   SessionMCPServerRepository,
   SessionRepository,
   UsersRepository,
   WorktreeRepository,
 } from '@agor/core/db';
 import type {
+  Board,
   MCPServerID,
   PermissionMode,
   Session,
@@ -106,6 +109,8 @@ export class SchedulerService {
   private sessionRepo: SessionRepository;
   private userRepo: UsersRepository;
   private sessionMCPRepo: SessionMCPServerRepository;
+  private boardRepo: BoardRepository;
+  private boardObjectRepo: BoardObjectRepository;
 
   constructor(db: Database, app: Application, config: SchedulerConfig = {}) {
     this.app = app;
@@ -119,6 +124,8 @@ export class SchedulerService {
     this.sessionRepo = new SessionRepository(db);
     this.userRepo = new UsersRepository(db);
     this.sessionMCPRepo = new SessionMCPServerRepository(db);
+    this.boardRepo = new BoardRepository(db);
+    this.boardObjectRepo = new BoardObjectRepository(db);
   }
 
   /**
@@ -470,7 +477,12 @@ export class SchedulerService {
     }
 
     // 2. Render prompt template
-    const renderedPrompt = this.renderPrompt(schedule.prompt_template, worktree);
+    let board: Board | null = null;
+    const boardObject = await this.boardObjectRepo.findByWorktreeId(worktree.worktree_id);
+    if (boardObject) {
+      board = await this.boardRepo.findById(boardObject.board_id);
+    }
+    const renderedPrompt = this.renderPrompt(schedule.prompt_template, worktree, board);
 
     // 3. Get current run index (count of all scheduled sessions for this worktree)
     const scheduledSessions = worktreeSessions.filter((s) => s.scheduled_from_worktree === true);
@@ -595,7 +607,7 @@ export class SchedulerService {
   /**
    * Render Handlebars prompt template with worktree/board context
    */
-  private renderPrompt(template: string, worktree: Worktree): string {
+  private renderPrompt(template: string, worktree: Worktree, board: Board | null): string {
     try {
       const compiledTemplate = Handlebars.compile(template);
 
@@ -610,7 +622,14 @@ export class SchedulerService {
           notes: worktree.notes,
           custom_context: worktree.custom_context,
         },
-        // TODO: Add board context if needed (requires fetching board data)
+        board: board
+          ? {
+              name: board.name,
+              slug: board.slug,
+              description: board.description,
+              custom_context: board.custom_context,
+            }
+          : null,
         schedule: worktree.schedule,
       };
 
