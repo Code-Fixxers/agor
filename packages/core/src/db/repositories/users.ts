@@ -5,7 +5,7 @@
  */
 
 import type { EnvVarMetadata, User, UUID } from '@agor/core/types';
-import { eq, like } from 'drizzle-orm';
+import { eq, like, inArray } from 'drizzle-orm';
 import { normalizeStoredEnvMap, type RawStoredEnvVar } from '../../config/env-vars';
 import { generateId } from '../../lib/ids';
 import type { Database } from '../client';
@@ -189,6 +189,34 @@ export class UsersRepository implements BaseRepository<User, Partial<User>> {
     }
 
     return this.rowToUser(row as UserRow);
+  }
+
+  /**
+   * Find multiple users by ID (supports short ID resolution)
+   */
+  async findByIds(ids: string[]): Promise<User[]> {
+    if (ids.length === 0) return [];
+
+    // Resolve all IDs
+    const resolvedIds = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          return await this.resolveId(id);
+        } catch (error) {
+          if (error instanceof EntityNotFoundError) {
+            return null;
+          }
+          throw error;
+        }
+      })
+    );
+
+    const validIds = resolvedIds.filter((id): id is string => id !== null);
+    if (validIds.length === 0) return [];
+
+    const results = await select(this.db).from(users).where(inArray(users.user_id, validIds)).all();
+
+    return results.map((row: UserRow) => this.rowToUser(row));
   }
 
   /**

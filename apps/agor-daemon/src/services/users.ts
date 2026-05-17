@@ -123,8 +123,15 @@ export class UsersService {
     if (!row) {
       throw new Error(`User not found: ${id}`);
     }
-
     return this.rowToUser(row);
+  }
+
+  /**
+   * Get multiple users by ID
+   */
+  async getMany(ids: string[]): Promise<User[]> {
+    const repo = new UsersRepository(this.db);
+    return repo.findByIds(ids);
   }
 
   /**
