@@ -49,10 +49,7 @@ pub async fn check_for_update(
         return Err(format!("HTTP {}", resp.status()));
     }
 
-    let manifest: UpdateManifest = resp
-        .json()
-        .await
-        .map_err(|e| format!("Parse error: {e}"))?;
+    let manifest: UpdateManifest = resp.json().await.map_err(|e| format!("Parse error: {e}"))?;
 
     if manifest.version_code > current_version_code {
         Ok(Some(manifest))
@@ -66,8 +63,7 @@ pub async fn download_apk(manifest: &UpdateManifest) -> Result<PathBuf, String> 
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("agor-updates");
 
-    std::fs::create_dir_all(&download_dir)
-        .map_err(|e| format!("Cannot create update dir: {e}"))?;
+    std::fs::create_dir_all(&download_dir).map_err(|e| format!("Cannot create update dir: {e}"))?;
 
     let apk_path = download_dir.join(format!("{}.apk", manifest.version_code));
 

@@ -104,13 +104,26 @@ pub fn PromptInputBar(enabled: bool, session_status: SessionStatus) -> Element {
 
         spawn(async move {
             let logger = AppLogger::new();
-            let client = AgorClient::new(logger.clone());
-            let mut c = chat.write();
-            let _ = chat::send_prompt(&client, &mut c, &logger).await;
-            if let Some(session) = &c.session {
-                storage.write().set_draft(&session.session_id, "");
+            let storage_snapshot = storage.read().clone();
+            let client = AgorClient::new_with_storage(logger.clone(), &storage_snapshot);
+
+            let send_target = {
+                let c = chat.read();
+                c.session
+                    .as_ref()
+                    .map(|session| (session.session_id.clone(), c.draft.clone()))
+            };
+
+            if let Some((session_id, prompt)) = send_target {
+                if chat::send_prompt(&client, &session_id, &prompt, &logger)
+                    .await
+                    .is_ok()
+                {
+                    chat.write().draft.clear();
+                    storage.write().set_draft(&session_id, "");
+                }
             }
-            drop(c);
+
             sending.set(false);
         });
     };

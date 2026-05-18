@@ -40,16 +40,27 @@ pub fn ChatScreen(
     let sid = session_id.clone();
     use_effect(move || {
         let sid = sid.clone();
+        let storage_snapshot = storage.read().clone();
         spawn(async move {
             let logger = AppLogger::new();
-            let client = AgorClient::new(logger.clone());
-            let mut c = chat.write();
-            c.draft = storage.read().get_draft(&sid);
-            drop(c);
+            let client = AgorClient::new_with_storage(logger.clone(), &storage_snapshot);
 
-            let mut c = chat.write();
-            if let Err(e) = chat::load_session(&client, &mut c, &sid, &logger).await {
-                c.error = Some(e);
+            {
+                let mut c = chat.write();
+                c.reset();
+                c.draft = storage_snapshot.get_draft(&sid);
+                c.is_loading = true;
+            }
+
+            match chat::load_session(&client, &sid, &logger).await {
+                Ok(loaded) => {
+                    chat::apply_loaded_session(&mut chat.write(), loaded);
+                }
+                Err(e) => {
+                    let mut c = chat.write();
+                    c.is_loading = false;
+                    c.error = Some(e);
+                }
             }
         });
     });
@@ -97,9 +108,10 @@ pub fn ChatScreen(
     let sid_for_stop = session_id.clone();
     let on_stop = move |_| {
         let sid = sid_for_stop.clone();
+        let storage_snapshot = storage.read().clone();
         spawn(async move {
             let logger = AppLogger::new();
-            let client = AgorClient::new(logger.clone());
+            let client = AgorClient::new_with_storage(logger.clone(), &storage_snapshot);
             let _ = client.stop_session(&sid).await;
         });
     };
@@ -107,9 +119,10 @@ pub fn ChatScreen(
     let sid_for_archive = session_id.clone();
     let _on_archive = move |_: Event<MouseData>| {
         let sid = sid_for_archive.clone();
+        let storage_snapshot = storage.read().clone();
         spawn(async move {
             let logger = AppLogger::new();
-            let client = AgorClient::new(logger.clone());
+            let client = AgorClient::new_with_storage(logger.clone(), &storage_snapshot);
             let _ = client
                 .patch_session(&sid, &serde_json::json!({"archived": true}))
                 .await;

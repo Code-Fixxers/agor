@@ -19,16 +19,14 @@ pub fn MessageBubble(
     } else {
         match &message.content {
             MessageContent::Text(t) => t.clone(),
-            MessageContent::Blocks(blocks) => {
-                blocks
-                    .iter()
-                    .filter_map(|b| match b {
-                        crate::models::ContentBlock::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
+            MessageContent::Blocks(blocks) => blocks
+                .iter()
+                .filter_map(|b| match b {
+                    crate::models::ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
             _ => String::new(),
         }
     };

@@ -38,7 +38,9 @@ impl HermesPromptQueue {
     }
 
     pub fn depth(&self, session_id: &str) -> usize {
-        self.queues.lock().unwrap()
+        self.queues
+            .lock()
+            .unwrap()
             .get(session_id)
             .map_or(0, |q| q.len())
     }

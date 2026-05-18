@@ -1,8 +1,8 @@
 use dioxus::prelude::*;
 
 use crate::state::auth::{AuthState, AuthStore};
-use crate::state::navigation::NavStore;
 use crate::state::chat::ChatStore;
+use crate::state::navigation::NavStore;
 use crate::state::storage::AppStorage;
 use crate::ui::app_shell::AppShell;
 use crate::ui::login::LoginScreen;

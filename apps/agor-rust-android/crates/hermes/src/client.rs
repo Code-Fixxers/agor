@@ -75,17 +75,23 @@ impl HermesClient {
     }
 
     fn require_config(config: &HermesConfig) -> Result<(&str, &str), HermesError> {
-        let url = config.base_url.as_deref()
+        let url = config
+            .base_url
+            .as_deref()
             .filter(|u| !u.is_empty())
             .ok_or_else(|| HermesError::NotConfigured("base URL not set".into()))?;
-        let token = config.token.as_deref()
+        let token = config
+            .token
+            .as_deref()
             .filter(|t| !t.is_empty())
             .ok_or_else(|| HermesError::NotConfigured("API token not set".into()))?;
         Ok((url, token))
     }
 
     fn model(config: &HermesConfig) -> String {
-        config.model.as_deref()
+        config
+            .model
+            .as_deref()
             .filter(|m| !m.is_empty())
             .unwrap_or(DEFAULT_MODEL)
             .to_string()
@@ -100,7 +106,8 @@ impl HermesClient {
 
     pub async fn probe(&self, url: &str, token: &str) -> Result<Vec<String>, HermesError> {
         let endpoint = format!("{}/v1/models", url.trim_end_matches('/'));
-        let resp = self.http
+        let resp = self
+            .http
             .get(&endpoint)
             .bearer_auth(token)
             .header("x-litellm-api-key", token)
@@ -117,10 +124,17 @@ impl HermesClient {
             return Err(HermesError::Http(status, body));
         }
 
-        let models: ModelsResponse = resp.json().await
+        let models: ModelsResponse = resp
+            .json()
+            .await
             .map_err(|e| HermesError::Parse(e.to_string()))?;
 
-        Ok(models.data.unwrap_or_default().into_iter().map(|m| m.id).collect())
+        Ok(models
+            .data
+            .unwrap_or_default()
+            .into_iter()
+            .map(|m| m.id)
+            .collect())
     }
 
     pub async fn chat(
@@ -138,7 +152,8 @@ impl HermesClient {
             stream: false,
         };
 
-        let resp = self.http
+        let resp = self
+            .http
             .post(&endpoint)
             .bearer_auth(token)
             .header("x-litellm-api-key", token)
@@ -156,7 +171,9 @@ impl HermesClient {
             return Err(HermesError::Http(status, body));
         }
 
-        let body: ChatCompletionResponse = resp.json().await
+        let body: ChatCompletionResponse = resp
+            .json()
+            .await
             .map_err(|e| HermesError::Parse(e.to_string()))?;
 
         body.choices
@@ -182,7 +199,8 @@ impl HermesClient {
             stream: true,
         };
 
-        let resp = self.http
+        let resp = self
+            .http
             .post(&endpoint)
             .bearer_auth(token)
             .header("x-litellm-api-key", token)
@@ -200,7 +218,9 @@ impl HermesClient {
             return Err(HermesError::Http(status, body));
         }
 
-        let text = resp.text().await
+        let text = resp
+            .text()
+            .await
             .map_err(|e| HermesError::Network(e.to_string()))?;
 
         let mut accumulated = String::new();

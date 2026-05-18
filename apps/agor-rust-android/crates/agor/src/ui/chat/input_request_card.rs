@@ -6,11 +6,13 @@ use crate::models::message::Message;
 use crate::network::agor_client::AgorClient;
 use crate::state::auth::AuthStore;
 use crate::state::chat;
+use crate::state::storage::AppStorage;
 use agor_shared::logger::AppLogger;
 
 #[component]
 pub fn InputRequestCardView(message: Message, request: InputRequestContent) -> Element {
     let auth = use_context::<Signal<AuthStore>>();
+    let storage = use_context::<Signal<AppStorage>>();
     let is_pending = matches!(request.status, InputRequestStatus::Pending);
     let mut answers = use_signal(|| HashMap::<String, String>::new());
     let _selected = use_signal(|| HashMap::<String, Vec<String>>::new());
@@ -37,10 +39,11 @@ pub fn InputRequestCardView(message: Message, request: InputRequestContent) -> E
             .map(|u| u.user_id.clone())
             .unwrap_or_default();
         let final_answers = answers.read().clone();
+        let storage_snapshot = storage.read().clone();
 
         spawn(async move {
             let logger = AppLogger::new();
-            let client = AgorClient::new(logger.clone());
+            let client = AgorClient::new_with_storage(logger.clone(), &storage_snapshot);
             let _ = chat::answer_input_request(
                 &client,
                 &session_id,

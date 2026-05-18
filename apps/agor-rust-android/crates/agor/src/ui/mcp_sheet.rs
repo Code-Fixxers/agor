@@ -2,13 +2,12 @@ use dioxus::prelude::*;
 
 use crate::models::mcp_server::{MCPServer, SessionMCPServer};
 use crate::network::agor_client::AgorClient;
+use crate::state::storage::AppStorage;
 use agor_shared::logger::AppLogger;
 
 #[component]
-pub fn McpSessionSheet(
-    session_id: String,
-    on_close: EventHandler<()>,
-) -> Element {
+pub fn McpSessionSheet(session_id: String, on_close: EventHandler<()>) -> Element {
+    let storage = use_context::<Signal<AppStorage>>();
     let mut active_servers = use_signal(|| Vec::<SessionMCPServer>::new());
     let mut available_servers = use_signal(|| Vec::<MCPServer>::new());
     let mut loading = use_signal(|| true);
@@ -16,9 +15,10 @@ pub fn McpSessionSheet(
     let sid = session_id.clone();
     use_effect(move || {
         let sid = sid.clone();
+        let storage_snapshot = storage.read().clone();
         spawn(async move {
             let logger = AppLogger::new();
-            let client = AgorClient::new(logger.clone());
+            let client = AgorClient::new_with_storage(logger.clone(), &storage_snapshot);
 
             let (active, available) = tokio::join!(
                 client.list_session_mcp_servers(&sid),
@@ -112,9 +112,10 @@ pub fn McpSessionSheet(
                                                         let sid = sid_toggle.clone();
                                                         let server_id = server_id_toggle.clone();
                                                         let new_enabled = !enabled;
+                                                        let storage_snapshot = storage.read().clone();
                                                         spawn(async move {
                                                             let logger = AppLogger::new();
-                                                            let client = AgorClient::new(logger);
+                                                            let client = AgorClient::new_with_storage(logger, &storage_snapshot);
                                                             let _ = client
                                                                 .set_session_mcp_server_enabled(
                                                                     &sid,
@@ -137,9 +138,10 @@ pub fn McpSessionSheet(
                                                     onclick: move |_| {
                                                         let sid = sid_remove.clone();
                                                         let server_id = server_id_remove.clone();
+                                                        let storage_snapshot = storage.read().clone();
                                                         spawn(async move {
                                                             let logger = AppLogger::new();
-                                                            let client = AgorClient::new(logger);
+                                                            let client = AgorClient::new_with_storage(logger, &storage_snapshot);
                                                             let _ = client
                                                                 .remove_session_mcp_server(
                                                                     &sid, &server_id,
@@ -187,9 +189,10 @@ pub fn McpSessionSheet(
                                         onclick: move |_| {
                                             let sid = sid.clone();
                                             let server_id = server_id.clone();
+                                            let storage_snapshot = storage.read().clone();
                                             spawn(async move {
                                                 let logger = AppLogger::new();
-                                                let client = AgorClient::new(logger);
+                                                let client = AgorClient::new_with_storage(logger, &storage_snapshot);
                                                 let _ = client
                                                     .add_session_mcp_server(&sid, &server_id)
                                                     .await;

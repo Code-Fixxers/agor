@@ -3,10 +3,7 @@ use dioxus::prelude::*;
 use crate::models::file_item::{FileDetail, VirtualNode};
 
 #[component]
-pub fn FileBrowserSheet(
-    worktree_id: String,
-    on_close: EventHandler<()>,
-) -> Element {
+pub fn FileBrowserSheet(worktree_id: String, on_close: EventHandler<()>) -> Element {
     let mut current_path = use_signal(|| Vec::<String>::new());
     let mut file_detail = use_signal(|| Option::<FileDetail>::None);
     let tree = use_signal(|| Vec::<VirtualNode>::new());

@@ -135,6 +135,32 @@ impl AgorClient {
         }
     }
 
+    pub fn new_with_storage(logger: AppLogger, storage: &AppStorage) -> Self {
+        let client = Self::new(logger);
+        client.apply_storage(storage);
+        client
+    }
+
+    pub fn apply_storage(&self, storage: &AppStorage) {
+        let Some(profile) = storage
+            .active_profile()
+            .or_else(|| storage.default_profile())
+        else {
+            return;
+        };
+
+        self.set_base_url(&profile.url);
+
+        if let Some(creds) = storage.credentials.get(&profile.id) {
+            let mut tokens = self.tokens.write().unwrap();
+            tokens.access_token = creds.access_token.clone();
+            tokens.refresh_token = creds.refresh_token.clone();
+            tokens.server_url = Some(profile.url.clone());
+            tokens.user_id = creds.user_id.clone();
+            tokens.last_email = creds.user_email.clone();
+        }
+    }
+
     pub fn base_url(&self) -> String {
         self.tokens
             .read()

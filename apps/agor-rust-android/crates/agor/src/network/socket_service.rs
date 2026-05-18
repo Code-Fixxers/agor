@@ -67,7 +67,8 @@ impl SocketService {
 
     pub async fn connect(&self) {
         *self.state.write().unwrap() = ConnectionState::Connecting;
-        self.logger.info(LogCategory::Socket, "Connecting socket...");
+        self.logger
+            .info(LogCategory::Socket, "Connecting socket...");
 
         let base_url = self.client.base_url();
         let token = self.client.access_token();
@@ -135,7 +136,8 @@ impl SocketService {
     pub fn disconnect(&self) {
         *self.connected.lock().unwrap() = false;
         *self.state.write().unwrap() = ConnectionState::Disconnected;
-        self.logger.info(LogCategory::Socket, "Socket disconnect requested");
+        self.logger
+            .info(LogCategory::Socket, "Socket disconnect requested");
     }
 
     pub fn reconnect(&self) {
@@ -156,14 +158,22 @@ impl SocketService {
     // These would use Socket.IO emit with Feathers protocol.
     // For the initial implementation, they fall back to REST via AgorClient.
 
-    pub async fn find_service(&self, _service: &str, _query: &HashMap<String, String>) -> Result<Value, String> {
+    pub async fn find_service(
+        &self,
+        _service: &str,
+        _query: &HashMap<String, String>,
+    ) -> Result<Value, String> {
         // In full implementation, uses Socket.IO emit with Feathers protocol.
         // Falls back to REST via AgorClient when Socket.IO is not available.
         Err("Socket.IO not yet connected — use REST API".to_string())
     }
 
-    pub async fn get_service(&self, _service: &str, _id: &str, _query: &HashMap<String, String>) -> Result<Value, String> {
+    pub async fn get_service(
+        &self,
+        _service: &str,
+        _id: &str,
+        _query: &HashMap<String, String>,
+    ) -> Result<Value, String> {
         Err("Socket.IO not yet connected — use REST API".to_string())
     }
 }
-

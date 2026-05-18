@@ -25,22 +25,7 @@ pub fn Sidebar(
             nav.write().is_loading = true;
 
             let logger = AppLogger::new();
-            let client = AgorClient::new(logger.clone());
-
-            if let Some(profile) = storage_snapshot
-                .active_profile()
-                .or_else(|| storage_snapshot.default_profile())
-            {
-                client.set_base_url(&profile.url);
-                if let Some(creds) = storage_snapshot.credentials.get(&profile.id) {
-                    let mut tokens = client.tokens.write().unwrap();
-                    tokens.access_token = creds.access_token.clone();
-                    tokens.refresh_token = creds.refresh_token.clone();
-                    tokens.server_url = Some(profile.url.clone());
-                    tokens.user_id = creds.user_id.clone();
-                    tokens.last_email = creds.user_email.clone();
-                }
-            }
+            let client = AgorClient::new_with_storage(logger.clone(), &storage_snapshot);
 
             let mut loaded = NavStore::new();
             loaded.favorites = storage_snapshot.preferences.favorites.clone();

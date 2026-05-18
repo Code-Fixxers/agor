@@ -97,10 +97,14 @@ impl Message {
 impl<'de> Deserialize<'de> for Message {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let v = Value::deserialize(deserializer)?;
-        let obj = v.as_object().ok_or_else(|| serde::de::Error::custom("expected object"))?;
+        let obj = v
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("expected object"))?;
 
         let message_type: MessageType = serde_json::from_value(
-            obj.get("type").cloned().unwrap_or(Value::String("assistant".into())),
+            obj.get("type")
+                .cloned()
+                .unwrap_or(Value::String("assistant".into())),
         )
         .unwrap_or(MessageType::Assistant);
 
@@ -150,7 +154,9 @@ impl<'de> Deserialize<'de> for Message {
                 .map(String::from),
             message_type,
             role: serde_json::from_value(
-                obj.get("role").cloned().unwrap_or(Value::String("assistant".into())),
+                obj.get("role")
+                    .cloned()
+                    .unwrap_or(Value::String("assistant".into())),
             )
             .unwrap_or(MessageRole::Assistant),
             index: obj.get("index").and_then(|v| v.as_i64()).unwrap_or(0),

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
 
-use crate::models::{SessionStatus, StreamingStartEvent, StreamingChunkEvent, StreamingEndEvent};
+use crate::models::{SessionStatus, StreamingChunkEvent, StreamingEndEvent, StreamingStartEvent};
 use crate::network::socket_service::{SocketEvent, SocketService};
 use agor_shared::logger::{AppLogger, LogCategory};
 
@@ -99,7 +99,9 @@ impl StreamingService {
                 self.clear_session_streams(&e.session_id);
             }
             SocketEvent::ThinkingStart(e) => {
-                let msg_id = e.message_id.unwrap_or_else(|| format!("thinking-{}", e.session_id));
+                let msg_id = e
+                    .message_id
+                    .unwrap_or_else(|| format!("thinking-{}", e.session_id));
                 let mut streams = self.streams.write().unwrap();
                 let snap = streams.entry(msg_id).or_insert_with(|| StreamSnapshot {
                     session_id: e.session_id,
@@ -110,7 +112,9 @@ impl StreamingService {
                 let _ = self.change_tx.send(());
             }
             SocketEvent::ThinkingChunk(e) => {
-                let msg_id = e.message_id.unwrap_or_else(|| format!("thinking-{}", e.session_id));
+                let msg_id = e
+                    .message_id
+                    .unwrap_or_else(|| format!("thinking-{}", e.session_id));
                 let mut streams = self.streams.write().unwrap();
                 if let Some(snap) = streams.get_mut(&msg_id) {
                     snap.thinking.push_str(&e.text);

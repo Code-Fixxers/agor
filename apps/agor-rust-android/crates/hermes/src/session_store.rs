@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tokio::sync::broadcast;
-use serde::{Deserialize, Serialize};
 
 use crate::models::{
     HermesAttachment, HermesProgressItem, HermesSession, HermesSessionEvent, HermesTurn,
@@ -87,14 +87,25 @@ impl HermesSessionStore {
     }
 
     pub fn get_session(&self, id: &str) -> Option<HermesSession> {
-        self.sessions.lock().unwrap().iter().find(|s| s.id == id).cloned()
+        self.sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|s| s.id == id)
+            .cloned()
     }
 
     pub fn create_session(&self, title_seed: Option<&str>) -> HermesSession {
         let now = chrono::Utc::now().timestamp_millis();
         let id = uuid::Uuid::new_v4().to_string();
         let title = title_seed
-            .map(|s| if s.len() > 48 { format!("{}...", &s[..45]) } else { s.to_string() })
+            .map(|s| {
+                if s.len() > 48 {
+                    format!("{}...", &s[..45])
+                } else {
+                    s.to_string()
+                }
+            })
             .unwrap_or_else(|| "Hermes session".to_string());
 
         let session = HermesSession {
@@ -237,7 +248,8 @@ impl HermesSessionStore {
     ) {
         let now = chrono::Utc::now().timestamp_millis();
         let mut sessions = self.sessions.lock().unwrap();
-        let completed_text = if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id) {
+        let completed_text = if let Some(session) = sessions.iter_mut().find(|s| s.id == session_id)
+        {
             if let Some(turn) = session.turns.iter_mut().find(|t| t.id == turn_id) {
                 if let Some(ft) = final_text {
                     turn.content = ft.to_string();
@@ -247,7 +259,11 @@ impl HermesSessionStore {
             session.active = false;
             session.last_response_id = response_id.map(|s| s.to_string());
             session.updated_at_millis = now;
-            session.turns.iter().find(|t| t.id == turn_id).map(|t| t.content.clone())
+            session
+                .turns
+                .iter()
+                .find(|t| t.id == turn_id)
+                .map(|t| t.content.clone())
         } else {
             None
         };

@@ -57,7 +57,9 @@ impl Serialize for InputRequestQuestion {
 impl<'de> Deserialize<'de> for InputRequestQuestion {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let v = Value::deserialize(deserializer)?;
-        let obj = v.as_object().ok_or_else(|| serde::de::Error::custom("expected object"))?;
+        let obj = v
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("expected object"))?;
 
         let multi_select = obj
             .get("multiSelect")

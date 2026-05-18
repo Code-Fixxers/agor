@@ -16,11 +16,7 @@ pub fn ToolResultBlockView(message_id: String, block: ContentBlock) -> Element {
                 .as_ref()
                 .map(|c| c.text_preview())
                 .unwrap_or_else(|| "(empty result)".to_string());
-            (
-                tool_use_id.clone(),
-                preview,
-                is_error.unwrap_or(false),
-            )
+            (tool_use_id.clone(), preview, is_error.unwrap_or(false))
         }
         _ => return rsx! {},
     };

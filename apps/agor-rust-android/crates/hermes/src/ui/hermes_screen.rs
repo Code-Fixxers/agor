@@ -7,10 +7,7 @@ use crate::streaming::HermesStreamTextState;
 use crate::ui::components::{ErrorBubble, HermesInputBar, SessionStrip, TurnBubble};
 
 #[component]
-pub fn HermesScreen(
-    config: HermesConfig,
-    on_open_settings: EventHandler<()>,
-) -> Element {
+pub fn HermesScreen(config: HermesConfig, on_open_settings: EventHandler<()>) -> Element {
     let store = use_context::<Signal<HermesSessionStore>>();
     let mut sessions = use_signal(|| Vec::<HermesSession>::new());
     let mut selected_id = use_signal(|| Option::<String>::None);
@@ -109,12 +106,17 @@ pub fn HermesScreen(
 
             #[cfg(not(target_arch = "wasm32"))]
             let stream_task = tokio::spawn(async move {
-                client_clone.chat_stream(&config_clone, &messages, &tx_clone).await
+                client_clone
+                    .chat_stream(&config_clone, &messages, &tx_clone)
+                    .await
             });
 
             #[cfg(target_arch = "wasm32")]
             spawn(async move {
-                if let Err(e) = client_clone.chat_stream(&config_clone, &messages, &tx_clone).await {
+                if let Err(e) = client_clone
+                    .chat_stream(&config_clone, &messages, &tx_clone)
+                    .await
+                {
                     let _ = tx_clone.send(HermesResponseEvent::Failed(e.to_string()));
                 }
             });
@@ -130,16 +132,22 @@ pub fn HermesScreen(
                     HermesResponseEvent::ReasoningDelta(delta) => {
                         if let Some(update) = state.on_reasoning_delta(&delta) {
                             store.read().append_assistant_delta(
-                                &sid, &turn_id, &update.text,
-                                update.replace_existing, update.emit_text_event,
+                                &sid,
+                                &turn_id,
+                                &update.text,
+                                update.replace_existing,
+                                update.emit_text_event,
                             );
                         }
                     }
                     HermesResponseEvent::TextDelta(delta) => {
                         if let Some(update) = state.on_text_delta(&delta) {
                             store.read().append_assistant_delta(
-                                &sid, &turn_id, &update.text,
-                                update.replace_existing, update.emit_text_event,
+                                &sid,
+                                &turn_id,
+                                &update.text,
+                                update.replace_existing,
+                                update.emit_text_event,
                             );
                         }
                     }
@@ -148,7 +156,10 @@ pub fn HermesScreen(
                     }
                     HermesResponseEvent::Completed { text, response_id } => {
                         store.read().complete_assistant(
-                            &sid, &turn_id, response_id.as_deref(), Some(&text),
+                            &sid,
+                            &turn_id,
+                            response_id.as_deref(),
+                            Some(&text),
                         );
                     }
                     HermesResponseEvent::Failed(msg) => {

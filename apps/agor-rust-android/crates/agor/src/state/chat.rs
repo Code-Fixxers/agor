@@ -282,15 +282,18 @@ impl ChatStore {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct LoadedSession {
+    pub session: Session,
+    pub tasks: Vec<AgorTask>,
+    pub messages: Vec<Message>,
+}
+
 pub async fn load_session(
     client: &AgorClient,
-    chat: &mut ChatStore,
     session_id: &str,
     logger: &AppLogger,
-) -> Result<(), String> {
-    chat.reset();
-    chat.is_loading = true;
-
+) -> Result<LoadedSession, String> {
     logger.info(LogCategory::Chat, format!("Loading session {session_id}"));
 
     let session = client
@@ -316,10 +319,26 @@ pub async fn load_session(
         .await
         .map_err(|e| e.to_string())?;
 
-    chat.session = Some(session);
-    chat.tasks = tasks;
+    logger.info(
+        LogCategory::Chat,
+        format!("Loaded {} tasks, {} messages", tasks.len(), messages.len(),),
+    );
 
-    for msg in messages {
+    Ok(LoadedSession {
+        session,
+        tasks,
+        messages,
+    })
+}
+
+pub fn apply_loaded_session(chat: &mut ChatStore, loaded: LoadedSession) {
+    chat.session = Some(loaded.session);
+    chat.tasks = loaded.tasks;
+    chat.messages.clear();
+    chat.messages_by_task.clear();
+    chat.loaded_task_ids.clear();
+
+    for msg in loaded.messages {
         chat.insert_message(msg);
     }
 
@@ -328,31 +347,16 @@ pub async fn load_session(
     }
 
     chat.is_loading = false;
-
-    logger.info(
-        LogCategory::Chat,
-        format!(
-            "Loaded {} tasks, {} messages",
-            chat.tasks.len(),
-            chat.messages.len(),
-        ),
-    );
-
-    Ok(())
+    chat.error = None;
 }
 
 pub async fn send_prompt(
     client: &AgorClient,
-    chat: &mut ChatStore,
+    session_id: &str,
+    prompt: &str,
     logger: &AppLogger,
 ) -> Result<(), String> {
-    let session_id = chat
-        .session
-        .as_ref()
-        .map(|s| s.session_id.clone())
-        .ok_or("No session selected")?;
-
-    let prompt = chat.draft.trim().to_string();
+    let prompt = prompt.trim();
     if prompt.is_empty() {
         return Err("Prompt is empty".to_string());
     }
@@ -360,11 +364,9 @@ pub async fn send_prompt(
     logger.info(LogCategory::Chat, format!("Sending prompt to {session_id}"));
 
     client
-        .send_prompt(&session_id, &prompt)
+        .send_prompt(session_id, prompt)
         .await
         .map_err(|e| e.to_string())?;
-
-    chat.draft.clear();
 
     logger.info(LogCategory::Chat, "Prompt sent successfully");
 

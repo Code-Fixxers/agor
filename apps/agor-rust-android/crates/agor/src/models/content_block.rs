@@ -107,7 +107,10 @@ impl ContentBlock {
                 format!("thinking-{}", fxhash(thinking.as_deref().unwrap_or("")))
             }
             ContentBlock::Image { source } => {
-                format!("image-{}", fxhash(source.url.as_deref().unwrap_or("base64")))
+                format!(
+                    "image-{}",
+                    fxhash(source.url.as_deref().unwrap_or("base64"))
+                )
             }
             ContentBlock::Unknown { block_type } => format!("unknown-{block_type}"),
         }
@@ -152,13 +155,21 @@ impl Serialize for ContentBlock {
                 map.serialize_entry("type", "text")?;
                 map.serialize_entry("text", text)?;
             }
-            ContentBlock::ToolUse { tool_use_id, name, input } => {
+            ContentBlock::ToolUse {
+                tool_use_id,
+                name,
+                input,
+            } => {
                 map.serialize_entry("type", "tool_use")?;
                 map.serialize_entry("id", tool_use_id)?;
                 map.serialize_entry("name", name)?;
                 map.serialize_entry("input", input)?;
             }
-            ContentBlock::ToolResult { tool_use_id, content, is_error } => {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => {
                 map.serialize_entry("type", "tool_result")?;
                 map.serialize_entry("tool_use_id", tool_use_id)?;
                 if let Some(c) = content {
@@ -189,7 +200,9 @@ impl Serialize for ContentBlock {
 impl<'de> Deserialize<'de> for ContentBlock {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let v = Value::deserialize(deserializer)?;
-        let obj = v.as_object().ok_or_else(|| serde::de::Error::custom("expected object"))?;
+        let obj = v
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("expected object"))?;
 
         let block_type = obj
             .get("type")
@@ -198,7 +211,11 @@ impl<'de> Deserialize<'de> for ContentBlock {
 
         match block_type {
             "text" => Ok(ContentBlock::Text {
-                text: obj.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                text: obj
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string(),
             }),
             "tool_use" => Ok(ContentBlock::ToolUse {
                 tool_use_id: obj
@@ -229,7 +246,10 @@ impl<'de> Deserialize<'de> for ContentBlock {
                 is_error: obj.get("is_error").and_then(|v| v.as_bool()),
             }),
             "thinking" => Ok(ContentBlock::Thinking {
-                thinking: obj.get("thinking").and_then(|v| v.as_str()).map(String::from),
+                thinking: obj
+                    .get("thinking")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
             }),
             "image" => Ok(ContentBlock::Image {
                 source: obj

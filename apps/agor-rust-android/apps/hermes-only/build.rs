@@ -19,8 +19,8 @@ fn main() {
             .unwrap_or_else(|| "dev".to_string())
     });
 
-    let repo = std::env::var("GITHUB_REPOSITORY")
-        .unwrap_or_else(|_| "Code-Fixxers/agor".to_string());
+    let repo =
+        std::env::var("GITHUB_REPOSITORY").unwrap_or_else(|_| "Code-Fixxers/agor".to_string());
 
     let manifest_url = std::env::var("UPDATE_MANIFEST_URL").unwrap_or_else(|_| {
         format!(

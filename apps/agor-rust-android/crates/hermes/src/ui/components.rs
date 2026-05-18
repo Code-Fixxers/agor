@@ -31,7 +31,11 @@ pub fn SessionStrip(
 #[component]
 pub fn TurnBubble(turn: HermesTurn) -> Element {
     let is_user = turn.role == "user";
-    let bubble_class = if is_user { "hermes-bubble user" } else { "hermes-bubble assistant" };
+    let bubble_class = if is_user {
+        "hermes-bubble user"
+    } else {
+        "hermes-bubble assistant"
+    };
 
     let html_content = if !is_user && !turn.streaming {
         let parser = pulldown_cmark::Parser::new(&turn.content);

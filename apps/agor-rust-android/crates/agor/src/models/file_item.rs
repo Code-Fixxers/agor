@@ -60,12 +60,7 @@ impl VirtualNode {
     }
 }
 
-fn insert_path(
-    children: &mut Vec<VirtualNode>,
-    parts: &[&str],
-    depth: usize,
-    item: &FileListItem,
-) {
+fn insert_path(children: &mut Vec<VirtualNode>, parts: &[&str], depth: usize, item: &FileListItem) {
     if depth >= parts.len() {
         return;
     }
