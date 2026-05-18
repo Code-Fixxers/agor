@@ -396,6 +396,7 @@ export function setupMCPRoutes(
       transport: StreamableHTTPServerTransport;
       server: McpServer;
       userId: UserID;
+      mcpContext: McpContext;
     }
   >();
 
@@ -555,7 +556,9 @@ export function setupMCPRoutes(
         baseServiceParams,
       };
 
-      const mcpSessionId = coerceString(req.headers['mcp-session-id']);
+      const mcpSessionId =
+        coerceString(req.headers['mcp-session-id']) ||
+        coerceString(req.query.sessionId as string | undefined);
 
       // ─────────────────────────────────────────────────────────────────────────────
       // Stateful mode (streamable HTTP sessions): supports GET /mcp SSE + DELETE /mcp
@@ -593,6 +596,11 @@ export function setupMCPRoutes(
           });
         }
 
+        // Dynamically update the cached McpContext's sessionId for this specific request.
+        // The transport caches the McpContext from the initialize request, but API Key callers
+        // might change the x-agor-session-id header on subsequent requests.
+        existing.mcpContext.sessionId = sessionId;
+
         await existing.transport.handleRequest(req, res, req.body);
         return;
       }
@@ -604,7 +612,7 @@ export function setupMCPRoutes(
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId) => {
-            transports.set(newSessionId, { transport, server: mcpServer, userId });
+            transports.set(newSessionId, { transport, server: mcpServer, userId, mcpContext });
           },
         });
 
@@ -623,20 +631,14 @@ export function setupMCPRoutes(
       // Stateless fallback mode: preserves legacy behavior for direct POST usage
       // ─────────────────────────────────────────────────────────────────────────────
       if (req.method === 'POST') {
-        const mcpServer = createMcpServer(mcpContext, toolSearchEnabled, servicesConfig);
-
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: undefined,
+        return res.status(400).json({
+          jsonrpc: '2.0',
+          id: (req.body as { id?: unknown })?.id,
+          error: {
+            code: -32000,
+            message: 'Bad Request: Invalid or missing MCP session ID',
+          },
         });
-
-        await mcpServer.connect(transport);
-        await transport.handleRequest(req, res, req.body);
-
-        res.on('close', () => {
-          transport.close().catch(() => {});
-          mcpServer.close().catch(() => {});
-        });
-        return;
       }
 
       return res.status(405).json({

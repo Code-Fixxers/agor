@@ -76,7 +76,7 @@ export function registerBoardTools(server: McpServer, ctx: McpContext): void {
     },
     async (args) => {
       const query: Record<string, unknown> = {};
-      query.$limit = args.limit ?? 50;
+      query.$limit = args.limit || 50;
       if (args.archived === true) {
         query.archived = true;
       } else if (!args.includeArchived) {

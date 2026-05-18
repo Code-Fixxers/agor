@@ -22,7 +22,7 @@ export function registerTaskTools(server: McpServer, ctx: McpContext): void {
       }),
     },
     async (args) => {
-      const query: Record<string, unknown> = { $limit: args.limit ?? 50 };
+      const query: Record<string, unknown> = { $limit: args.limit || 50 };
       if (args.sessionId) {
         // Explicit sessionId = caller opted in, even if archived
         query.session_id = await resolveSessionId(ctx, args.sessionId);
