@@ -58,10 +58,13 @@ export interface DrizzleAdapterOptions {
  */
 export interface Repository<T> {
   create(data: Partial<T>): Promise<T>;
+  createMany?(data: Partial<T>[]): Promise<T[]>;
   findById(id: string): Promise<T | null>;
   findAll(): Promise<T[]>;
   update(id: string, updates: Partial<T>): Promise<T>;
+  updateMany?(ids: string[], updates: Partial<T>): Promise<T[]>;
   delete(id: string): Promise<void>;
+  deleteMany?(ids: string[]): Promise<void>;
   count?(): Promise<number>;
 }
 
@@ -258,9 +261,16 @@ export class DrizzleService<T = any, D = Partial<T>, P extends Params = Params> 
   async create(data: D | D[], params?: P): Promise<T | T[]> {
     if (Array.isArray(data)) {
       // Bulk create
-      const results = await Promise.all(
-        data.map((item) => this.repository.create(item as Partial<T>))
-      );
+      let results: T[];
+
+      // ⚡ Bolt Performance Optimization:
+      // Use createMany if the repository supports it to avoid N+1 DB roundtrips during bulk creation.
+      if ('createMany' in this.repository && typeof this.repository.createMany === 'function') {
+        results = await this.repository.createMany(data as Partial<T>[]);
+      } else {
+        results = await Promise.all(data.map((item) => this.repository.create(item as Partial<T>)));
+      }
+
       // Emit created event for each item
       for (const result of results) {
         this.emit?.('created', result, params);
@@ -301,14 +311,23 @@ export class DrizzleService<T = any, D = Partial<T>, P extends Params = Params> 
       let records = await this.repository.findAll();
       records = this.filterData(records, query);
 
-      const results = await Promise.all(
-        records.map((record) =>
-          this.repository.update(
-            (record as Record<string, unknown>)[this.id] as string,
-            data as Partial<T>
+      let results: T[];
+
+      // ⚡ Bolt Performance Optimization:
+      // Use updateMany if the repository supports it to avoid N+1 DB roundtrips during bulk updates.
+      if ('updateMany' in this.repository && typeof this.repository.updateMany === 'function') {
+        const ids = records.map((record) => String((record as Record<string, unknown>)[this.id]));
+        results = await this.repository.updateMany(ids, data as Partial<T>);
+      } else {
+        results = await Promise.all(
+          records.map((record) =>
+            this.repository.update(
+              (record as Record<string, unknown>)[this.id] as string,
+              data as Partial<T>
+            )
           )
-        )
-      );
+        );
+      }
 
       // Emit events for each patched record
       for (const result of results) {
@@ -342,8 +361,18 @@ export class DrizzleService<T = any, D = Partial<T>, P extends Params = Params> 
       let records = await this.repository.findAll();
       records = this.filterData(records, query);
 
-      // biome-ignore lint/suspicious/noExplicitAny: Need to access ID field dynamically
-      await Promise.all(records.map((record) => this.repository.delete((record as any)[this.id])));
+      // ⚡ Bolt Performance Optimization:
+      // Use deleteMany if the repository supports it to avoid N+1 DB roundtrips during bulk deletions.
+      if ('deleteMany' in this.repository && typeof this.repository.deleteMany === 'function') {
+        const ids = records.map((record) => String((record as Record<string, unknown>)[this.id]));
+        await this.repository.deleteMany(ids);
+      } else {
+        await Promise.all(
+          records.map((record) =>
+            this.repository.delete(String((record as Record<string, unknown>)[this.id]))
+          )
+        );
+      }
 
       // Emit removed event for each record
       for (const record of records) {
