@@ -18,7 +18,7 @@ export function registerRepoTools(server: McpServer, ctx: McpContext): void {
       }),
     },
     async (args) => {
-      const query: Record<string, unknown> = { $limit: args.limit ?? 50 };
+      const query: Record<string, unknown> = { $limit: args.limit || 50 };
       if (args.slug) query.slug = args.slug;
       const repos = await ctx.app.service('repos').find({ query, ...ctx.baseServiceParams });
       return textResult(repos);

@@ -135,7 +135,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       const query: Record<string, unknown> = {};
       // When sessionType is set, skip service-level pagination (it runs before our filter)
       // and apply the requested limit ourselves after filtering.
-      const requestedLimit = args.limit ?? 50;
+      const requestedLimit = args.limit || 50;
       if (!args.sessionType) query.$limit = requestedLimit;
       if (args.status) query.status = args.status;
       if (args.boardId) query.board_id = await resolveBoardId(ctx, args.boardId);
