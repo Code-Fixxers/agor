@@ -5,6 +5,7 @@
  */
 
 import type { Repo } from '@agor-live/client';
+import { PAGINATION } from '@agor-live/client';
 import { Args, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
@@ -43,6 +44,7 @@ export default class RepoRm extends BaseCommand {
 
     try {
       const reposService = client.service('repos');
+      const worktreesService = client.service('worktrees');
 
       // First, fetch the repo to show details and confirm
       let repo: Repo | null = null;
@@ -72,8 +74,13 @@ export default class RepoRm extends BaseCommand {
       this.log(`  ${chalk.cyan('Type')}: ${repo.repo_type}`);
       this.log(`  ${chalk.cyan('Path')}: ${repo.local_path}`);
 
+      // Fetch associated worktrees before removing the repo
+      // because worktrees cascade delete in the database
+      const worktrees = await worktreesService.findAll({
+        query: { repo_id: repo.repo_id, $limit: PAGINATION.DEFAULT_LIMIT },
+      });
+
       // Note: Worktrees are now in a separate table, not nested in repo
-      // For now, we just show repo info (would need to query worktrees table separately)
       this.log('');
 
       if (flags['delete-files']) {
@@ -87,7 +94,16 @@ export default class RepoRm extends BaseCommand {
         } else {
           this.log(chalk.yellow('⚠ WARNING: Local files will also be deleted:'));
           this.log(chalk.yellow(`  Main repo: ${repo.local_path}`));
-          this.log(chalk.yellow(`  Note: Any associated worktrees will also be deleted`));
+          if (worktrees.length > 0) {
+            this.log(
+              chalk.yellow(`  Note: ${worktrees.length} associated worktrees will also be deleted:`)
+            );
+            for (const worktree of worktrees) {
+              this.log(chalk.yellow(`    - ${worktree.name}: ${worktree.path}`));
+            }
+          } else {
+            this.log(chalk.yellow(`  Note: Any associated worktrees will also be deleted`));
+          }
           this.log('');
         }
       } else {
@@ -157,12 +173,27 @@ export default class RepoRm extends BaseCommand {
           );
         }
 
-        // TODO: Query worktrees table separately and delete associated worktree directories
-        // For now, worktrees cascade delete in database but files remain
+        // Delete associated worktree directories
+        for (const worktree of worktrees) {
+          try {
+            await fs.rm(worktree.path, { recursive: true, force: true });
+            this.log(
+              `${chalk.green('✓')} Worktree deleted (${worktree.name}): ${chalk.dim(worktree.path)}`
+            );
+          } catch (error) {
+            this.warn(
+              `Failed to delete worktree ${worktree.name}: ${error instanceof Error ? error.message : String(error)}`
+            );
+          }
+        }
       } else {
         this.log(chalk.dim('Local files preserved:'));
         this.log(chalk.dim('  Main repo: ') + repo.local_path);
-        // TODO: List worktrees from worktrees table
+
+        // List worktrees from the preserved query
+        for (const worktree of worktrees) {
+          this.log(chalk.dim(`  Worktree (${worktree.name}): `) + worktree.path);
+        }
       }
 
       this.log('');
