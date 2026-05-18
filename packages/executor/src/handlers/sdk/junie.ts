@@ -28,11 +28,20 @@ interface JunieSettings {
 }
 
 interface JunieOutputLine {
-  stream: 'stdout' | 'stderr';
+  stream: 'stdout' | 'stderr' | 'log';
   line: string;
 }
 
 const MAX_JUNIE_PROGRESS_LINES = 8;
+const JUNIE_LOG_POLL_MS = 1000;
+const JUNIE_ABORT_KILL_GRACE_MS = 5000;
+const JUNIE_FATAL_LOG_PATTERNS = [
+  /LLMConnectionFailed/i,
+  /Network error while calling LLM/i,
+  /Request timeout has expired/i,
+  /Failed to build 'issue\.md\.junie_standalone'/i,
+  /ERROR\s+JunieRunner/i,
+];
 
 function redactJunieOutputLine(line: string): string {
   return line
@@ -70,10 +79,124 @@ function formatJunieRunningMessage(params: {
     '',
     'Recent Junie output:',
     ...recentLines.map((entry) => {
-      const prefix = entry.stream === 'stderr' ? '[stderr] ' : '';
+      const prefix =
+        entry.stream === 'stderr' ? '[stderr] ' : entry.stream === 'log' ? '[junie log] ' : '';
       return `${prefix}${entry.line}`;
     }),
   ].join('\n');
+}
+
+function getJunieLogPath(): string {
+  const homeDir = process.env.HOME || os.homedir();
+  return path.join(homeDir, '.junie', 'logs', 'junie.log');
+}
+
+function extractFatalJunieDiagnostic(text: string): string | undefined {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => redactJunieOutputLine(line.trim()))
+    .filter(Boolean);
+  if (lines.length === 0) return undefined;
+
+  const fatalIndex = lines.findIndex((line) =>
+    JUNIE_FATAL_LOG_PATTERNS.some((pattern) => pattern.test(line))
+  );
+  if (fatalIndex === -1) return undefined;
+
+  const start = Math.max(0, fatalIndex - 2);
+  const end = Math.min(lines.length, fatalIndex + 4);
+  return lines.slice(start, end).join('\n');
+}
+
+async function createJunieLogWatcher(
+  logPath: string,
+  onOutputLine: (line: JunieOutputLine) => void
+): Promise<{ stop: () => Promise<void>; readOutput: () => string }> {
+  let offset = 0;
+  let lineBuffer = '';
+  const outputLines: string[] = [];
+  let polling = false;
+
+  try {
+    offset = (await fs.stat(logPath)).size;
+  } catch {
+    offset = 0;
+  }
+
+  const emitLines = (text: string, flush = false) => {
+    lineBuffer += text;
+    const lines = lineBuffer.split(/\r?\n/);
+    const completeLines = flush ? lines : lines.slice(0, -1);
+    lineBuffer = flush ? '' : lines.at(-1) || '';
+
+    for (const line of completeLines) {
+      const redacted = redactJunieOutputLine(line.trim());
+      if (redacted) {
+        outputLines.push(redacted);
+        onOutputLine({ stream: 'log', line: redacted });
+      }
+    }
+  };
+
+  const poll = async () => {
+    if (polling) return;
+    polling = true;
+    try {
+      const stat = await fs.stat(logPath);
+      if (stat.size < offset) {
+        offset = 0;
+      }
+      if (stat.size <= offset) return;
+
+      const length = stat.size - offset;
+      let handle: fs.FileHandle | undefined;
+      try {
+        handle = await fs.open(logPath, 'r');
+        const buffer = Buffer.alloc(length);
+        await handle.read(buffer, 0, length, offset);
+        offset = stat.size;
+        emitLines(buffer.toString('utf8'));
+      } finally {
+        await handle?.close().catch(() => undefined);
+      }
+    } catch {
+      // Junie creates this log lazily; absence while starting is normal.
+    } finally {
+      polling = false;
+    }
+  };
+
+  const interval = setInterval(() => {
+    void poll();
+  }, JUNIE_LOG_POLL_MS);
+  interval.unref?.();
+
+  return {
+    stop: async () => {
+      clearInterval(interval);
+      await poll();
+      emitLines('', true);
+    },
+    readOutput: () => outputLines.join('\n'),
+  };
+}
+
+function buildJunieFailureMessage(params: {
+  stdout: string;
+  stderr: string;
+  logTail: string;
+  fallback: string;
+}): string {
+  const logDiagnostic = extractFatalJunieDiagnostic(params.logTail);
+  if (logDiagnostic) return logDiagnostic;
+
+  const stderr = params.stderr.trim();
+  if (stderr) return stderr;
+
+  const stdout = params.stdout.trim();
+  if (stdout) return stdout;
+
+  return params.fallback;
 }
 
 async function resolveJunieApiKey(client: AgorClient, taskId: TaskID): Promise<string> {
@@ -190,20 +313,41 @@ function runJunieProcess(
   onOutputLine?: (line: JunieOutputLine) => void
 ): Promise<{
   exitCode: number | null;
+  signal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
+  aborted: boolean;
 }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
-      signal,
     });
     let stdout = '';
     let stderr = '';
     let stdoutLineBuffer = '';
     let stderrLineBuffer = '';
+    let closed = false;
+    let abortKillTimer: NodeJS.Timeout | undefined;
+
+    function abortChild() {
+      if (closed || child.killed) return;
+      child.kill('SIGTERM');
+      abortKillTimer = setTimeout(() => {
+        if (!closed && !child.killed) {
+          child.kill('SIGKILL');
+        }
+      }, JUNIE_ABORT_KILL_GRACE_MS);
+      abortKillTimer.unref?.();
+    }
+
+    const cleanup = () => {
+      signal.removeEventListener('abort', abortChild);
+      if (abortKillTimer) {
+        clearTimeout(abortKillTimer);
+      }
+    };
 
     const emitBufferedLines = (stream: 'stdout' | 'stderr', text: string, flush = false) => {
       let buffer = stream === 'stdout' ? stdoutLineBuffer : stderrLineBuffer;
@@ -226,6 +370,12 @@ function runJunieProcess(
       }
     };
 
+    if (signal.aborted) {
+      abortChild();
+    } else {
+      signal.addEventListener('abort', abortChild, { once: true });
+    }
+
     child.stdout?.on('data', (chunk) => {
       const text = chunk.toString();
       stdout += text;
@@ -236,11 +386,20 @@ function runJunieProcess(
       stderr += text;
       emitBufferedLines('stderr', text);
     });
-    child.on('error', reject);
-    child.on('close', (exitCode) => {
+    child.on('error', (error) => {
+      cleanup();
+      if (signal.aborted) {
+        resolve({ exitCode: null, signal: null, stdout, stderr, aborted: true });
+        return;
+      }
+      reject(error);
+    });
+    child.on('close', (exitCode, signalName) => {
+      closed = true;
+      cleanup();
       emitBufferedLines('stdout', '', true);
       emitBufferedLines('stderr', '', true);
-      resolve({ exitCode, stdout, stderr });
+      resolve({ exitCode, signal: signalName, stdout, stderr, aborted: signal.aborted });
     });
   });
 }
@@ -403,20 +562,53 @@ export async function executeJunieTask(params: {
     heartbeat.unref?.();
 
     let processResult: Awaited<ReturnType<typeof runJunieProcess>>;
+    let fatalJunieDiagnostic: string | undefined;
+    const processAbortController = new AbortController();
+    const abortFromParent = () => {
+      processAbortController.abort(params.abortController.signal.reason);
+    };
+    if (params.abortController.signal.aborted) {
+      abortFromParent();
+    } else {
+      params.abortController.signal.addEventListener('abort', abortFromParent, { once: true });
+    }
+    const handleJunieOutputLine = (line: JunieOutputLine) => {
+      outputLines.push(line);
+      const diagnostic = extractFatalJunieDiagnostic(line.line);
+      if (diagnostic && !fatalJunieDiagnostic) {
+        fatalJunieDiagnostic = diagnostic;
+        processAbortController.abort(new Error(diagnostic));
+      }
+      void queueProgressPatch();
+    };
+    const logWatcher = await createJunieLogWatcher(getJunieLogPath(), handleJunieOutputLine);
     try {
       processResult = await runJunieProcess(
         executable,
         args,
         worktree.path,
-        params.abortController.signal,
-        (line) => {
-          outputLines.push(line);
-          void queueProgressPatch();
-        }
+        processAbortController.signal,
+        handleJunieOutputLine
       );
     } finally {
       clearInterval(heartbeat);
+      params.abortController.signal.removeEventListener('abort', abortFromParent);
+      await logWatcher.stop();
       await progressPatchChain;
+    }
+
+    const junieLogOutput = logWatcher.readOutput();
+    const abortedByJunieDiagnostic =
+      processResult.aborted && !params.abortController.signal.aborted && fatalJunieDiagnostic;
+    if (abortedByJunieDiagnostic) {
+      const message = buildJunieFailureMessage({
+        stdout: processResult.stdout,
+        stderr: processResult.stderr,
+        logTail: junieLogOutput,
+        fallback: fatalJunieDiagnostic ?? 'Junie failed',
+      });
+      await patchAssistantMessage(`Junie failed.\n\n${message}`);
+      throw new Error(message);
     }
 
     const parsedOutput = await readJunieOutput(files.outputPath);
@@ -437,7 +629,15 @@ export async function executeJunieTask(params: {
     }
 
     if (processResult.exitCode !== 0) {
-      const message = processResult.stderr.trim() || processResult.stdout.trim() || 'Junie failed';
+      const message = buildJunieFailureMessage({
+        stdout: processResult.stdout,
+        stderr: processResult.stderr,
+        logTail: junieLogOutput,
+        fallback:
+          processResult.aborted && params.abortController.signal.aborted
+            ? 'Junie was stopped.'
+            : 'Junie failed',
+      });
       await patchAssistantMessage(`Junie failed.\n\n${message}`);
       throw new Error(message);
     }
