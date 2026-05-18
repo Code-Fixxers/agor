@@ -1,9 +1,8 @@
 use dioxus::prelude::*;
 
-use agor_hermes::models::HermesConfig;
+use agor_hermes::client::HermesClient;
+use agor_hermes::models::{HermesConfig, DEFAULT_MODEL, DEFAULT_WEB_UI_URL};
 use agor_hermes::session_store::HermesSessionStore;
-use agor_hermes::ui::hermes_screen::HermesScreen;
-use agor_hermes::ui::setup_screen::HermesSetupScreen;
 use agor_lib::models::user::User;
 #[cfg(target_arch = "wasm32")]
 use agor_lib::models::user::UserRole;
@@ -12,8 +11,9 @@ use agor_lib::state::auth::{self, AuthState, AuthStore};
 use agor_lib::state::chat::ChatStore;
 use agor_lib::state::navigation::NavStore;
 use agor_lib::state::storage::AppStorage;
-use agor_lib::ui::app_shell::AppShell;
+use agor_lib::ui::app_shell::AppShellWithSettings;
 use agor_lib::ui::login::LoginScreen;
+use agor_lib::ui::settings::SettingsScreenWithExtra;
 use agor_shared::logger::AppLogger;
 use agor_shared::update::AppMetadata;
 
@@ -32,7 +32,7 @@ fn main() {
 enum AppTab {
     Agor,
     Hermes,
-    HermesSetup,
+    Settings,
 }
 
 #[component]
@@ -148,9 +148,12 @@ fn App() -> Element {
         use_memo(move || matches!(auth.read().state, AuthState::Authenticated { .. }));
     let dev_login_active = use_memo(move || dev_login_config().is_some());
 
-    let hermes_configured = use_memo(move || {
+    let hermes_web_configured = use_memo(move || {
         let c = hermes_config.read();
-        c.base_url.is_some() && c.token.is_some()
+        c.web_ui_url
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|url| !url.is_empty())
     });
 
     rsx! {
@@ -177,22 +180,22 @@ fn App() -> Element {
                         span { class: "rail-mark", "A" }
                     }
                     button {
-                        class: if matches!(*active_tab.read(), AppTab::Hermes | AppTab::HermesSetup) { "rail-item active" } else { "rail-item" },
+                        class: if *active_tab.read() == AppTab::Hermes { "rail-item active" } else { "rail-item" },
                         title: "Hermes",
                         onclick: move |_| {
-                            if hermes_configured() {
+                            if hermes_web_configured() {
                                 active_tab.set(AppTab::Hermes);
                             } else {
-                                active_tab.set(AppTab::HermesSetup);
+                                active_tab.set(AppTab::Settings);
                             }
                         },
                         span { class: "rail-mark", "H" }
                     }
                     div { class: "rail-spacer" }
                     button {
-                        class: if *active_tab.read() == AppTab::HermesSetup { "rail-item active" } else { "rail-item" },
-                        title: "Hermes settings",
-                        onclick: move |_| active_tab.set(AppTab::HermesSetup),
+                        class: if *active_tab.read() == AppTab::Settings { "rail-item active" } else { "rail-item" },
+                        title: "Settings",
+                        onclick: move |_| active_tab.set(AppTab::Settings),
                         span { class: "rail-mark", "⚙" }
                     }
                 }
@@ -200,32 +203,281 @@ fn App() -> Element {
                 main { class: "app-surface",
                     match active_tab.read().clone() {
                         AppTab::Agor => rsx! {
-                            AppShell {}
-                        },
-                        AppTab::Hermes => rsx! {
-                            HermesScreen {
-                                config: hermes_config.read().clone(),
-                                on_open_settings: move |_| active_tab.set(AppTab::HermesSetup),
+                            AppShellWithSettings {
+                                settings_extra_sections: rsx! {
+                                    HermesSettingsSection {
+                                        config: hermes_config.read().clone(),
+                                        on_save: move |new_config: HermesConfig| {
+                                            save_hermes_config(&new_config);
+                                            hermes_config.set(new_config);
+                                        },
+                                    }
+                                },
                             }
                         },
-                        AppTab::HermesSetup => rsx! {
-                            HermesSetupScreen {
+                        AppTab::Hermes => rsx! {
+                            HermesWebScreen {
                                 config: hermes_config.read().clone(),
-                                on_save: move |new_config: HermesConfig| {
-                                    save_hermes_config(&new_config);
-                                    hermes_config.set(new_config);
-                                    active_tab.set(AppTab::Hermes);
+                                on_open_settings: move |_| active_tab.set(AppTab::Settings),
+                            }
+                        },
+                        AppTab::Settings => rsx! {
+                            SettingsScreenWithExtra {
+                                on_back: move |_| {
+                                    active_tab.set(AppTab::Agor);
                                 },
-                                on_close: move |_| {
-                                    if hermes_configured() {
-                                        active_tab.set(AppTab::Hermes);
-                                    } else {
-                                        active_tab.set(AppTab::Agor);
+                                on_open_drawer: move |_| {
+                                    active_tab.set(AppTab::Agor);
+                                },
+                                extra_sections: rsx! {
+                                    HermesSettingsSection {
+                                        config: hermes_config.read().clone(),
+                                        on_save: move |new_config: HermesConfig| {
+                                            save_hermes_config(&new_config);
+                                            hermes_config.set(new_config);
+                                        },
                                     }
                                 },
                             }
                         },
                     }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn HermesWebScreen(config: HermesConfig, on_open_settings: EventHandler<()>) -> Element {
+    let web_url = config
+        .web_ui_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .unwrap_or(DEFAULT_WEB_UI_URL)
+        .to_string();
+
+    rsx! {
+        div { class: "hermes-web-screen",
+            div { class: "hermes-web-topbar",
+                div { class: "topbar-center",
+                    span { class: "topbar-title", "Hermes" }
+                    span { class: "topbar-subtitle", "{web_url}" }
+                }
+                button {
+                    class: "icon-btn",
+                    title: "Settings",
+                    onclick: move |_| on_open_settings.call(()),
+                    "⚙"
+                }
+            }
+            iframe {
+                class: "hermes-web-frame",
+                title: "Hermes Web UI",
+                src: "{web_url}",
+                allow: "microphone; clipboard-read; clipboard-write; fullscreen",
+            }
+        }
+    }
+}
+
+#[component]
+fn HermesSettingsSection(config: HermesConfig, on_save: EventHandler<HermesConfig>) -> Element {
+    let mut web_ui_url = use_signal(|| {
+        config
+            .web_ui_url
+            .clone()
+            .unwrap_or_else(|| DEFAULT_WEB_UI_URL.to_string())
+    });
+    let mut url = use_signal(|| config.base_url.clone().unwrap_or_default());
+    let mut token = use_signal(|| config.token.clone().unwrap_or_default());
+    let mut model = use_signal(|| config.model.clone().unwrap_or_default());
+    let mut whisper_url = use_signal(|| config.whisper_url.clone().unwrap_or_default());
+    let mut whisper_token = use_signal(|| config.whisper_token.clone().unwrap_or_default());
+    let mut whisper_model = use_signal(|| {
+        config.whisper_model.clone().unwrap_or_else(|| {
+            agor_lib::network::transcription::DEFAULT_REMOTE_WHISPER_MODEL.to_string()
+        })
+    });
+    let mut whisper_model_artifact_url = use_signal(|| {
+        config
+            .whisper_model_artifact_url
+            .clone()
+            .unwrap_or_default()
+    });
+    let mut whisper_model_path =
+        use_signal(|| config.whisper_model_path.clone().unwrap_or_default());
+    let mut probing = use_signal(|| false);
+    let mut status = use_signal(|| Option::<String>::None);
+    let mut status_ok = use_signal(|| false);
+
+    let has_url = !url.read().trim().is_empty();
+    let has_token = !token.read().trim().is_empty();
+    let can_test = has_url && has_token && !*probing.read();
+
+    let on_test = move |_| {
+        let test_url = HermesClient::normalize_url(&url.read());
+        let test_token = token.read().trim().to_string();
+        probing.set(true);
+        status.set(None);
+
+        spawn(async move {
+            let client = HermesClient::new();
+            match client.probe(&test_url, &test_token).await {
+                Ok(models) => {
+                    let model_list = models.join(", ");
+                    status.set(Some(format!("OK - models: {model_list}")));
+                    status_ok.set(true);
+                }
+                Err(e) => {
+                    status.set(Some(format!("Error: {e}")));
+                    status_ok.set(false);
+                }
+            }
+            probing.set(false);
+        });
+    };
+
+    let on_save_click = move |_| {
+        let clean = |value: String| {
+            let value = value.trim().to_string();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        };
+        let normalized_url = |value: String| {
+            let value = value.trim().to_string();
+            if value.is_empty() {
+                None
+            } else {
+                Some(HermesClient::normalize_url(&value))
+            }
+        };
+
+        on_save.call(HermesConfig {
+            web_ui_url: clean(web_ui_url.read().clone()),
+            base_url: normalized_url(url.read().clone()),
+            token: clean(token.read().clone()),
+            model: clean(model.read().clone()),
+            whisper_url: clean(whisper_url.read().clone()),
+            whisper_token: clean(whisper_token.read().clone()),
+            whisper_model: clean(whisper_model.read().clone()),
+            whisper_model_artifact_url: clean(whisper_model_artifact_url.read().clone()),
+            whisper_model_path: clean(whisper_model_path.read().clone()),
+        });
+        status.set(Some("Hermes settings saved".to_string()));
+        status_ok.set(true);
+    };
+
+    rsx! {
+        div { class: "settings-section",
+            h3 { "Hermes" }
+            div { class: "form-group",
+                label { "Hermes Web UI URL" }
+                input {
+                    r#type: "text",
+                    placeholder: "{DEFAULT_WEB_UI_URL}",
+                    value: "{web_ui_url}",
+                    oninput: move |e| web_ui_url.set(e.value()),
+                }
+            }
+            div { class: "form-group",
+                label { "Hermes API base URL" }
+                input {
+                    r#type: "text",
+                    placeholder: "https://llm.example.com",
+                    value: "{url}",
+                    oninput: move |e| {
+                        url.set(e.value());
+                        status.set(None);
+                    },
+                }
+            }
+            div { class: "form-group",
+                label { "Hermes API key" }
+                input {
+                    r#type: "password",
+                    placeholder: "sk-...",
+                    value: "{token}",
+                    oninput: move |e| {
+                        token.set(e.value());
+                        status.set(None);
+                    },
+                }
+            }
+            div { class: "form-group",
+                label { "Hermes model" }
+                input {
+                    r#type: "text",
+                    placeholder: "{DEFAULT_MODEL}",
+                    value: "{model}",
+                    oninput: move |e| model.set(e.value()),
+                }
+            }
+            div { class: "form-group",
+                label { "Hermes remote Whisper URL" }
+                input {
+                    r#type: "text",
+                    placeholder: "http://host:8080",
+                    value: "{whisper_url}",
+                    oninput: move |e| whisper_url.set(e.value()),
+                }
+            }
+            div { class: "form-group",
+                label { "Hermes remote Whisper token" }
+                input {
+                    r#type: "password",
+                    placeholder: "Token",
+                    value: "{whisper_token}",
+                    oninput: move |e| whisper_token.set(e.value()),
+                }
+            }
+            div { class: "form-group",
+                label { "Hermes Whisper model" }
+                input {
+                    r#type: "text",
+                    placeholder: "{agor_lib::network::transcription::DEFAULT_REMOTE_WHISPER_MODEL}",
+                    value: "{whisper_model}",
+                    oninput: move |e| whisper_model.set(e.value()),
+                }
+            }
+            div { class: "form-group",
+                label { "Hermes local model artifact URL" }
+                input {
+                    r#type: "text",
+                    placeholder: "{agor_lib::network::transcription::DEFAULT_BASE_EN_MODEL_ARTIFACT_URL}",
+                    value: "{whisper_model_artifact_url}",
+                    oninput: move |e| whisper_model_artifact_url.set(e.value()),
+                }
+            }
+            div { class: "form-group",
+                label { "Hermes local model path" }
+                input {
+                    r#type: "text",
+                    placeholder: "Downloaded by Android bridge",
+                    value: "{whisper_model_path}",
+                    oninput: move |e| whisper_model_path.set(e.value()),
+                }
+            }
+            if let Some(st) = status.read().as_ref() {
+                p {
+                    class: if *status_ok.read() { "form-status ok" } else { "form-status error" },
+                    "{st}"
+                }
+            }
+            div { class: "setup-actions",
+                button {
+                    class: "btn-secondary",
+                    disabled: !can_test,
+                    onclick: on_test,
+                    if *probing.read() { "Testing..." } else { "Test Connection" }
+                }
+                button {
+                    class: "btn-primary",
+                    onclick: on_save_click,
+                    "Save Hermes Settings"
                 }
             }
         }

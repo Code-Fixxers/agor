@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::client::HermesClient;
-use crate::models::HermesConfig;
+use crate::models::{HermesConfig, DEFAULT_WEB_UI_URL};
 use agor_shared::update::{self, AppMetadata, UpdateState};
 
 const DEFAULT_REMOTE_WHISPER_MODEL: &str = "base.en";
@@ -14,6 +14,7 @@ pub fn HermesSetupScreen(
     on_save: EventHandler<HermesConfig>,
     on_close: EventHandler<()>,
 ) -> Element {
+    let mut web_ui_url = use_signal(|| config.web_ui_url.clone().unwrap_or_default());
     let mut url = use_signal(|| config.base_url.clone().unwrap_or_default());
     let mut token = use_signal(|| config.token.clone().unwrap_or_default());
     let mut model = use_signal(|| config.model.clone().unwrap_or_default());
@@ -77,6 +78,14 @@ pub fn HermesSetupScreen(
 
     let on_save_click = move |_| {
         let new_config = HermesConfig {
+            web_ui_url: {
+                let w = web_ui_url.read().trim().to_string();
+                if w.is_empty() {
+                    None
+                } else {
+                    Some(w)
+                }
+            },
             base_url: Some(HermesClient::normalize_url(&url.read())),
             token: Some(token.read().trim().to_string()),
             model: {
@@ -143,6 +152,16 @@ pub fn HermesSetupScreen(
             }
 
             div { class: "setup-form",
+                div { class: "form-group",
+                    label { "Hermes Web UI URL" }
+                    input {
+                        r#type: "text",
+                        placeholder: "{DEFAULT_WEB_UI_URL}",
+                        value: "{web_ui_url}",
+                        oninput: move |e| web_ui_url.set(e.value()),
+                    }
+                }
+
                 div { class: "form-group",
                     label { "Base URL" }
                     input {

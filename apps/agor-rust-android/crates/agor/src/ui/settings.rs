@@ -14,6 +14,21 @@ use agor_shared::update::{self, AppMetadata, UpdateState};
 
 #[component]
 pub fn SettingsScreen(on_back: EventHandler<()>, on_open_drawer: EventHandler<()>) -> Element {
+    rsx! {
+        SettingsScreenWithExtra {
+            on_back,
+            on_open_drawer,
+            extra_sections: rsx! {},
+        }
+    }
+}
+
+#[component]
+pub fn SettingsScreenWithExtra(
+    on_back: EventHandler<()>,
+    on_open_drawer: EventHandler<()>,
+    extra_sections: Element,
+) -> Element {
     let mut auth = use_context::<Signal<AuthStore>>();
     let mut storage = use_context::<Signal<AppStorage>>();
     let meta = use_context::<Signal<AppMetadata>>();
@@ -293,6 +308,8 @@ pub fn SettingsScreen(on_back: EventHandler<()>, on_open_drawer: EventHandler<()
                         "Save Voice Settings"
                     }
                 }
+
+                {extra_sections}
 
                 // Diagnostics section
                 div { class: "settings-section",

@@ -130,6 +130,8 @@ impl Default for HermesVoiceState {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HermesConfig {
+    #[serde(default = "default_web_ui_url")]
+    pub web_ui_url: Option<String>,
     pub base_url: Option<String>,
     pub token: Option<String>,
     pub model: Option<String>,
@@ -140,9 +142,14 @@ pub struct HermesConfig {
     pub whisper_model_path: Option<String>,
 }
 
+fn default_web_ui_url() -> Option<String> {
+    Some(DEFAULT_WEB_UI_URL.to_string())
+}
+
 impl Default for HermesConfig {
     fn default() -> Self {
         Self {
+            web_ui_url: Some(DEFAULT_WEB_UI_URL.to_string()),
             base_url: None,
             token: None,
             model: None,
@@ -155,4 +162,21 @@ impl Default for HermesConfig {
     }
 }
 
+pub const DEFAULT_WEB_UI_URL: &str = "http://100.101.157.56:8787";
 pub const DEFAULT_MODEL: &str = "hermes-model";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hermes_config_defaults_web_ui_url_when_missing() {
+        let config: HermesConfig =
+            serde_json::from_str(r#"{"base_url":"https://llm.example.com","token":"sk-test"}"#)
+                .unwrap();
+
+        assert_eq!(config.web_ui_url.as_deref(), Some(DEFAULT_WEB_UI_URL));
+        assert_eq!(config.base_url.as_deref(), Some("https://llm.example.com"));
+        assert_eq!(config.token.as_deref(), Some("sk-test"));
+    }
+}

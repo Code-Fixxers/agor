@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::ui::chat::chat_screen::ChatScreen;
-use crate::ui::settings::SettingsScreen;
+use crate::ui::settings::SettingsScreenWithExtra;
 use crate::ui::sidebar::Sidebar;
 use crate::ui::worktree_detail::WorktreeDetailScreen;
 
@@ -15,6 +15,15 @@ pub enum Route {
 
 #[component]
 pub fn AppShell() -> Element {
+    rsx! {
+        AppShellWithSettings {
+            settings_extra_sections: rsx! {},
+        }
+    }
+}
+
+#[component]
+pub fn AppShellWithSettings(settings_extra_sections: Element) -> Element {
     let mut route = use_signal(|| Route::Empty);
     let mut drawer_open = use_signal(|| false);
 
@@ -78,7 +87,7 @@ pub fn AppShell() -> Element {
                         }
                     },
                     Route::Settings => rsx! {
-                        SettingsScreen {
+                        SettingsScreenWithExtra {
                             on_back: move |_| {
                                 route.set(Route::Empty);
                             },
@@ -86,6 +95,7 @@ pub fn AppShell() -> Element {
                                 let current = *drawer_open.read();
                                 drawer_open.set(!current);
                             },
+                            extra_sections: settings_extra_sections,
                         }
                     },
                     Route::Worktree { worktree_id } => rsx! {
