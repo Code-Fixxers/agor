@@ -5,6 +5,7 @@ pub fn agent_icon_class(tool: &AgenticTool) -> &'static str {
         AgenticTool::ClaudeCode => "agent-claude",
         AgenticTool::Codex => "agent-codex",
         AgenticTool::Gemini => "agent-gemini",
+        AgenticTool::Junie => "agent-junie",
         AgenticTool::Opencode => "agent-opencode",
     }
 }

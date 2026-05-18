@@ -17,7 +17,7 @@ pub fn LoginScreen() -> Element {
     let mut storage = use_context::<Signal<AppStorage>>();
 
     let mut login_mode = use_signal(|| LoginMode::Password);
-    let mut url = use_signal(|| String::new());
+    let mut url = use_signal(default_daemon_url);
     let mut email = use_signal(|| String::new());
     let mut password = use_signal(|| String::new());
     let mut api_key = use_signal(|| String::new());
@@ -265,5 +265,17 @@ pub fn LoginScreen() -> Element {
                 }
             }
         }
+    }
+}
+
+fn default_daemon_url() -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        "http://127.0.0.1:3030".to_string()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        String::new()
     }
 }

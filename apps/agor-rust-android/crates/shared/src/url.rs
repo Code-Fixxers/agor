@@ -42,7 +42,20 @@ pub fn agor_base_url_candidates(raw: &str) -> Vec<String> {
         candidates.push(https);
     }
 
+    #[cfg(target_arch = "wasm32")]
+    if !is_local_proxy_url(&normalized) {
+        candidates.push("http://127.0.0.1:3030".to_string());
+    }
+
     candidates
+}
+
+#[cfg(target_arch = "wasm32")]
+fn is_local_proxy_url(value: &str) -> bool {
+    url::Url::parse(value)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .is_some_and(|host| matches!(host.as_str(), "127.0.0.1" | "localhost"))
 }
 
 #[cfg(test)]

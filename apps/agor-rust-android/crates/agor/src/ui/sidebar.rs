@@ -18,19 +18,35 @@ pub fn Sidebar(
     let auth = use_context::<Signal<AuthStore>>();
 
     let mut search_query = use_signal(|| String::new());
-    let mut did_load = use_signal(|| false);
+    use_future(move || {
+        let storage_snapshot = storage.read().clone();
 
-    use_effect(move || {
-        if *did_load.read() {
-            return;
-        }
+        async move {
+            nav.write().is_loading = true;
 
-        did_load.set(true);
-        nav.write().is_loading = true;
-        spawn(async move {
             let logger = AppLogger::new();
             let client = AgorClient::new(logger.clone());
+
+            if let Some(profile) = storage_snapshot
+                .active_profile()
+                .or_else(|| storage_snapshot.default_profile())
+            {
+                client.set_base_url(&profile.url);
+                if let Some(creds) = storage_snapshot.credentials.get(&profile.id) {
+                    let mut tokens = client.tokens.write().unwrap();
+                    tokens.access_token = creds.access_token.clone();
+                    tokens.refresh_token = creds.refresh_token.clone();
+                    tokens.server_url = Some(profile.url.clone());
+                    tokens.user_id = creds.user_id.clone();
+                    tokens.last_email = creds.user_email.clone();
+                }
+            }
+
             let mut loaded = NavStore::new();
+            loaded.favorites = storage_snapshot.preferences.favorites.clone();
+            loaded.expanded_boards = storage_snapshot.preferences.collapsed_boards.clone();
+            loaded.expanded_worktrees = storage_snapshot.preferences.collapsed_worktrees.clone();
+
             let result = navigation::refresh_navigation(&client, &mut loaded, &logger).await;
             let mut n = nav.write();
             match result {
@@ -42,7 +58,7 @@ pub fn Sidebar(
                     n.error = Some(e);
                 }
             }
-        });
+        }
     });
 
     let rows = use_memo(move || {

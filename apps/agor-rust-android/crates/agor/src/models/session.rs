@@ -19,7 +19,10 @@ impl SessionStatus {
     }
 
     pub fn is_active(&self) -> bool {
-        matches!(self, Self::Running | Self::Stopping | Self::AwaitingPermission | Self::AwaitingInput)
+        matches!(
+            self,
+            Self::Running | Self::Stopping | Self::AwaitingPermission | Self::AwaitingInput
+        )
     }
 
     pub fn display_label(&self) -> &str {
@@ -42,6 +45,7 @@ pub enum AgenticTool {
     ClaudeCode,
     Codex,
     Gemini,
+    Junie,
     Opencode,
 }
 
@@ -51,6 +55,7 @@ impl AgenticTool {
             Self::ClaudeCode => "Claude Code",
             Self::Codex => "Codex",
             Self::Gemini => "Gemini",
+            Self::Junie => "Junie",
             Self::Opencode => "OpenCode",
         }
     }
@@ -74,6 +79,7 @@ impl AgenticTool {
                 PermissionMode::AutoEdit,
                 PermissionMode::Yolo,
             ],
+            Self::Junie => vec![PermissionMode::Default],
             Self::Opencode => vec![PermissionMode::Default],
         }
     }
@@ -221,8 +227,7 @@ impl Session {
     }
 
     pub fn is_promptable(&self) -> bool {
-        matches!(self.status, SessionStatus::Idle)
-            || self.ready_for_prompt.unwrap_or(false)
+        matches!(self.status, SessionStatus::Idle) || self.ready_for_prompt.unwrap_or(false)
     }
 
     pub fn can_queue_prompt(&self) -> bool {
