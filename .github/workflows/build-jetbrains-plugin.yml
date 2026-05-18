@@ -1,0 +1,143 @@
+name: Build JetBrains Plugin
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: jetbrains-plugin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build plugin ZIP
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.4'
+
+      - name: Compute version
+        id: version
+        working-directory: apps/agor-jetbrains
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/^version[[:space:]]*=[[:space:]]*//p' gradle.properties)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Test plugin
+        working-directory: apps/agor-jetbrains
+        env:
+          ORG_GRADLE_PROJECT_wurstBundleEnabled: 'false'
+        run: gradle test --no-daemon --stacktrace
+
+      - name: Build plugin ZIP
+        working-directory: apps/agor-jetbrains
+        env:
+          ORG_GRADLE_PROJECT_wurstBundleEnabled: 'false'
+        run: gradle buildPlugin --no-daemon --stacktrace
+
+      - name: Rename plugin ZIP
+        id: package
+        working-directory: apps/agor-jetbrains
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHORT_SHA: ${{ steps.version.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+          SRC=$(find build/distributions -maxdepth 1 -name '*.zip' -print -quit)
+          if [ -z "$SRC" ]; then
+            echo "::error::No plugin ZIP found in build/distributions"
+            exit 1
+          fi
+          DEST="agor-jetbrains-${VERSION}-${SHORT_SHA}.zip"
+          cp "$SRC" "$DEST"
+          ls -la "$DEST"
+          echo "zip_path=apps/agor-jetbrains/$DEST" >> "$GITHUB_OUTPUT"
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agor-jetbrains-${{ steps.version.outputs.version }}-${{ steps.version.outputs.short_sha }}
+          path: ${{ steps.package.outputs.zip_path }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish rolling JetBrains plugin release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHORT_SHA: ${{ steps.version.outputs.short_sha }}
+          ZIP_PATH: ${{ steps.package.outputs.zip_path }}
+        run: |
+          set -euo pipefail
+          TAG="jetbrains-latest"
+          NOTES=$(cat <<EOF
+          Rolling JetBrains plugin build — overwritten on every push to main.
+
+          - commit: \`${SHORT_SHA}\`
+          - pluginVersion: \`${VERSION}\`
+          EOF
+          )
+
+          git tag -f "$TAG"
+          git push origin "refs/tags/$TAG" --force
+
+          gh release delete "$TAG" --yes --cleanup-tag=false 2>/dev/null || true
+
+          STABLE_ZIP="$(dirname "$ZIP_PATH")/agor-jetbrains.zip"
+          cp "$ZIP_PATH" "$STABLE_ZIP"
+          ZIP_SIZE=$(stat -c%s "$STABLE_ZIP")
+          MANIFEST="$(dirname "$ZIP_PATH")/agor-jetbrains-latest.json"
+          cat > "$MANIFEST" <<EOF
+          {
+            "version": "${VERSION}",
+            "commit": "${SHORT_SHA}",
+            "zipUrl": "https://github.com/Code-Fixxers/agor/releases/download/jetbrains-latest/agor-jetbrains.zip",
+            "sizeBytes": ${ZIP_SIZE}
+          }
+          EOF
+
+          gh release create "$TAG" \
+            --title "JetBrains plugin — $VERSION ($SHORT_SHA)" \
+            --notes "$NOTES" \
+            --prerelease \
+            "$STABLE_ZIP" \
+            "$MANIFEST"
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHORT_SHA: ${{ steps.version.outputs.short_sha }}
+          ZIP_PATH: ${{ steps.package.outputs.zip_path }}
+        run: |
+          {
+            echo "### Agor JetBrains plugin"
+            echo ""
+            echo "- Commit: \`${SHORT_SHA}\`"
+            echo "- pluginVersion: \`${VERSION}\`"
+            echo "- Artifact: \`${ZIP_PATH}\`"
+            echo ""
+            echo "Rolling main build: https://github.com/Code-Fixxers/agor/releases/download/jetbrains-latest/agor-jetbrains.zip"
+          } >> "$GITHUB_STEP_SUMMARY"
