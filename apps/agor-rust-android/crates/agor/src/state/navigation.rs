@@ -67,6 +67,17 @@ impl NavStore {
             .collect()
     }
 
+    pub fn favorite_sessions(&self) -> Vec<&Session> {
+        let mut favorites: Vec<&Session> = self
+            .sessions
+            .iter()
+            .filter(|s| self.favorites.contains(&s.session_id) && !s.is_scheduled())
+            .collect();
+
+        favorites.sort_by(|a, b| b.last_updated.cmp(&a.last_updated));
+        favorites
+    }
+
     pub fn important_sessions(&self) -> Vec<&Session> {
         let attention_ids: HashSet<&str> = self
             .attention_sessions()
@@ -79,10 +90,10 @@ impl NavStore {
             .iter()
             .filter(|s| {
                 !attention_ids.contains(s.session_id.as_str())
+                    && !self.favorites.contains(&s.session_id)
                     && !s.is_scheduled()
                     && (s.ready_for_prompt.unwrap_or(false)
                         || matches!(s.status, SessionStatus::Running)
-                        || self.favorites.contains(&s.session_id)
                         || s.has_explicit_title())
             })
             .collect();
@@ -90,6 +101,85 @@ impl NavStore {
         important.sort_by(|a, b| b.last_updated.cmp(&a.last_updated));
         important.truncate(10);
         important
+    }
+
+    fn build_hierarchical_session_rows<'a>(
+        &self,
+        sessions: impl IntoIterator<Item = &'a Session>,
+    ) -> Vec<SidebarRow> {
+        let session_ids: HashSet<&str> = sessions
+            .into_iter()
+            .map(|session| session.session_id.as_str())
+            .collect();
+
+        let mut rows = Vec::new();
+        if session_ids.is_empty() {
+            return rows;
+        }
+
+        for board in &self.boards {
+            if board.archived.unwrap_or(false) {
+                continue;
+            }
+
+            let Some(worktrees) = self.worktrees_by_board.get(&board.board_id) else {
+                continue;
+            };
+
+            let board_start = rows.len();
+            rows.push(SidebarRow::BoardHeader {
+                board: board.clone(),
+                expanded: true,
+            });
+
+            for wt in worktrees {
+                if wt.archived.unwrap_or(false) {
+                    continue;
+                }
+
+                let Some(worktree_sessions) = self.sessions_by_worktree.get(&wt.worktree_id) else {
+                    continue;
+                };
+
+                let matching_sessions: Vec<&Session> = worktree_sessions
+                    .iter()
+                    .filter(|session| {
+                        session_ids.contains(session.session_id.as_str())
+                            && !session.archived.unwrap_or(false)
+                    })
+                    .collect();
+
+                if matching_sessions.is_empty() {
+                    continue;
+                }
+
+                let repo_name = self
+                    .repos_by_id
+                    .get(&wt.repo_id)
+                    .map(|r| r.name.clone())
+                    .unwrap_or_default();
+
+                rows.push(SidebarRow::WorktreeRow {
+                    worktree: wt.clone(),
+                    repo_name,
+                    expanded: true,
+                });
+
+                for session in matching_sessions {
+                    rows.push(SidebarRow::SessionRow {
+                        session: session.clone(),
+                        depth: 2,
+                        is_favorite: self.favorites.contains(&session.session_id),
+                    });
+                }
+            }
+
+            if rows.len() == board_start + 1 {
+                rows.truncate(board_start);
+            }
+        }
+
+        rows
     }
 
     pub fn search_results(&self) -> Vec<&Session> {
@@ -107,18 +197,26 @@ impl NavStore {
     pub fn build_sidebar_rows(&self) -> Vec<SidebarRow> {
         let mut rows = Vec::new();
 
+        let favorites = self.favorite_sessions();
+        if !favorites.is_empty() {
+            rows.push(SidebarRow::SectionHeader {
+                label: "FAVOURITES".to_string(),
+            });
+            for s in &favorites {
+                rows.push(SidebarRow::SessionRow {
+                    session: (*s).clone(),
+                    depth: 0,
+                    is_favorite: true,
+                });
+            }
+        }
+
         let attention = self.attention_sessions();
         if !attention.is_empty() {
             rows.push(SidebarRow::SectionHeader {
                 label: "NEEDS ATTENTION".to_string(),
             });
-            for s in &attention {
-                rows.push(SidebarRow::SessionRow {
-                    session: (*s).clone(),
-                    depth: 0,
-                    is_favorite: self.favorites.contains(&s.session_id),
-                });
-            }
+            rows.extend(self.build_hierarchical_session_rows(attention));
         }
 
         let important = self.important_sessions();
@@ -126,13 +224,7 @@ impl NavStore {
             rows.push(SidebarRow::SectionHeader {
                 label: "IMPORTANT".to_string(),
             });
-            for s in &important {
-                rows.push(SidebarRow::SessionRow {
-                    session: (*s).clone(),
-                    depth: 0,
-                    is_favorite: self.favorites.contains(&s.session_id),
-                });
-            }
+            rows.extend(self.build_hierarchical_session_rows(important));
         }
 
         for board in &self.boards {
@@ -145,9 +237,7 @@ impl NavStore {
 
             rows.push(SidebarRow::BoardHeader {
                 board: board.clone(),
-                expanded: !self
-                    .expanded_boards
-                    .contains(&board.board_id),
+                expanded: !self.expanded_boards.contains(&board.board_id),
             });
 
             if self.expanded_boards.contains(&board.board_id) {
@@ -166,9 +256,7 @@ impl NavStore {
                         .map(|r| r.name.clone())
                         .unwrap_or_default();
 
-                    let wt_collapsed = self
-                        .expanded_worktrees
-                        .contains(&wt.worktree_id);
+                    let wt_collapsed = self.expanded_worktrees.contains(&wt.worktree_id);
 
                     rows.push(SidebarRow::WorktreeRow {
                         worktree: wt.clone(),
@@ -220,10 +308,7 @@ pub async fn refresh_navigation(
     let sessions = sessions_result.map_err(|e| e.to_string())?;
     let repos = repos_result.map_err(|e| e.to_string())?;
 
-    nav.repos_by_id = repos
-        .into_iter()
-        .map(|r| (r.repo_id.clone(), r))
-        .collect();
+    nav.repos_by_id = repos.into_iter().map(|r| (r.repo_id.clone(), r)).collect();
 
     nav.sessions_by_worktree.clear();
     for session in &sessions {
@@ -271,4 +356,209 @@ pub async fn refresh_navigation(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::session::AgenticTool;
+
+    fn board(id: &str, name: &str) -> Board {
+        Board {
+            board_id: id.to_string(),
+            name: name.to_string(),
+            description: None,
+            emoji: None,
+            color: None,
+            created_at: None,
+            created_by: None,
+            archived: Some(false),
+        }
+    }
+
+    fn worktree(id: &str, board_id: &str, name: &str) -> Worktree {
+        Worktree {
+            worktree_id: id.to_string(),
+            repo_id: "repo-1".to_string(),
+            board_id: Some(board_id.to_string()),
+            name: name.to_string(),
+            branch: None,
+            path: None,
+            status: None,
+            created_at: None,
+            created_by: None,
+            archived: Some(false),
+            archived_reason: None,
+            others_can: None,
+        }
+    }
+
+    fn session(
+        id: &str,
+        worktree_id: &str,
+        title: Option<&str>,
+        status: SessionStatus,
+        last_updated: &str,
+    ) -> Session {
+        Session {
+            session_id: id.to_string(),
+            agentic_tool: AgenticTool::Codex,
+            agentic_tool_version: None,
+            sdk_session_id: None,
+            status,
+            created_at: "2026-05-18T08:00:00.000Z".to_string(),
+            last_updated: last_updated.to_string(),
+            created_by: "user-1".to_string(),
+            unix_username: None,
+            worktree_id: worktree_id.to_string(),
+            worktree_board_id: Some("board-1".to_string()),
+            url: None,
+            git_state: None,
+            genealogy: None,
+            tasks: None,
+            message_count: None,
+            title: title.map(str::to_string),
+            description: None,
+            permission_config: None,
+            model_config: None,
+            current_context_usage: None,
+            context_window_limit: None,
+            scheduled_from_worktree: Some(false),
+            ready_for_prompt: Some(false),
+            archived: Some(false),
+            archived_reason: None,
+        }
+    }
+
+    fn nav_with_sessions(sessions: Vec<Session>) -> NavStore {
+        let mut nav = NavStore::new();
+        nav.boards = vec![board("board-1", "Board One")];
+        nav.worktrees_by_board.insert(
+            "board-1".to_string(),
+            vec![worktree("worktree-1", "board-1", "Worktree One")],
+        );
+        nav.sessions = sessions.clone();
+        nav.sessions_by_worktree
+            .insert("worktree-1".to_string(), sessions);
+        nav
+    }
+
+    #[test]
+    fn favorite_sessions_are_flat_at_the_top() {
+        let favorite = session(
+            "favorite",
+            "worktree-1",
+            Some("Favorite Session"),
+            SessionStatus::Idle,
+            "2026-05-18T08:03:00.000Z",
+        );
+        let important = session(
+            "important",
+            "worktree-1",
+            Some("Important Session"),
+            SessionStatus::Idle,
+            "2026-05-18T08:02:00.000Z",
+        );
+        let mut nav = nav_with_sessions(vec![favorite, important]);
+        nav.favorites.insert("favorite".to_string());
+
+        let rows = nav.build_sidebar_rows();
+
+        assert!(matches!(
+            &rows[0],
+            SidebarRow::SectionHeader { label } if label == "FAVOURITES"
+        ));
+        assert!(matches!(
+            &rows[1],
+            SidebarRow::SessionRow {
+                session,
+                depth: 0,
+                is_favorite: true,
+            } if session.session_id == "favorite"
+        ));
+    }
+
+    #[test]
+    fn important_sessions_keep_board_and_worktree_context() {
+        let favorite = session(
+            "favorite",
+            "worktree-1",
+            Some("Favorite Session"),
+            SessionStatus::Idle,
+            "2026-05-18T08:03:00.000Z",
+        );
+        let important = session(
+            "important",
+            "worktree-1",
+            Some("Important Session"),
+            SessionStatus::Idle,
+            "2026-05-18T08:02:00.000Z",
+        );
+        let mut nav = nav_with_sessions(vec![favorite, important]);
+        nav.favorites.insert("favorite".to_string());
+
+        let rows = nav.build_sidebar_rows();
+        let important_index = rows
+            .iter()
+            .position(
+                |row| matches!(row, SidebarRow::SectionHeader { label } if label == "IMPORTANT"),
+            )
+            .expect("important section exists");
+
+        assert!(matches!(
+            &rows[important_index + 1],
+            SidebarRow::BoardHeader { board, .. } if board.board_id == "board-1"
+        ));
+        assert!(matches!(
+            &rows[important_index + 2],
+            SidebarRow::WorktreeRow { worktree, .. } if worktree.worktree_id == "worktree-1"
+        ));
+        assert!(matches!(
+            &rows[important_index + 3],
+            SidebarRow::SessionRow {
+                session,
+                depth: 2,
+                is_favorite: false,
+            } if session.session_id == "important"
+        ));
+    }
+
+    #[test]
+    fn full_board_tree_still_contains_all_sessions() {
+        let favorite = session(
+            "favorite",
+            "worktree-1",
+            Some("Favorite Session"),
+            SessionStatus::Idle,
+            "2026-05-18T08:03:00.000Z",
+        );
+        let normal = session(
+            "normal",
+            "worktree-1",
+            None,
+            SessionStatus::Idle,
+            "2026-05-18T08:01:00.000Z",
+        );
+        let mut nav = nav_with_sessions(vec![favorite, normal]);
+        nav.favorites.insert("favorite".to_string());
+
+        let rows = nav.build_sidebar_rows();
+
+        assert!(rows.iter().any(|row| matches!(
+            row,
+            SidebarRow::SessionRow {
+                session,
+                depth: 2,
+                is_favorite: true,
+            } if session.session_id == "favorite"
+        )));
+        assert!(rows.iter().any(|row| matches!(
+            row,
+            SidebarRow::SessionRow {
+                session,
+                depth: 2,
+                is_favorite: false,
+            } if session.session_id == "normal"
+        )));
+    }
 }
