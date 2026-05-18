@@ -9,6 +9,8 @@ on:
     paths:
       - apps/agor-rust-android/**
       - .github/workflows/build-rust-android-apk.yml
+      - flake.nix
+      - flake.lock
   workflow_dispatch:
 
 permissions:
@@ -22,7 +24,7 @@ jobs:
   build:
     name: Build Rust Android APKs
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -30,99 +32,80 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v17
+
+      - name: Enable Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@v12
+
       - name: Compute version
         id: version
         run: |
           set -euo pipefail
           VERSION_CODE=$(git rev-list --count HEAD)
           SHORT_SHA=$(git rev-parse --short HEAD)
-          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-          echo "version_name=$SHORT_SHA"    >> "$GITHUB_OUTPUT"
-          echo "short_sha=$SHORT_SHA"       >> "$GITHUB_OUTPUT"
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: ''
-
-      - name: Install required SDK packages
-        run: |
-          set -euo pipefail
-          ( set +o pipefail; yes | sdkmanager --licenses >/dev/null )
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-34" \
-            "build-tools;34.0.0" \
-            "ndk;26.1.10909125"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
-
-      - name: Cache Cargo registry + build
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.cargo/bin/dx
-            apps/agor-rust-android/target
-          key: rust-android-${{ runner.os }}-${{ hashFiles('apps/agor-rust-android/Cargo.lock') }}
-          restore-keys: |
-            rust-android-${{ runner.os }}-
-
-      - name: Install Dioxus CLI
-        run: |
-          set -euo pipefail
-          if dx --version 2>/dev/null | grep -q "^dioxus 0\.6\."; then
-            echo "dx 0.6.x already cached"
-            exit 0
-          fi
-
-          # dioxus-cli 0.6.3 can't compile from crates.io with latest serde
-          # (swc_common references removed serde::__private). Install from
-          # git with the published Cargo.lock that pins compatible versions.
-          cargo install --git https://github.com/DioxusLabs/dioxus \
-            --tag v0.6.3 dioxus-cli --locked
-
-      - name: Set up Android NDK environment
-        run: |
-          set -euo pipefail
-          NDK_HOME="${ANDROID_HOME}/ndk/26.1.10909125"
-          NDK_BIN="${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
-
-          echo "ANDROID_NDK_HOME=${NDK_HOME}" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=${NDK_HOME}" >> "$GITHUB_ENV"
-          echo "${NDK_BIN}" >> "$GITHUB_PATH"
-
-          # CC/AR per target — needed by the `cc` crate (used by ring, etc.)
-          echo "CC_aarch64_linux_android=${NDK_BIN}/aarch64-linux-android21-clang" >> "$GITHUB_ENV"
-          echo "AR_aarch64_linux_android=${NDK_BIN}/llvm-ar" >> "$GITHUB_ENV"
-          echo "CC_armv7_linux_androideabi=${NDK_BIN}/armv7a-linux-androideabi21-clang" >> "$GITHUB_ENV"
-          echo "AR_armv7_linux_androideabi=${NDK_BIN}/llvm-ar" >> "$GITHUB_ENV"
-          echo "CC_x86_64_linux_android=${NDK_BIN}/x86_64-linux-android21-clang" >> "$GITHUB_ENV"
-          echo "AR_x86_64_linux_android=${NDK_BIN}/llvm-ar" >> "$GITHUB_ENV"
+          {
+            echo "version_code=$VERSION_CODE"
+            echo "version_name=$SHORT_SHA"
+            echo "short_sha=$SHORT_SHA"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build Agor+Hermes APK
-        working-directory: apps/agor-rust-android/apps/agor-hermes
         env:
           VERSION_CODE: ${{ steps.version.outputs.version_code }}
           VERSION_NAME: ${{ steps.version.outputs.version_name }}
-        run: dx build --platform android --release
+        run: |
+          nix develop .#rust-android -c bash -lc '
+            set -euo pipefail
+            cd apps/agor-rust-android
+            AGOR_RUST_ANDROID_PACKAGE=agor-hermes-app ./scripts/android.sh build --locked
+          '
 
       - name: Build Hermes-only APK
-        working-directory: apps/agor-rust-android/apps/hermes-only
         env:
           VERSION_CODE: ${{ steps.version.outputs.version_code }}
           VERSION_NAME: ${{ steps.version.outputs.version_name }}
-        run: dx build --platform android --release
+        run: |
+          nix develop .#rust-android -c bash -lc '
+            set -euo pipefail
+            cd apps/agor-rust-android
+            AGOR_RUST_ANDROID_PACKAGE=hermes-only-app ./scripts/android.sh build --locked
+          '
+
+      - name: Verify APK contents
+        run: |
+          # shellcheck disable=SC2016
+          nix develop .#rust-android -c bash -lc '
+            set -euo pipefail
+            AGOR_APK="apps/agor-rust-android/target/dx/agor-hermes-app/debug/android/app/app/build/outputs/apk/debug/app-debug.apk"
+            HERMES_APK="apps/agor-rust-android/target/dx/hermes-only-app/debug/android/app/app/build/outputs/apk/debug/app-debug.apk"
+
+            test -f "$AGOR_APK"
+            test -f "$HERMES_APK"
+
+            for apk in "$AGOR_APK" "$HERMES_APK"; do
+              if unzip -l "$apk" | grep -E "ggml|base\\.en"; then
+                echo "::error::Whisper model binary must not be packaged into $apk"
+                exit 1
+              fi
+            done
+
+            unzip -p "$AGOR_APK" lib/arm64-v8a/libdioxusmain.so > /tmp/libdioxusmain.so
+            llvm-readelf -l /tmp/libdioxusmain.so | awk "
+              /LOAD/ {
+                seen = 1
+                if (\$NF != \"0x4000\") {
+                  print \"LOAD segment is not 16KB aligned: \" \$0
+                  bad = 1
+                }
+              }
+              END {
+                if (!seen || bad) {
+                  exit 1
+                }
+              }
+            "
+          '
 
       - name: Collect APKs
         id: collect
@@ -132,18 +115,8 @@ jobs:
           set -euo pipefail
           mkdir -p dist
 
-          echo "=== APK search ==="
-          find apps/agor-rust-android/target -name "*.apk" -type f 2>/dev/null || true
-
-          AGOR_APK=$(find apps/agor-rust-android/target -name "*.apk" -path "*agor*hermes*" -type f | head -1)
-          HERMES_APK=$(find apps/agor-rust-android/target -name "*.apk" -path "*hermes*only*" -type f | head -1)
-
-          # Fallback: if path-based matching fails, use any APKs found
-          if [ -z "$AGOR_APK" ] || [ -z "$HERMES_APK" ]; then
-            ALL_APKS=$(find apps/agor-rust-android/target -name "*.apk" -type f | sort)
-            AGOR_APK=$(echo "$ALL_APKS" | head -1)
-            HERMES_APK=$(echo "$ALL_APKS" | tail -1)
-          fi
+          AGOR_APK="apps/agor-rust-android/target/dx/agor-hermes-app/debug/android/app/app/build/outputs/apk/debug/app-debug.apk"
+          HERMES_APK="apps/agor-rust-android/target/dx/hermes-only-app/debug/android/app/app/build/outputs/apk/debug/app-debug.apk"
 
           cp "$AGOR_APK" "dist/agor-rust-android-${SHORT_SHA}.apk"
           cp "$HERMES_APK" "dist/hermes-rust-android-${SHORT_SHA}.apk"
@@ -179,7 +152,7 @@ jobs:
           set -euo pipefail
           TAG="rust-android-latest"
           NOTES=$(cat <<EOF
-          Rolling Rust/Dioxus debug build — overwritten on every push.
+          Rolling Rust/Dioxus Android build, overwritten on every push.
 
           - commit: \`${SHORT_SHA}\`
           - versionCode: \`${VERSION_CODE}\`
@@ -204,7 +177,7 @@ jobs:
           }
           EOF
           gh release create "$TAG" \
-            --title "Agor Rust Android — $SHORT_SHA" \
+            --title "Agor Rust Android - $SHORT_SHA" \
             --notes "$NOTES" \
             --prerelease \
             "$STABLE_APK" \
@@ -222,7 +195,7 @@ jobs:
           set -euo pipefail
           TAG="rust-hermes-android-latest"
           NOTES=$(cat <<EOF
-          Rolling Hermes-only Rust/Dioxus build — overwritten on every push.
+          Rolling Hermes-only Rust/Dioxus Android build, overwritten on every push.
 
           - commit: \`${SHORT_SHA}\`
           - versionCode: \`${VERSION_CODE}\`
@@ -247,7 +220,7 @@ jobs:
           }
           EOF
           gh release create "$TAG" \
-            --title "Hermes Rust Android — $SHORT_SHA" \
+            --title "Hermes Rust Android - $SHORT_SHA" \
             --notes "$NOTES" \
             --prerelease \
             "$STABLE_APK" \
@@ -266,8 +239,6 @@ jobs:
             echo "- versionCode: \`${VERSION_CODE}\`"
             echo "- versionName: \`${VERSION_NAME}\`"
             echo ""
-            echo "Agor download (rolling): https://github.com/${{ github.repository }}/releases/download/rust-android-latest/agor-rust-android.apk"
-            echo "Hermes download (rolling): https://github.com/${{ github.repository }}/releases/download/rust-hermes-android-latest/hermes-rust-android.apk"
-            echo ""
-            echo "Or in-app: open Settings → **Check for updates**."
+            echo "Agor download: https://github.com/${{ github.repository }}/releases/download/rust-android-latest/agor-rust-android.apk"
+            echo "Hermes download: https://github.com/${{ github.repository }}/releases/download/rust-hermes-android-latest/hermes-rust-android.apk"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -50,7 +50,12 @@ ensure_cargo_tool() {
     return
   fi
 
-  cargo install "$crate" --version "$version" --locked --root "$TOOL_ROOT"
+  if [[ "$crate" == "dioxus-cli" ]]; then
+    cargo install --git https://github.com/DioxusLabs/dioxus \
+      --tag "v$version" "$crate" --locked --root "$TOOL_ROOT"
+  else
+    cargo install "$crate" --version "$version" --locked --root "$TOOL_ROOT"
+  fi
 }
 
 configure_android_rustflags() {

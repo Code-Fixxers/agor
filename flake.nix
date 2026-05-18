@@ -195,7 +195,7 @@ RCEOF
 
         buildRustAndroidApkScript = pkgs.writeShellApplication {
           name = "build-rust-android-apk";
-          runtimeInputs = rustAndroidBuildInputs;
+          runtimeInputs = rustAndroidBuildInputs ++ (with pkgs; [ unzip ]);
           text = ''
             set -euo pipefail
 
@@ -214,19 +214,21 @@ RCEOF
             export VERSION_CODE VERSION_NAME="$SHORT_SHA"
             export RUSTC_BOOTSTRAP=1
 
-            echo "Building Rust Android libs (version $VERSION_CODE / $SHORT_SHA)..."
+            echo "Building Rust Android APK (version $VERSION_CODE / $SHORT_SHA)..."
             cd "$APP_DIR"
 
-            cargo build --target aarch64-linux-android --release \
-              -Z build-std=std,panic_abort
+            ./scripts/android.sh build --locked
 
+            APK_SRC="$APP_DIR/target/dx/agor-hermes-app/debug/android/app/app/build/outputs/apk/debug/app-debug.apk"
+            if [ ! -f "$APK_SRC" ]; then
+              echo "Expected APK not produced at $APK_SRC" >&2
+              exit 1
+            fi
+
+            DEST="$ROOT/agor-rust-android-$SHORT_SHA.apk"
+            cp "$APK_SRC" "$DEST"
             echo ""
-            echo "Built Android libraries at:"
-            ls -la target/aarch64-linux-android/release/agor-hermes-app 2>/dev/null || true
-            ls -la target/aarch64-linux-android/release/hermes-only-app 2>/dev/null || true
-            echo ""
-            echo "To produce APKs, install dx (cargo install dioxus-cli) and run:"
-            echo "  cd apps/agor-hermes && dx build --platform android --release"
+            echo "Built Rust Android APK: $DEST"
           '';
         };
 
