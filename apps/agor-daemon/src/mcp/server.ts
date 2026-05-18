@@ -459,8 +459,56 @@ export function setupMCPRoutes(
       transport: StreamableHTTPServerTransport;
       server: McpServer;
       userId: UserID;
+      lastActive: number;
     }
   >();
+
+  const TRANSPORT_IDLE_TTL_MS = 60 * 60 * 1000; // 1 hour
+  const MAX_TRANSPORTS_PER_USER = 10;
+
+  // Cleanup idle transports periodically
+  const cleanupInterval = setInterval(
+    () => {
+      const now = Date.now();
+      for (const [sid, { transport, server, lastActive }] of transports.entries()) {
+        if (now - lastActive > TRANSPORT_IDLE_TTL_MS) {
+          console.log(`🔌 Cleaning up idle MCP transport: ${sid}`);
+          transport.close().catch(() => {});
+          server.close().catch(() => {});
+          transports.delete(sid);
+        }
+      }
+    },
+    5 * 60 * 1000
+  );
+
+  // Hook into daemon shutdown
+  if (typeof (app as Record<string, unknown>).on === 'function') {
+    (app as Record<string, unknown>).on('teardown', () => {
+      clearInterval(cleanupInterval);
+      for (const { transport, server } of transports.values()) {
+        transport.close().catch(() => {});
+        server.close().catch(() => {});
+      }
+      transports.clear();
+    });
+  }
+
+  const REQUEST_TIMEOUT_MS = 30 * 1000; // 30 seconds
+
+  const withTimeout = async <T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    timeoutMsg: string
+  ): Promise<T> => {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(timeoutMsg));
+      }, timeoutMs);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
+  };
 
   const isInitializeRequest = (body: unknown): boolean => {
     if (!body || typeof body !== 'object') return false;
@@ -547,6 +595,10 @@ export function setupMCPRoutes(
 
         // Session context for tools like agor_sessions_get_current/agor_sessions_spawn.
         // In API key mode, allow explicit session selection via query/header.
+        // NOTE: Because McpServer instances are created at POST /mcp initialize and
+        // cached in `transports`, the session context is captured ONCE per MCP session.
+        // Changing X-Agor-Session-Id on subsequent GET/POST requests will not change
+        // the tools' closure over `ctx.sessionId`.
         const requestedSessionId =
           coerceString(req.query.sessionId as string | undefined) ||
           coerceString(
@@ -647,6 +699,8 @@ export function setupMCPRoutes(
           });
         }
 
+        existing.lastActive = Date.now();
+
         if (req.method === 'GET') {
           let closed = false;
           req.on('close', () => {
@@ -656,18 +710,66 @@ export function setupMCPRoutes(
           });
         }
 
-        await existing.transport.handleRequest(req, res, req.body);
+        try {
+          await withTimeout(
+            existing.transport.handleRequest(req, res, req.body),
+            REQUEST_TIMEOUT_MS,
+            'Request processing timed out'
+          );
+        } catch (error) {
+          if ((error as Error).message === 'Request processing timed out') {
+            return res.status(504).json({
+              jsonrpc: '2.0',
+              id: (req.body as { id?: unknown })?.id,
+              error: {
+                code: -32000,
+                message: 'Server timeout: The tool or request took too long to complete',
+              },
+            });
+          }
+          throw error; // Re-throw other errors
+        }
         return;
       }
 
       // Initialize a new stateful streamable HTTP session
       if (req.method === 'POST' && isInitializeRequest(req.body)) {
+        // Enforce max active sessions per user
+        let userTransportCount = 0;
+        let oldestSid: string | undefined;
+        let oldestTime = Infinity;
+
+        for (const [sid, t] of transports.entries()) {
+          if (t.userId === userId) {
+            userTransportCount++;
+            if (t.lastActive < oldestTime) {
+              oldestTime = t.lastActive;
+              oldestSid = sid;
+            }
+          }
+        }
+
+        if (userTransportCount >= MAX_TRANSPORTS_PER_USER && oldestSid) {
+          console.log(
+            `🔌 User ${userId} reached max transports (${MAX_TRANSPORTS_PER_USER}). Evicting oldest: ${oldestSid}`
+          );
+          const oldest = transports.get(oldestSid)!;
+          oldest.transport.close().catch(() => {});
+          oldest.server.close().catch(() => {});
+          transports.delete(oldestSid);
+        }
+
         const mcpServer = createMcpServer(mcpContext, toolSearchEnabled, servicesConfig);
 
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId) => {
-            transports.set(newSessionId, { transport, server: mcpServer, userId });
+            transports.set(newSessionId, {
+              transport,
+              server: mcpServer,
+              userId,
+              lastActive: Date.now(),
+            });
           },
         });
 
@@ -678,7 +780,28 @@ export function setupMCPRoutes(
         };
 
         await mcpServer.connect(transport);
-        await transport.handleRequest(req, res, req.body);
+        try {
+          await withTimeout(
+            transport.handleRequest(req, res, req.body),
+            REQUEST_TIMEOUT_MS,
+            'Request processing timed out'
+          );
+        } catch (error) {
+          if ((error as Error).message === 'Request processing timed out') {
+            // For SSE init it's a bit tricky if headers were already sent, but let's try to gracefully handle
+            if (!res.headersSent) {
+              return res.status(504).json({
+                jsonrpc: '2.0',
+                id: (req.body as { id?: unknown })?.id,
+                error: {
+                  code: -32000,
+                  message: 'Server timeout during initialization',
+                },
+              });
+            }
+          }
+          throw error;
+        }
         return;
       }
 
@@ -690,10 +813,31 @@ export function setupMCPRoutes(
 
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
+          enableJsonResponse: true, // Item 7: explicit json-rpc http behavior
         });
 
         await mcpServer.connect(transport);
-        await transport.handleRequest(req, res, req.body);
+        try {
+          await withTimeout(
+            transport.handleRequest(req, res, req.body),
+            REQUEST_TIMEOUT_MS,
+            'Request processing timed out'
+          );
+        } catch (error) {
+          if ((error as Error).message === 'Request processing timed out') {
+            if (!res.headersSent) {
+              return res.status(504).json({
+                jsonrpc: '2.0',
+                id: (req.body as { id?: unknown })?.id,
+                error: {
+                  code: -32000,
+                  message: 'Server timeout: The tool or request took too long to complete',
+                },
+              });
+            }
+          }
+          throw error;
+        }
 
         res.on('close', () => {
           transport.close().catch(() => {});

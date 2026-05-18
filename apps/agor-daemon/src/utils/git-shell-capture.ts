@@ -14,7 +14,7 @@
  * @see git-impersonation.ts for the same pattern used in git clone/worktree operations
  */
 
-import { runAsUser, validateResolvedUnixUser } from '@agor/core/unix';
+import { runAsUserAsync, validateResolvedUnixUser } from '@agor/core/unix';
 
 /**
  * Resolve and validate the daemon user for sudo -u impersonation.
@@ -58,34 +58,49 @@ export async function captureGitStateViaShell(
   let ref = 'unknown';
 
   try {
-    // Get current HEAD SHA
-    const rawSha = runAsUser(`git -C ${escapeForShell(worktreePath)} rev-parse HEAD`, runOpts);
-    sha = rawSha.trim();
-  } catch (error) {
-    console.warn(`[git-shell-capture] Failed to get SHA for ${worktreePath}:`, error);
-    return { sha, ref };
-  }
+    // Run commands in parallel to reduce overall latency (and they're non-blocking now)
+    const [rawShaResult, rawRefResult, statusResult] = await Promise.allSettled([
+      runAsUserAsync(`git -C ${escapeForShell(worktreePath)} rev-parse HEAD`, runOpts),
+      runAsUserAsync(`git -C ${escapeForShell(worktreePath)} rev-parse --abbrev-ref HEAD`, runOpts),
+      runAsUserAsync(`git -C ${escapeForShell(worktreePath)} status --porcelain`, runOpts),
+    ]);
 
-  try {
-    // Get current branch name
-    const rawRef = runAsUser(
-      `git -C ${escapeForShell(worktreePath)} rev-parse --abbrev-ref HEAD`,
-      runOpts
-    );
-    ref = rawRef.trim();
-  } catch (error) {
-    console.warn(`[git-shell-capture] Failed to get branch for ${worktreePath}:`, error);
-  }
+    if (rawShaResult.status === 'fulfilled') {
+      sha = rawShaResult.value.trim();
+    } else {
+      console.warn(
+        `[git-shell-capture] Failed to get SHA for ${worktreePath}:`,
+        rawShaResult.reason
+      );
+      return { sha, ref };
+    }
 
-  try {
-    // Check if working directory is dirty
-    const status = runAsUser(`git -C ${escapeForShell(worktreePath)} status --porcelain`, runOpts);
-    if (status.trim().length > 0) {
-      sha = `${sha}-dirty`;
+    if (rawRefResult.status === 'fulfilled') {
+      ref = rawRefResult.value.trim();
+    } else {
+      console.warn(
+        `[git-shell-capture] Failed to get branch for ${worktreePath}:`,
+        rawRefResult.reason
+      );
+    }
+
+    if (statusResult.status === 'fulfilled') {
+      const status = statusResult.value.trim();
+      if (status.length > 0) {
+        sha = `${sha}-dirty`;
+      }
+    } else {
+      console.warn(
+        `[git-shell-capture] Failed to check dirty state for ${worktreePath}:`,
+        statusResult.reason
+      );
     }
   } catch (error) {
-    console.warn(`[git-shell-capture] Failed to check dirty state for ${worktreePath}:`, error);
-    // If we can't check dirty state, still return the SHA without -dirty suffix
+    // Catch-all for unexpected issues
+    console.warn(
+      `[git-shell-capture] Unexpected error capturing state for ${worktreePath}:`,
+      error
+    );
   }
 
   return { sha, ref };

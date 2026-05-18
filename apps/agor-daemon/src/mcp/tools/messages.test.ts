@@ -41,15 +41,24 @@ vi.mock('@agor/core/db', async () => {
     ...actual,
     SessionRepository: FakeSessionRepository,
     select: () => ({
-      from: () => ({
-        where: (cond: unknown) => {
-          mockWhereSpy(cond);
-          return {
-            orderBy: () => ({ all: () => mockAllSpy() }),
-          };
-        },
-      }),
+      from: () => {
+        const queryBuilder = {
+          where: (cond: unknown) => {
+            if (cond) mockWhereSpy(cond);
+            return queryBuilder;
+          },
+          orderBy: () => queryBuilder,
+          limit: () => queryBuilder,
+          offset: () => queryBuilder,
+          all: () => mockAllSpy(),
+        };
+        return queryBuilder;
+      },
     }),
+    executeOne: async () => {
+      const rows = await mockAllSpy();
+      return { count: rows.length };
+    },
   };
 });
 

@@ -8,10 +8,24 @@
 import type { UserApiKeysRepository } from '@agor/core/db';
 import { AuthenticationBaseStrategy, NotAuthenticated } from '@agor/core/feathers';
 
+interface CachedKey {
+  keyRow: { id: string; user_id: string };
+  expiresAt: number;
+}
+
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const LAST_USED_DEBOUNCE_MS = 60 * 1000; // 1 minute
+
 export class ApiKeyStrategy extends AuthenticationBaseStrategy {
   private apiKeysRepo: UserApiKeysRepository | null = null;
   // biome-ignore lint/suspicious/noExplicitAny: Feathers service type
   private usersService: any = null;
+
+  // In-memory cache for API key verification to reduce CPU and SQLite reads
+  private keyCache = new Map<string, CachedKey>();
+
+  // Track last write time to debounce `last_used_at` updates
+  private lastUsedWrites = new Map<string, number>();
 
   // biome-ignore lint/suspicious/noExplicitAny: Feathers service type
   setDependencies(apiKeysRepo: UserApiKeysRepository, usersService: any) {
@@ -26,20 +40,37 @@ export class ApiKeyStrategy extends AuthenticationBaseStrategy {
     }
 
     const apiKey = authentication.apiKey;
-    if (!apiKey || !apiKey.startsWith('agor_sk_')) {
+    if (!apiKey || typeof apiKey !== 'string' || !apiKey.startsWith('agor_sk_')) {
       throw new NotAuthenticated('Invalid API key format');
     }
 
-    // Verify key against stored hashes
-    const keyRow = await this.apiKeysRepo.verifyKey(apiKey);
-    if (!keyRow) {
-      throw new NotAuthenticated('Invalid API key');
+    const now = Date.now();
+    let keyRow: { id: string; user_id: string } | null = null;
+
+    // Check cache
+    const cached = this.keyCache.get(apiKey);
+    if (cached && cached.expiresAt > now) {
+      keyRow = cached.keyRow;
+    } else {
+      // Cache miss or expired: Verify key against stored hashes
+      keyRow = await this.apiKeysRepo.verifyKey(apiKey);
+      if (!keyRow) {
+        throw new NotAuthenticated('Invalid API key');
+      }
+      this.keyCache.set(apiKey, {
+        keyRow,
+        expiresAt: now + CACHE_TTL_MS,
+      });
     }
 
-    // Update last_used_at (non-blocking)
-    this.apiKeysRepo.updateLastUsed(keyRow.id).catch((err: unknown) => {
-      console.warn('Failed to update API key last_used_at:', err);
-    });
+    // Debounce last_used_at updates (non-blocking)
+    const lastWrite = this.lastUsedWrites.get(keyRow.id) || 0;
+    if (now - lastWrite > LAST_USED_DEBOUNCE_MS) {
+      this.lastUsedWrites.set(keyRow.id, now);
+      this.apiKeysRepo.updateLastUsed(keyRow.id).catch((err: unknown) => {
+        console.warn('Failed to update API key last_used_at:', err);
+      });
+    }
 
     // Load the user
     const user = await this.usersService.get(keyRow.user_id);

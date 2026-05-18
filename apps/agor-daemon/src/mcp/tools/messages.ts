@@ -4,6 +4,7 @@ import {
   asc,
   desc,
   eq,
+  executeOne,
   inArray,
   messages as messagesTable,
   or,
@@ -158,10 +159,25 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
 
       const orderCol = sessionId ? messagesTable.index : messagesTable.timestamp;
       const orderBy = order === 'desc' ? desc(orderCol) : asc(orderCol);
-      const allRows = await select(ctx.db)
+      const whereCondition = conditions.length > 0 ? and(...conditions) : undefined;
+
+      // Count total matches
+      // biome-ignore lint/suspicious/noExplicitAny: Drizzle count
+      // Count total matches
+      // biome-ignore lint/suspicious/noExplicitAny: Drizzle count
+      const countQuery = select(ctx.db, { count: sql`COUNT(*)` } as any).from(messagesTable);
+      const countResult = (await executeOne(
+        whereCondition ? countQuery.where(whereCondition) : countQuery,
+        ctx.db
+      )) as { count: number } | undefined;
+      const total = Number(countResult?.count ?? 0);
+
+      const pageRows = await select(ctx.db)
         .from(messagesTable)
-        .where(conditions.length > 0 ? and(...conditions) : undefined)
+        .where(whereCondition)
         .orderBy(orderBy)
+        .limit(limit)
+        .offset(offset)
         .all();
 
       // Post-process
@@ -178,7 +194,7 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
 
       const processed: ProcessedMessage[] = [];
 
-      for (const row of allRows) {
+      for (const row of pageRows) {
         const data = row.data as {
           content?: unknown;
           tool_uses?: unknown[];
@@ -241,9 +257,7 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
         processed.push(msg);
       }
 
-      const total = processed.length;
-      const paged = processed.slice(offset, offset + limit);
-      return textResult({ messages: paged, total, offset, limit });
+      return textResult({ messages: processed, total, offset, limit });
     }
   );
 }
