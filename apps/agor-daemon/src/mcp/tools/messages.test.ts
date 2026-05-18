@@ -51,14 +51,14 @@ vi.mock('@agor/core/db', async () => {
           limit: () => queryBuilder,
           offset: () => queryBuilder,
           all: () => mockAllSpy(),
+          one: async () => {
+            const rows = await mockAllSpy();
+            return { count: rows.length };
+          },
         };
         return queryBuilder;
       },
     }),
-    executeOne: async () => {
-      const rows = await mockAllSpy();
-      return { count: rows.length };
-    },
   };
 });
 

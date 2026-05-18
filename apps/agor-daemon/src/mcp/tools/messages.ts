@@ -4,7 +4,6 @@ import {
   asc,
   desc,
   eq,
-  executeOne,
   inArray,
   messages as messagesTable,
   or,
@@ -106,6 +105,15 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
         conditions.push(
           sql`${messagesTable.type} NOT IN ('file-history-snapshot', 'permission_request', 'input_request')`
         );
+        // SQL-level heuristic to drop messages that consist solely of tool calls/results.
+        // If content is an array with tool blocks but no text blocks, we filter it out here
+        // so that SQL pagination (limit/offset) remains perfectly accurate.
+        conditions.push(
+          sql`NOT (${messagesTable.role} = 'user' AND CAST(${messagesTable.data} AS TEXT) LIKE '%"type":"tool_result"%' AND CAST(${messagesTable.data} AS TEXT) NOT LIKE '%"type":"text"%')`
+        );
+        conditions.push(
+          sql`NOT (${messagesTable.role} = 'assistant' AND CAST(${messagesTable.data} AS TEXT) LIKE '%"type":"tool_use"%' AND CAST(${messagesTable.data} AS TEXT) NOT LIKE '%"type":"text"%')`
+        );
       }
 
       // Search: parse "term1 term2 | term3 term4" into (t1 AND t2) OR (t3 AND t4)
@@ -165,11 +173,14 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
       // biome-ignore lint/suspicious/noExplicitAny: Drizzle count
       // Count total matches
       // biome-ignore lint/suspicious/noExplicitAny: Drizzle count
-      const countQuery = select(ctx.db, { count: sql`COUNT(*)` } as any).from(messagesTable);
-      const countResult = (await executeOne(
-        whereCondition ? countQuery.where(whereCondition) : countQuery,
-        ctx.db
-      )) as { count: number } | undefined;
+      let countQuery = select(ctx.db, { count: sql`COUNT(*)` } as any).from(messagesTable);
+      if (whereCondition) {
+        // biome-ignore lint/suspicious/noExplicitAny: Drizzle type
+        countQuery = (countQuery as any).where(whereCondition);
+      }
+      const countResult = (await (
+        countQuery as unknown as { one: () => Promise<unknown> }
+      ).one()) as { count: number } | undefined;
       const total = Number(countResult?.count ?? 0);
 
       const pageRows = await select(ctx.db)
@@ -202,13 +213,6 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
         };
         const content = data?.content;
 
-        if (!includeToolCalls && row.role === 'user' && Array.isArray(content)) {
-          const hasNonToolResult = (content as ContentBlock[]).some(
-            (block) => block.type !== 'tool_result'
-          );
-          if (!hasNonToolResult) continue;
-        }
-
         let text: string;
         let toolCallCount = 0;
 
@@ -239,9 +243,8 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
           }
         }
 
-        if (!includeToolCalls && row.role === 'assistant' && !text.trim()) {
-          continue;
-        }
+        // We no longer skip empty assistant messages in memory.
+        // The SQL `NOT LIKE '%"type":"text"%'` condition successfully excluded them.
 
         const msg: ProcessedMessage = {
           message_id: row.message_id,

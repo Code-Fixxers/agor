@@ -1016,9 +1016,11 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
               ctx.baseServiceParams
             );
           } else {
+            // biome-ignore lint/suspicious/noExplicitAny: ID typing
+            const bId = (update.boardId || undefined) as any;
             worktree = await worktreesService.unarchive(
               update.worktreeId as WorktreeID,
-              { boardId: update.boardId || undefined },
+              { boardId: bId },
               ctx.baseServiceParams
             );
           }

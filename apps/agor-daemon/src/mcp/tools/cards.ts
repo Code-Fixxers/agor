@@ -162,10 +162,11 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
 
       const detail = args.detail ?? 'list';
       if (detail === 'list') {
-        cardsList = cardsList.map((c: Record<string, unknown>) => {
+        // biome-ignore lint/suspicious/noExplicitAny: Omitting fields
+        cardsList = cardsList.map((c: any) => {
           const { description, note, data, ...rest } = c;
           return rest;
-        }) as Card[];
+        }) as unknown as Card[];
       }
 
       return textResult({

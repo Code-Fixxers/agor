@@ -24,6 +24,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { Request, Response } from 'express';
+import { z } from 'zod';
 import { toJSONSchema } from 'zod/v4-mini';
 import { ApiKeyStrategy } from '../auth/api-key-strategy.js';
 import type { AuthenticatedParams, AuthenticatedUser } from '../declarations.js';
@@ -69,12 +70,13 @@ export interface McpContext {
 /** Server instructions shown to agents when tool search is enabled. */
 const SERVER_INSTRUCTIONS = `Agor: multiplayer canvas for orchestrating AI coding agents (git worktrees, session genealogy, spatial boards).
 
-Progressive tool discovery — only two tools are listed:
+Progressive tool discovery — only three tools are listed by default:
 - agor_search_tools: no args = domains overview. Pass a domain or query to list tools. Use detail:"full" to fetch inputSchema before execute.
-- agor_execute_tool: invoke any tool by name. Args go under \`arguments\` (or flattened at top level).
+- agor_load_domains: load entire domains into your active session to call them directly without execute_tool.
+- agor_execute_tool: invoke any un-loaded tool by name. Args go under \`arguments\` (or flattened at top level).
 
 Common workflows:
-- Orient yourself: agor_execute_tool agor_sessions_get_current_context
+- Orient yourself: agor_execute_tool agor_get_context (or use agor_get_context directly if sessions domain is loaded)
 - Create a worktree + start a session: agor_repos_list → agor_boards_list → agor_worktrees_create → agor_sessions_create
 - Delegate a subtask: agor_sessions_spawn(prompt) — inherits current worktree, tracks parent-child genealogy
 - Continue/fork an existing session: agor_sessions_prompt(sessionId, prompt, mode:"continue"|"fork"|"subsession"|"btw")`;
@@ -483,8 +485,9 @@ export function setupMCPRoutes(
   );
 
   // Hook into daemon shutdown
-  if (typeof (app as Record<string, unknown>).on === 'function') {
-    (app as Record<string, unknown>).on('teardown', () => {
+  const appEventEmitter = app as unknown as { on?: (event: string, fn: () => void) => void };
+  if (typeof appEventEmitter.on === 'function') {
+    appEventEmitter.on('teardown', () => {
       clearInterval(cleanupInterval);
       for (const { transport, server } of transports.values()) {
         transport.close().catch(() => {});
@@ -701,33 +704,35 @@ export function setupMCPRoutes(
 
         existing.lastActive = Date.now();
 
-        if (req.method === 'GET') {
-          let closed = false;
-          req.on('close', () => {
-            if (closed) return;
-            closed = true;
-            existing.transport.close().catch(() => {});
-          });
-        }
+        // Note: We DO NOT close the transport on req.on('close') for GET requests.
+        // A streamable HTTP GET stream closing is a normal reconnect condition,
+        // not a session termination.
 
-        try {
-          await withTimeout(
-            existing.transport.handleRequest(req, res, req.body),
-            REQUEST_TIMEOUT_MS,
-            'Request processing timed out'
-          );
-        } catch (error) {
-          if ((error as Error).message === 'Request processing timed out') {
-            return res.status(504).json({
-              jsonrpc: '2.0',
-              id: (req.body as { id?: unknown })?.id,
-              error: {
-                code: -32000,
-                message: 'Server timeout: The tool or request took too long to complete',
-              },
-            });
+        if (req.method === 'POST') {
+          try {
+            await withTimeout(
+              existing.transport.handleRequest(req, res, req.body),
+              REQUEST_TIMEOUT_MS,
+              'Request processing timed out'
+            );
+          } catch (error) {
+            if ((error as Error).message === 'Request processing timed out') {
+              if (!res.headersSent) {
+                return res.status(504).json({
+                  jsonrpc: '2.0',
+                  id: (req.body as { id?: unknown })?.id,
+                  error: {
+                    code: -32000,
+                    message: 'Server timeout: The tool or request took too long to complete',
+                  },
+                });
+              }
+            }
+            throw error; // Re-throw other errors
           }
-          throw error; // Re-throw other errors
+        } else {
+          // GET or DELETE (long-lived streams or simple teardown)
+          await existing.transport.handleRequest(req, res, req.body);
         }
         return;
       }
