@@ -51,3 +51,4 @@ apps/agor-desktop/out/
 .envrc
 agor-android-debug-*.apk
 /apps/agor-android/app/src/main/cpp/whisper.cpp/
+/apps/agor-rust-android/apps/*/assets/whisper/*.bin

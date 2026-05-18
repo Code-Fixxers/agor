@@ -684,6 +684,27 @@ textarea {
   color: var(--text-primary);
 }
 
+.voice-btn.active {
+  border-color: rgba(246, 95, 148, 0.55);
+  background: rgba(246, 95, 148, 0.14);
+  color: var(--accent);
+}
+
+.prompt-voice-status {
+  max-width: 900px;
+  margin: 8px auto 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.prompt-voice-status.recording {
+  color: var(--accent);
+}
+
+.prompt-voice-status.error {
+  color: var(--danger);
+}
+
 .btn-primary,
 .login-button,
 .send-btn.active,
