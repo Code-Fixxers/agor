@@ -169,21 +169,21 @@ export function setupWorktreeOwnersService(
         // Get owner IDs
         const ownerIds = await worktreeRepo.getOwners(worktreeId as UUID);
 
-        // Fetch user details for each owner (access service lazily)
-        const usersService = app.service('users');
-        const owners = await Promise.all(
-          ownerIds.map(async (userId): Promise<User | null> => {
-            try {
-              return (await usersService.get(userId)) as User;
-            } catch (error) {
-              console.error(`Failed to fetch user ${userId}:`, error);
-              return null;
-            }
-          })
-        );
+        if (ownerIds.length === 0) {
+          return [];
+        }
 
-        // Filter out any null users
-        return owners.filter((user): user is User => user !== null);
+        // Fetch user details for each owner in a single batched query
+        const usersService = app.service('users');
+        const usersResult = await usersService.find({
+          query: {
+            user_id: { $in: ownerIds },
+          },
+        });
+
+        // The users service returns Paginated<User>, extract the data
+        const owners = 'data' in usersResult ? usersResult.data : usersResult;
+        return owners;
       },
 
       async create(data: WorktreeOwnerCreateData, params: WorktreeOwnerParams): Promise<User> {
