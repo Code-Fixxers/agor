@@ -24,6 +24,10 @@
   --radius-md: 12px;
   --radius-lg: 16px;
   --shadow-panel: 0 20px 60px rgba(0, 0, 0, 0.38);
+  --app-safe-top: 0px;
+  --app-safe-right: 0px;
+  --app-safe-bottom: 0px;
+  --app-safe-left: 0px;
   --font-sans:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, Consolas, monospace;
@@ -94,9 +98,12 @@ textarea {
 }
 
 .app-root {
-  width: 100vw;
+  width: 100%;
+  max-width: 100%;
   height: 100vh;
+  height: 100dvh;
   min-height: 0;
+  overflow: hidden;
   background: var(--surface-base);
   color: var(--text-primary);
 }
@@ -104,6 +111,10 @@ textarea {
 .connected-shell {
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 
 .app-rail {
@@ -114,6 +125,8 @@ textarea {
   padding: 12px 8px;
   border-right: 1px solid var(--border-subtle);
   background: #070708;
+  min-width: 0;
+  min-height: 0;
 }
 
 .rail-item {
@@ -462,6 +475,8 @@ textarea {
 
 .topbar-title,
 .setup-header h2 {
+  display: block;
+  max-width: 100%;
   overflow: hidden;
   margin: 0;
   color: var(--text-primary);
@@ -610,9 +625,11 @@ textarea {
   display: flex;
   align-items: flex-end;
   gap: 8px;
+  min-width: 0;
 }
 
 .input-row {
+  width: 100%;
   max-width: 900px;
   margin: 0 auto;
   border: 1px solid var(--border-strong);
@@ -628,6 +645,8 @@ textarea {
 
 .prompt-textarea,
 .hermes-textarea {
+  min-width: 0;
+  flex: 1 1 auto;
   min-height: 38px;
   max-height: 160px;
   border: 0;
@@ -1225,6 +1244,17 @@ textarea {
 }
 
 @media (max-width: 860px) {
+  :root {
+    --app-safe-top: max(env(safe-area-inset-top, 0px), 28px);
+    --app-safe-right: max(env(safe-area-inset-right, 0px), 0px);
+    --app-safe-bottom: max(env(safe-area-inset-bottom, 0px), 18px);
+    --app-safe-left: max(env(safe-area-inset-left, 0px), 0px);
+  }
+
+  .app-root {
+    padding: var(--app-safe-top) var(--app-safe-right) var(--app-safe-bottom) var(--app-safe-left);
+  }
+
   .connected-shell {
     grid-template-columns: 48px minmax(0, 1fr);
   }
@@ -1244,11 +1274,12 @@ textarea {
 
   .sidebar-container {
     position: fixed;
-    top: 0;
-    bottom: 0;
-    left: 48px;
+    top: var(--app-safe-top);
+    right: var(--app-safe-right);
+    bottom: var(--app-safe-bottom);
+    left: calc(var(--app-safe-left) + 48px);
     z-index: 70;
-    width: min(330px, calc(100vw - 48px));
+    width: min(330px, calc(100vw - var(--app-safe-left) - var(--app-safe-right) - 48px));
     transform: translateX(-110%);
     transition: transform 180ms ease;
     box-shadow: var(--shadow-panel);
@@ -1264,6 +1295,34 @@ textarea {
 
   .chat-topbar .icon-btn:first-child {
     display: inline-flex;
+  }
+
+  .chat-topbar,
+  .settings-topbar,
+  .hermes-topbar,
+  .setup-header {
+    gap: 8px;
+    min-height: 56px;
+    padding: 9px 10px;
+  }
+
+  .topbar-title,
+  .setup-header h2 {
+    font-size: 14px;
+  }
+
+  .topbar-menu,
+  .topbar-actions,
+  .setup-actions {
+    gap: 6px;
+  }
+
+  .icon-btn,
+  .send-btn,
+  .modal-close {
+    width: 32px;
+    min-width: 32px;
+    min-height: 32px;
   }
 
   .chat-messages,
