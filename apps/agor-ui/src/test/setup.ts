@@ -17,6 +17,14 @@ if (typeof window !== 'undefined' && !window.matchMedia) {
     }) as MediaQueryList;
 }
 
+if (typeof globalThis !== 'undefined' && !globalThis.ResizeObserver) {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
 // Node 25 ships a `globalThis.localStorage` global that lacks the standard
 // Storage methods (no `getItem` / `setItem` / etc.). When the test runner
 // is launched with NODE_OPTIONS=--localstorage-file=..., this broken stub

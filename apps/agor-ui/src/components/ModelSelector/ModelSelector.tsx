@@ -10,7 +10,7 @@ import {
 } from '@agor-live/client';
 import { InfoCircleOutlined } from '@ant-design/icons';
 import { Input, Radio, Select, Space, Tooltip } from 'antd';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { type OpenCodeModelConfig, OpenCodeModelSelector } from './OpenCodeModelSelector';
 
 export interface ModelConfig {
@@ -26,10 +26,9 @@ export interface ModelSelectorProps {
   agent?: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot' | 'junie'; // Kept as 'agent' for backwards compat in prop name
   agentic_tool?: 'claude-code' | 'codex' | 'gemini' | 'opencode' | 'copilot' | 'junie';
   /**
-   * Optional Feathers client. When provided AND the agentic tool is Copilot,
-   * the picker fetches the live model list from /copilot-models (which calls
-   * the SDK's `listModels()` server-side) and merges it with the static
-   * fallback. Without a client, the picker only shows static models.
+   * Optional Feathers client. When provided, Copilot and Junie can fetch live
+   * model lists from their daemon services. Without a client, the picker only
+   * shows local/static/current values.
    */
   client?: AgorClient | null;
 }
@@ -45,6 +44,16 @@ interface CopilotModelsResponse {
   default: string;
   models: CopilotModelOption[];
   source: 'dynamic' | 'static';
+}
+
+interface JunieConfigResponse {
+  openaiCompatibleBaseUrl?: string;
+  defaultModel?: string;
+  fasterModel?: string;
+}
+
+interface JunieModelsResponse {
+  models?: string[];
 }
 
 // Codex model options (derived from @agor/core metadata)
@@ -71,6 +80,9 @@ const COPILOT_STATIC_MODEL_OPTIONS = Object.entries(COPILOT_MODEL_METADATA).map(
     description: meta.description,
   })
 );
+
+const uniqueModels = (models: Array<string | undefined>) =>
+  Array.from(new Set(models.map((model) => model?.trim()).filter(Boolean) as string[]));
 
 /**
  * Model Selector Component
@@ -103,6 +115,13 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     description?: string;
   }> | null>(null);
   const [copilotSource, setCopilotSource] = useState<'dynamic' | 'static' | null>(null);
+  const [junieModels, setJunieModels] = useState<string[]>([]);
+  const [junieModelsLoading, setJunieModelsLoading] = useState(false);
+  const onChangeRef = useRef(onChange);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   useEffect(() => {
     if (effectiveTool !== 'copilot' || !client) return;
@@ -128,6 +147,57 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       cancelled = true;
     };
   }, [effectiveTool, client]);
+
+  useEffect(() => {
+    if (effectiveTool !== 'junie' || !client) return;
+
+    let cancelled = false;
+    (async () => {
+      setJunieModelsLoading(true);
+      try {
+        const config = (await client
+          .service('config')
+          .get('junie')) as unknown as JunieConfigResponse;
+        if (cancelled) return;
+
+        const configuredModels = uniqueModels([
+          config.defaultModel,
+          config.fasterModel,
+          value?.model,
+        ]);
+        setJunieModels(configuredModels);
+
+        const defaultModel = config.defaultModel?.trim();
+        if (!value?.model && defaultModel) {
+          onChangeRef.current?.({ mode: 'exact', model: defaultModel });
+        }
+
+        const response = (await client.service('config/junie-models').create({
+          openaiCompatibleBaseUrl: config.openaiCompatibleBaseUrl,
+        })) as unknown as JunieModelsResponse;
+        if (cancelled) return;
+
+        setJunieModels(
+          uniqueModels([
+            config.defaultModel,
+            config.fasterModel,
+            value?.model,
+            ...(response.models ?? []),
+          ])
+        );
+      } catch {
+        // Keep any configured/current model available; model discovery is best-effort.
+      } finally {
+        if (!cancelled) {
+          setJunieModelsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveTool, client, value?.model]);
 
   const modelList =
     effectiveTool === 'codex'
@@ -175,11 +245,22 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   if (effectiveTool === 'junie') {
     return (
-      <Input
+      <Select
+        showSearch
+        loading={junieModelsLoading}
+        allowClear
         value={value?.model}
-        onChange={(e) => onChange?.({ mode: 'exact', model: e.target.value })}
-        placeholder="e.g., qwen-3.5-35b-a3b"
+        onChange={(model) => {
+          if (model) {
+            onChange?.({ mode: 'exact', model });
+          }
+        }}
+        placeholder="Select Junie model"
         style={{ width: '100%', minWidth: 400 }}
+        options={uniqueModels([value?.model, ...junieModels]).map((model) => ({
+          value: model,
+          label: model,
+        }))}
       />
     );
   }

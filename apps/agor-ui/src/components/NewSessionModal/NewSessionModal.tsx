@@ -112,6 +112,8 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
       // MCP inheritance: worktree config > user defaults
       form.setFieldsValue({
         ...baseValues,
+        modelConfig: baseValues.modelConfig,
+        effort: baseValues.effort,
         mcpServerIds:
           worktree?.mcp_server_ids && worktree.mcp_server_ids.length > 0
             ? worktree.mcp_server_ids
