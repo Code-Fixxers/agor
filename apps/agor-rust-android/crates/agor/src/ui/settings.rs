@@ -55,6 +55,8 @@ pub fn SettingsScreen(on_back: EventHandler<()>, on_open_drawer: EventHandler<()
             .clone()
             .unwrap_or_default()
     });
+    let mut whisper_local_fallback_enabled =
+        use_signal(|| storage.read().preferences.whisper_local_fallback_enabled);
 
     let user = use_memo(move || auth.read().user.clone());
     let profiles = use_memo(move || storage.read().profiles.clone());
@@ -113,6 +115,7 @@ pub fn SettingsScreen(on_back: EventHandler<()>, on_open_drawer: EventHandler<()
         s.preferences.whisper_model = clean(whisper_model.read().clone());
         s.preferences.whisper_model_artifact_url = clean(whisper_model_artifact_url.read().clone());
         s.preferences.whisper_model_path = clean(whisper_model_path.read().clone());
+        s.preferences.whisper_local_fallback_enabled = *whisper_local_fallback_enabled.read();
         s.save_preferences();
     };
 
@@ -263,8 +266,26 @@ pub fn SettingsScreen(on_back: EventHandler<()>, on_open_drawer: EventHandler<()
                             oninput: move |e| whisper_model_path.set(e.value()),
                         }
                     }
+                    label { class: "toggle-row",
+                        input {
+                            r#type: "checkbox",
+                            checked: *whisper_local_fallback_enabled.read(),
+                            onchange: move |e| whisper_local_fallback_enabled.set(e.checked()),
+                        }
+                        span { class: "toggle-switch" }
+                        span { class: "toggle-copy",
+                            span { class: "toggle-title", "Use local model fallback" }
+                            span { class: "toggle-subtitle",
+                                "If remote transcription fails, use the configured local model artifact."
+                            }
+                        }
+                    }
                     p { class: "form-hint",
-                        "Remote transcription is used first. The local model is only downloaded or used when this artifact is configured."
+                        if *whisper_local_fallback_enabled.read() {
+                            "Remote transcription is used first. The local model is only downloaded or used when this fallback is enabled and an artifact is configured."
+                        } else {
+                            "Remote transcription is used only. Local model artifact and path values are saved but ignored."
+                        }
                     }
                     button {
                         class: "btn-secondary",

@@ -35,6 +35,10 @@ fn drafts_path() -> PathBuf {
     storage_dir().join("drafts.json")
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Preferences {
     #[serde(default)]
@@ -55,6 +59,8 @@ pub struct Preferences {
     pub whisper_model_artifact_url: Option<String>,
     #[serde(default)]
     pub whisper_model_path: Option<String>,
+    #[serde(default = "default_true")]
+    pub whisper_local_fallback_enabled: bool,
 }
 
 impl Default for Preferences {
@@ -69,6 +75,7 @@ impl Default for Preferences {
             whisper_model: None,
             whisper_model_artifact_url: None,
             whisper_model_path: None,
+            whisper_local_fallback_enabled: true,
         }
     }
 }
@@ -239,8 +246,13 @@ impl AppStorage {
         if let Some(model) = clean_pref(&self.preferences.whisper_model) {
             config.model = model;
         }
-        config.local_model_url = clean_pref(&self.preferences.whisper_model_artifact_url);
-        config.local_model_path = clean_pref(&self.preferences.whisper_model_path);
+        if self.preferences.whisper_local_fallback_enabled {
+            config.local_model_url = clean_pref(&self.preferences.whisper_model_artifact_url);
+            config.local_model_path = clean_pref(&self.preferences.whisper_model_path);
+        } else {
+            config.local_model_url = None;
+            config.local_model_path = None;
+        }
         config
     }
 
@@ -258,4 +270,53 @@ fn clean_pref(value: &Option<String>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn storage_with_preferences(preferences: Preferences) -> AppStorage {
+        AppStorage {
+            profiles: Vec::new(),
+            credentials: HashMap::new(),
+            preferences,
+            drafts: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn preferences_default_to_local_fallback_enabled() {
+        let preferences: Preferences = serde_json::from_str("{}").unwrap();
+        assert!(preferences.whisper_local_fallback_enabled);
+    }
+
+    #[test]
+    fn transcription_config_uses_local_model_when_fallback_is_enabled() {
+        let preferences = Preferences {
+            whisper_model_artifact_url: Some(" https://example.test/ggml.bin ".to_string()),
+            whisper_model_path: Some(" /models/ggml.bin ".to_string()),
+            whisper_local_fallback_enabled: true,
+            ..Preferences::default()
+        };
+        let config = storage_with_preferences(preferences).transcription_config();
+        assert_eq!(
+            config.local_model_url.as_deref(),
+            Some("https://example.test/ggml.bin")
+        );
+        assert_eq!(config.local_model_path.as_deref(), Some("/models/ggml.bin"));
+    }
+
+    #[test]
+    fn transcription_config_ignores_local_model_when_fallback_is_disabled() {
+        let preferences = Preferences {
+            whisper_model_artifact_url: Some("https://example.test/ggml.bin".to_string()),
+            whisper_model_path: Some("/models/ggml.bin".to_string()),
+            whisper_local_fallback_enabled: false,
+            ..Preferences::default()
+        };
+        let config = storage_with_preferences(preferences).transcription_config();
+        assert_eq!(config.local_model_url, None);
+        assert_eq!(config.local_model_path, None);
+    }
 }
