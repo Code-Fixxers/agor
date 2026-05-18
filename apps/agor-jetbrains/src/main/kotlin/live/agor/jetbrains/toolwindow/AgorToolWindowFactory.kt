@@ -92,6 +92,7 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
     private val sessionMessageErrors = mutableMapOf<String, String>()
     private val loadingSessionMessages = mutableSetOf<String>()
     private val streamingMessages = mutableMapOf<String, LiveSessionMessage>()
+    private var activeConversationScroll: JBScrollPane? = null
     val component: JPanel = JPanel(BorderLayout()).apply {
         background = AgorTheme.SurfaceBase
     }
@@ -413,17 +414,25 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
                 .forEach { add(permissionPanel(session.sessionId, it)) }
         }
         val composer = composer(prompt, session)
+        val shouldScrollToEnd = sessionMessages.containsKey(session.sessionId) ||
+            streamingMessages.values.any { it.sessionId == session.sessionId }
         replaceInspector(mainPane(
             title = session.title,
             context = "Agor session",
             meta = listOf(session.status.name.lowercase(), session.agenticTool),
             actions = buttonRow(
+                actionButton("Start", AgorIcons.ScrollStart) { scrollConversationToStart() },
+                actionButton("End", AgorIcons.ScrollEnd) { scrollConversationToEnd() },
                 actionButton("Stop", AgorIcons.Stop) { runClientAction { stopSession(session.sessionId) } },
                 actionButton("Fork", AgorIcons.Fork) { showForkSession(session) },
                 actionButton("Spawn", AgorIcons.Spawn) { showSpawnSession(session) },
             ),
             body = body,
             footer = composer,
+            onBodyScroll = { scroll ->
+                activeConversationScroll = scroll
+                if (shouldScrollToEnd) scrollConversationToEnd(scroll)
+            },
         ))
         if (promptFocusSessionToRestore == session.sessionId) {
             promptFocusSessionToRestore = null
@@ -727,15 +736,18 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
         actions: JPanel?,
         body: JPanel,
         footer: JPanel? = null,
+        onBodyScroll: ((JBScrollPane) -> Unit)? = null,
     ): JPanel =
         AgorTheme.panel(AgorTheme.SurfaceBase).apply {
             layout = BorderLayout()
             add(chatTopbar(title, context, meta, actions), BorderLayout.NORTH)
-            add(JBScrollPane(body).apply {
+            val bodyScroll = JBScrollPane(body).apply {
                 border = JBUI.Borders.empty()
                 viewport.background = AgorTheme.SurfaceBase
                 background = AgorTheme.SurfaceBase
-            }, BorderLayout.CENTER)
+            }
+            onBodyScroll?.invoke(bodyScroll)
+            add(bodyScroll, BorderLayout.CENTER)
             footer?.let { add(it, BorderLayout.SOUTH) }
         }
 
@@ -842,6 +854,27 @@ private class AgorToolWindow(private val project: Project, private val toolWindo
         inspector.add(panel, BorderLayout.CENTER)
         inspector.revalidate()
         inspector.repaint()
+    }
+
+    private fun scrollConversationToStart() {
+        activeConversationScroll?.let { scrollConversationToStart(it) }
+    }
+
+    private fun scrollConversationToEnd() {
+        activeConversationScroll?.let { scrollConversationToEnd(it) }
+    }
+
+    private fun scrollConversationToStart(scroll: JBScrollPane) {
+        SwingUtilities.invokeLater {
+            scroll.verticalScrollBar.value = scroll.verticalScrollBar.minimum
+        }
+    }
+
+    private fun scrollConversationToEnd(scroll: JBScrollPane) {
+        SwingUtilities.invokeLater {
+            val bar = scroll.verticalScrollBar
+            bar.value = bar.maximum
+        }
     }
 
     private fun toSwingTree(nodes: List<AgorTreeNode>): DefaultMutableTreeNode {

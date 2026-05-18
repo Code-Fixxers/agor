@@ -60,6 +60,8 @@ function render() {
             <span>${escapeHtml(session?.status || 'UNKNOWN')} / ${escapeHtml(session?.agenticTool || 'agent')}</span>
           </div>
           <div class="actions">
+            <button data-action="scroll-start">Start</button>
+            <button data-action="scroll-end">End</button>
             <button>Stop</button>
             <button>Fork</button>
             <button>Spawn</button>
@@ -75,6 +77,7 @@ function render() {
       </section>
     </section>
   `;
+  queueMicrotask(scrollConversationToEnd);
 }
 
 function renderTree() {
@@ -245,6 +248,16 @@ function finishStream() {
   render();
 }
 
+function scrollConversationToStart() {
+  document.querySelector('.conversation')?.scrollTo({ top: 0 });
+}
+
+function scrollConversationToEnd() {
+  const conversation = document.querySelector('.conversation');
+  if (!conversation) return;
+  conversation.scrollTo({ top: conversation.scrollHeight });
+}
+
 app.addEventListener('click', (event) => {
   const target = event.target.closest('button');
   if (!target) return;
@@ -255,6 +268,8 @@ app.addEventListener('click', (event) => {
     return;
   }
   if (target.dataset.action === 'send') sendPrompt();
+  if (target.dataset.action === 'scroll-start') scrollConversationToStart();
+  if (target.dataset.action === 'scroll-end') scrollConversationToEnd();
   if (target.dataset.action === 'refresh') {
     state = { ...state, syncCount: state.syncCount + 1 };
     render();

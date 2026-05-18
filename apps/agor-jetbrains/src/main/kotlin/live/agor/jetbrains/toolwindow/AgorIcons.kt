@@ -15,6 +15,8 @@ internal object AgorIcons {
     val Deny = icon("deny")
     val Layout = icon("layout")
     val Settings = icon("settings")
+    val ScrollStart = icon("scroll-start")
+    val ScrollEnd = icon("scroll-end")
 
     private fun icon(name: String) = IconLoader.getIcon("/icons/actions/$name.svg", AgorIcons::class.java)
 }

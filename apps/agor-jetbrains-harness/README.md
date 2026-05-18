@@ -17,6 +17,7 @@ The harness uses deterministic fixtures and mirrors the plugin's current shell:
 
 - board -> worktree -> session navigation
 - previous conversation loading on session open
+- start/end conversation scroll controls
 - selectable chat text
 - prompt send with live streaming chunks
 - background socket refresh that preserves the selected session
