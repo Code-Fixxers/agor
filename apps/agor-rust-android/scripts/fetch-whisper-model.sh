@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Download a ggml whisper model into the Dioxus asset directories.
+# Download a ggml whisper model as a standalone artifact.
 # Usage: scripts/fetch-whisper-model.sh [base.en|tiny.en|small.en|medium.en]
 
 set -euo pipefail
@@ -16,19 +16,11 @@ case "$MODEL" in
 esac
 
 URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$MODEL.bin"
-TARGETS=(
-  "$ROOT/apps/agor-hermes/assets/whisper/ggml-$MODEL.bin"
-  "$ROOT/apps/hermes-only/assets/whisper/ggml-$MODEL.bin"
-)
+DEST="${AGOR_WHISPER_MODEL_DIR:-$ROOT/target/whisper-models}/ggml-$MODEL.bin"
 
-TMP="$(mktemp)"
-trap 'rm -f "$TMP"' EXIT
+mkdir -p "$(dirname "$DEST")"
 
 echo "Downloading $URL ..."
-curl --fail -L "$URL" -o "$TMP"
-
-for dest in "${TARGETS[@]}"; do
-  mkdir -p "$(dirname "$dest")"
-  cp "$TMP" "$dest"
-  echo "Saved $dest ($(du -h "$dest" | cut -f1))"
-done
+curl --fail -L "$URL" -o "$DEST"
+echo "Saved $DEST ($(du -h "$DEST" | cut -f1))"
+echo "Configure this path or host it as an artifact URL; it is not packaged into the APK."

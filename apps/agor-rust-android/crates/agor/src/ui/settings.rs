@@ -2,22 +2,54 @@ use dioxus::prelude::*;
 
 use crate::models::server_profile::ServerProfile;
 use crate::network::agor_client::AgorClient;
+use crate::network::transcription::{
+    DEFAULT_BASE_EN_MODEL_ARTIFACT_URL, DEFAULT_REMOTE_WHISPER_MODEL, DEFAULT_REMOTE_WHISPER_URL,
+};
 use crate::state::auth::{self, AuthStore};
 use crate::state::storage::AppStorage;
 use agor_shared::logger::AppLogger;
 use agor_shared::update::{self, AppMetadata, UpdateState};
 
 #[component]
-pub fn SettingsScreen(
-    on_back: EventHandler<()>,
-    on_open_drawer: EventHandler<()>,
-) -> Element {
+pub fn SettingsScreen(on_back: EventHandler<()>, on_open_drawer: EventHandler<()>) -> Element {
     let mut auth = use_context::<Signal<AuthStore>>();
     let mut storage = use_context::<Signal<AppStorage>>();
     let meta = use_context::<Signal<AppMetadata>>();
     let mut show_add_server = use_signal(|| false);
     let mut show_debug_log = use_signal(|| false);
     let update_state = use_signal(|| UpdateState::Idle);
+    let mut whisper_url = use_signal(|| {
+        storage
+            .read()
+            .preferences
+            .whisper_url
+            .clone()
+            .unwrap_or_default()
+    });
+    let mut whisper_model = use_signal(|| {
+        storage
+            .read()
+            .preferences
+            .whisper_model
+            .clone()
+            .unwrap_or_else(|| DEFAULT_REMOTE_WHISPER_MODEL.to_string())
+    });
+    let mut whisper_model_artifact_url = use_signal(|| {
+        storage
+            .read()
+            .preferences
+            .whisper_model_artifact_url
+            .clone()
+            .unwrap_or_default()
+    });
+    let mut whisper_model_path = use_signal(|| {
+        storage
+            .read()
+            .preferences
+            .whisper_model_path
+            .clone()
+            .unwrap_or_default()
+    });
 
     let user = use_memo(move || auth.read().user.clone());
     let profiles = use_memo(move || storage.read().profiles.clone());
@@ -37,6 +69,24 @@ pub fn SettingsScreen(
         let mut s = storage.write();
         s.drafts.clear();
         s.save_drafts();
+    };
+
+    let on_save_voice = move |_| {
+        let clean = |value: String| {
+            let value = value.trim().to_string();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        };
+
+        let mut s = storage.write();
+        s.preferences.whisper_url = clean(whisper_url.read().clone());
+        s.preferences.whisper_model = clean(whisper_model.read().clone());
+        s.preferences.whisper_model_artifact_url = clean(whisper_model_artifact_url.read().clone());
+        s.preferences.whisper_model_path = clean(whisper_model_path.read().clone());
+        s.save_preferences();
     };
 
     rsx! {
@@ -116,6 +166,55 @@ pub fn SettingsScreen(
                                 }
                             }
                         }
+                    }
+                }
+
+                // Diagnostics section
+                div { class: "settings-section",
+                    h3 { "Voice Transcription" }
+                    div { class: "form-group",
+                        label { "Remote Whisper URL" }
+                        input {
+                            r#type: "text",
+                            placeholder: "{DEFAULT_REMOTE_WHISPER_URL}",
+                            value: "{whisper_url}",
+                            oninput: move |e| whisper_url.set(e.value()),
+                        }
+                    }
+                    div { class: "form-group",
+                        label { "Whisper model" }
+                        input {
+                            r#type: "text",
+                            placeholder: "{DEFAULT_REMOTE_WHISPER_MODEL}",
+                            value: "{whisper_model}",
+                            oninput: move |e| whisper_model.set(e.value()),
+                        }
+                    }
+                    div { class: "form-group",
+                        label { "Local model artifact URL" }
+                        input {
+                            r#type: "text",
+                            placeholder: "{DEFAULT_BASE_EN_MODEL_ARTIFACT_URL}",
+                            value: "{whisper_model_artifact_url}",
+                            oninput: move |e| whisper_model_artifact_url.set(e.value()),
+                        }
+                    }
+                    div { class: "form-group",
+                        label { "Local model path" }
+                        input {
+                            r#type: "text",
+                            placeholder: "Downloaded by Android bridge",
+                            value: "{whisper_model_path}",
+                            oninput: move |e| whisper_model_path.set(e.value()),
+                        }
+                    }
+                    p { class: "form-hint",
+                        "Remote transcription is used first. The local model is only downloaded or used when this artifact is configured."
+                    }
+                    button {
+                        class: "btn-secondary",
+                        onclick: on_save_voice,
+                        "Save Voice Settings"
                     }
                 }
 
@@ -227,7 +326,7 @@ fn update_section(meta: Signal<AppMetadata>, mut update_state: Signal<UpdateStat
             rsx! {
                 p { class: "form-status ok", "Update downloaded: {display}" }
             }
-        },
+        }
         UpdateState::Failed(msg) => rsx! {
             p { class: "form-status error", "Error: {msg}" }
             button {

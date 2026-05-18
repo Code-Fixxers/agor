@@ -3,8 +3,8 @@ use dioxus::prelude::*;
 use crate::models::SessionStatus;
 use crate::network::agor_client::AgorClient;
 use crate::network::transcription::{
-    cancel_voice_recording, default_transcription_base_url, merge_transcript_into_draft,
-    start_voice_recording, stop_voice_recording_and_transcribe,
+    cancel_voice_recording, merge_transcript_into_draft, start_voice_recording,
+    stop_voice_recording_and_transcribe,
 };
 use crate::state::chat::{self, ChatStore};
 use crate::state::storage::AppStorage;
@@ -68,8 +68,8 @@ pub fn PromptInputBar(enabled: bool, session_status: SessionStatus) -> Element {
             VoiceInputState::Recording => {
                 voice_state.set(VoiceInputState::Transcribing);
                 spawn(async move {
-                    let base_url = default_transcription_base_url();
-                    match stop_voice_recording_and_transcribe(&base_url).await {
+                    let transcription = storage.read().transcription_config();
+                    match stop_voice_recording_and_transcribe(&transcription).await {
                         Ok(transcript) => {
                             let mut c = chat.write();
                             let merged = merge_transcript_into_draft(&c.draft, &transcript);

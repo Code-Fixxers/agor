@@ -46,10 +46,26 @@ pub struct HermesProgressItem {
 
 #[derive(Debug, Clone)]
 pub enum HermesSessionEvent {
-    TextDelta { session_id: String, turn_id: String, text: String },
-    Progress { session_id: String, turn_id: String, label: String },
-    Completed { session_id: String, turn_id: String, text: String },
-    Failed { session_id: String, turn_id: String, message: String },
+    TextDelta {
+        session_id: String,
+        turn_id: String,
+        text: String,
+    },
+    Progress {
+        session_id: String,
+        turn_id: String,
+        label: String,
+    },
+    Completed {
+        session_id: String,
+        turn_id: String,
+        text: String,
+    },
+    Failed {
+        session_id: String,
+        turn_id: String,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -57,7 +73,10 @@ pub enum HermesResponseEvent {
     ReasoningDelta(String),
     TextDelta(String),
     Progress(String),
-    Completed { text: String, response_id: Option<String> },
+    Completed {
+        text: String,
+        response_id: Option<String>,
+    },
     Failed(String),
 }
 
@@ -116,6 +135,9 @@ pub struct HermesConfig {
     pub model: Option<String>,
     pub whisper_url: Option<String>,
     pub whisper_token: Option<String>,
+    pub whisper_model: Option<String>,
+    pub whisper_model_artifact_url: Option<String>,
+    pub whisper_model_path: Option<String>,
 }
 
 impl Default for HermesConfig {
@@ -126,6 +148,9 @@ impl Default for HermesConfig {
             model: None,
             whisper_url: None,
             whisper_token: None,
+            whisper_model: None,
+            whisper_model_artifact_url: None,
+            whisper_model_path: None,
         }
     }
 }

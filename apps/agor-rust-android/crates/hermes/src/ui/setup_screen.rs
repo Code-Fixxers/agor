@@ -4,6 +4,10 @@ use crate::client::HermesClient;
 use crate::models::HermesConfig;
 use agor_shared::update::{self, AppMetadata, UpdateState};
 
+const DEFAULT_REMOTE_WHISPER_MODEL: &str = "base.en";
+const DEFAULT_BASE_EN_MODEL_ARTIFACT_URL: &str =
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
+
 #[component]
 pub fn HermesSetupScreen(
     config: HermesConfig,
@@ -15,6 +19,20 @@ pub fn HermesSetupScreen(
     let mut model = use_signal(|| config.model.clone().unwrap_or_default());
     let mut whisper_url = use_signal(|| config.whisper_url.clone().unwrap_or_default());
     let mut whisper_token = use_signal(|| config.whisper_token.clone().unwrap_or_default());
+    let mut whisper_model = use_signal(|| {
+        config
+            .whisper_model
+            .clone()
+            .unwrap_or_else(|| DEFAULT_REMOTE_WHISPER_MODEL.to_string())
+    });
+    let mut whisper_model_artifact_url = use_signal(|| {
+        config
+            .whisper_model_artifact_url
+            .clone()
+            .unwrap_or_default()
+    });
+    let mut whisper_model_path =
+        use_signal(|| config.whisper_model_path.clone().unwrap_or_default());
     let mut probing = use_signal(|| false);
     let mut status = use_signal(|| Option::<String>::None);
     let mut status_ok = use_signal(|| false);
@@ -63,15 +81,51 @@ pub fn HermesSetupScreen(
             token: Some(token.read().trim().to_string()),
             model: {
                 let m = model.read().trim().to_string();
-                if m.is_empty() { None } else { Some(m) }
+                if m.is_empty() {
+                    None
+                } else {
+                    Some(m)
+                }
             },
             whisper_url: {
                 let w = whisper_url.read().trim().to_string();
-                if w.is_empty() { None } else { Some(w) }
+                if w.is_empty() {
+                    None
+                } else {
+                    Some(w)
+                }
             },
             whisper_token: {
                 let w = whisper_token.read().trim().to_string();
-                if w.is_empty() { None } else { Some(w) }
+                if w.is_empty() {
+                    None
+                } else {
+                    Some(w)
+                }
+            },
+            whisper_model: {
+                let w = whisper_model.read().trim().to_string();
+                if w.is_empty() {
+                    None
+                } else {
+                    Some(w)
+                }
+            },
+            whisper_model_artifact_url: {
+                let w = whisper_model_artifact_url.read().trim().to_string();
+                if w.is_empty() {
+                    None
+                } else {
+                    Some(w)
+                }
+            },
+            whisper_model_path: {
+                let w = whisper_model_path.read().trim().to_string();
+                if w.is_empty() {
+                    None
+                } else {
+                    Some(w)
+                }
             },
         };
         on_save.call(new_config);
@@ -142,6 +196,36 @@ pub fn HermesSetupScreen(
                         placeholder: "Token",
                         value: "{whisper_token}",
                         oninput: move |e| whisper_token.set(e.value()),
+                    }
+                }
+
+                div { class: "form-group",
+                    label { "Whisper Model" }
+                    input {
+                        r#type: "text",
+                        placeholder: "{DEFAULT_REMOTE_WHISPER_MODEL}",
+                        value: "{whisper_model}",
+                        oninput: move |e| whisper_model.set(e.value()),
+                    }
+                }
+
+                div { class: "form-group",
+                    label { "Local Model Artifact URL (optional)" }
+                    input {
+                        r#type: "text",
+                        placeholder: "{DEFAULT_BASE_EN_MODEL_ARTIFACT_URL}",
+                        value: "{whisper_model_artifact_url}",
+                        oninput: move |e| whisper_model_artifact_url.set(e.value()),
+                    }
+                }
+
+                div { class: "form-group",
+                    label { "Local Model Path (optional)" }
+                    input {
+                        r#type: "text",
+                        placeholder: "Downloaded by Android bridge",
+                        value: "{whisper_model_path}",
+                        oninput: move |e| whisper_model_path.set(e.value()),
                     }
                 }
 
@@ -246,7 +330,7 @@ fn setup_update_section(
             rsx! {
                 p { class: "form-status ok", "Downloaded: {display}" }
             }
-        },
+        }
         UpdateState::Failed(msg) => rsx! {
             p { class: "form-status error", "{msg}" }
             button {

@@ -3,7 +3,27 @@ use thiserror::Error;
 
 pub const DEFAULT_REMOTE_WHISPER_URL: &str = "http://100.101.157.56:8091";
 pub const DEFAULT_REMOTE_WHISPER_MODEL: &str = "base.en";
-pub const PACKAGED_BASE_EN_MODEL_PATH: &str = "/assets/whisper/ggml-base.en.bin";
+pub const DEFAULT_BASE_EN_MODEL_ARTIFACT_URL: &str =
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptionConfig {
+    pub base_url: String,
+    pub model: String,
+    pub local_model_path: Option<String>,
+    pub local_model_url: Option<String>,
+}
+
+impl Default for TranscriptionConfig {
+    fn default() -> Self {
+        Self {
+            base_url: DEFAULT_REMOTE_WHISPER_URL.to_string(),
+            model: DEFAULT_REMOTE_WHISPER_MODEL.to_string(),
+            local_model_path: None,
+            local_model_url: None,
+        }
+    }
+}
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum TranscriptionError {
@@ -15,13 +35,18 @@ pub enum TranscriptionError {
     Capture(String),
 }
 
-pub fn default_transcription_base_url() -> String {
+pub fn default_transcription_config() -> TranscriptionConfig {
     #[cfg(target_arch = "wasm32")]
-    if let Some(url) = whisper_url_from_query() {
-        return url;
+    {
+        let mut config = TranscriptionConfig::default();
+        apply_transcription_query_config(&mut config);
+        return config;
     }
 
-    DEFAULT_REMOTE_WHISPER_URL.to_string()
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        TranscriptionConfig::default()
+    }
 }
 
 pub fn transcription_endpoint(base_url: &str) -> String {
@@ -129,13 +154,14 @@ pub async fn start_voice_recording() -> Result<(), TranscriptionError> {
 
 #[cfg(target_arch = "wasm32")]
 pub async fn stop_voice_recording_and_transcribe(
-    base_url: &str,
+    config: &TranscriptionConfig,
 ) -> Result<String, TranscriptionError> {
-    let endpoint = transcription_endpoint(base_url);
+    let endpoint = transcription_endpoint(&config.base_url);
     let body = wasm_stop_voice_recording_and_transcribe(
         &endpoint,
-        DEFAULT_REMOTE_WHISPER_MODEL,
-        PACKAGED_BASE_EN_MODEL_PATH,
+        &config.model,
+        config.local_model_path.as_deref().unwrap_or_default(),
+        config.local_model_url.as_deref().unwrap_or_default(),
     )
     .await
     .map_err(js_error)?
@@ -147,7 +173,7 @@ pub async fn stop_voice_recording_and_transcribe(
 
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn stop_voice_recording_and_transcribe(
-    _base_url: &str,
+    _config: &TranscriptionConfig,
 ) -> Result<String, TranscriptionError> {
     Err(TranscriptionError::UnsupportedPlatform)
 }
@@ -169,15 +195,24 @@ fn js_error(value: wasm_bindgen::JsValue) -> TranscriptionError {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn whisper_url_from_query() -> Option<String> {
-    let search = web_sys::window()?.location().search().ok()?;
+fn apply_transcription_query_config(config: &mut TranscriptionConfig) {
+    let Some(search) = web_sys::window().and_then(|window| window.location().search().ok()) else {
+        return;
+    };
     let query = search.strip_prefix('?').unwrap_or(&search);
     for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
-        if key == "agor_whisper_url" && !value.is_empty() {
-            return Some(value.into_owned());
+        if value.is_empty() {
+            continue;
+        }
+
+        match key.as_ref() {
+            "agor_whisper_url" => config.base_url = value.into_owned(),
+            "agor_whisper_model" => config.model = value.into_owned(),
+            "agor_whisper_model_path" => config.local_model_path = Some(value.into_owned()),
+            "agor_whisper_model_url" => config.local_model_url = Some(value.into_owned()),
+            _ => {}
         }
     }
-    None
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -234,13 +269,32 @@ async function postWhisper(url, blob, model) {
   return body;
 }
 
-async function tryLocalBridge(blob, modelPath) {
-  const bridge = globalThis.AgorWhisper;
-  if (!bridge || typeof bridge.transcribeBaseEn !== "function") {
+async function tryLocalBridge(blob, modelPath, modelUrl) {
+  if (!modelPath && !modelUrl) {
     return null;
   }
+
+  const bridge = globalThis.AgorWhisper;
+  if (!bridge) {
+    return null;
+  }
+
+  let resolvedModelPath = modelPath || "";
+  if (!resolvedModelPath && modelUrl && typeof bridge.ensureModel === "function") {
+    resolvedModelPath = await bridge.ensureModel(modelUrl);
+  } else if (!resolvedModelPath && modelUrl) {
+    resolvedModelPath = modelUrl;
+  }
+
+  const transcribe = typeof bridge.transcribe === "function"
+    ? bridge.transcribe
+    : bridge.transcribeBaseEn;
+  if (typeof transcribe !== "function") {
+    return null;
+  }
+
   const buffer = await blob.arrayBuffer();
-  return await bridge.transcribeBaseEn(new Uint8Array(buffer), modelPath);
+  return await transcribe(new Uint8Array(buffer), resolvedModelPath, modelUrl || "");
 }
 
 export async function wasm_start_voice_recording() {
@@ -266,7 +320,7 @@ export async function wasm_start_voice_recording() {
   return true;
 }
 
-export async function wasm_stop_voice_recording_and_transcribe(endpoint, model, modelPath) {
+export async function wasm_stop_voice_recording_and_transcribe(endpoint, model, modelPath, modelUrl) {
   if (!agorVoiceRecorder || agorVoiceRecorder.state !== "recording") {
     throw new Error("No active voice recording");
   }
@@ -292,7 +346,7 @@ export async function wasm_stop_voice_recording_and_transcribe(endpoint, model, 
   try {
     return await postWhisper(endpoint, blob, model);
   } catch (remoteError) {
-    const local = await tryLocalBridge(blob, modelPath);
+    const local = await tryLocalBridge(blob, modelPath, modelUrl);
     if (local !== null && local !== undefined) {
       return typeof local === "string" ? local : JSON.stringify(local);
     }
@@ -324,6 +378,7 @@ extern "C" {
         endpoint: &str,
         model: &str,
         model_path: &str,
+        model_url: &str,
     ) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue>;
 
     fn wasm_cancel_voice_recording();

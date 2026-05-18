@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::models::server_profile::{ProfileCredentials, ServerProfile};
+use crate::network::transcription::{default_transcription_config, TranscriptionConfig};
 
 fn storage_dir() -> PathBuf {
     let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -46,6 +47,14 @@ pub struct Preferences {
     pub favorites: HashSet<String>,
     #[serde(default)]
     pub drawer_session_filter: String,
+    #[serde(default)]
+    pub whisper_url: Option<String>,
+    #[serde(default)]
+    pub whisper_model: Option<String>,
+    #[serde(default)]
+    pub whisper_model_artifact_url: Option<String>,
+    #[serde(default)]
+    pub whisper_model_path: Option<String>,
 }
 
 impl Default for Preferences {
@@ -56,6 +65,10 @@ impl Default for Preferences {
             collapsed_worktrees: HashSet::new(),
             favorites: HashSet::new(),
             drawer_session_filter: "7d".to_string(),
+            whisper_url: None,
+            whisper_model: None,
+            whisper_model_artifact_url: None,
+            whisper_model_path: None,
         }
     }
 }
@@ -189,7 +202,9 @@ impl AppStorage {
 
     pub fn toggle_board_collapsed(&mut self, board_id: &str) {
         if !self.preferences.collapsed_boards.remove(board_id) {
-            self.preferences.collapsed_boards.insert(board_id.to_string());
+            self.preferences
+                .collapsed_boards
+                .insert(board_id.to_string());
         }
         self.save_preferences();
     }
@@ -216,10 +231,31 @@ impl AppStorage {
         self.save_drafts();
     }
 
+    pub fn transcription_config(&self) -> TranscriptionConfig {
+        let mut config = default_transcription_config();
+        if let Some(url) = clean_pref(&self.preferences.whisper_url) {
+            config.base_url = url;
+        }
+        if let Some(model) = clean_pref(&self.preferences.whisper_model) {
+            config.model = model;
+        }
+        config.local_model_url = clean_pref(&self.preferences.whisper_model_artifact_url);
+        config.local_model_path = clean_pref(&self.preferences.whisper_model_path);
+        config
+    }
+
     pub fn clear_all_credentials(&mut self) {
         self.credentials.clear();
         self.preferences.active_profile_id = None;
         self.save_credentials();
         self.save_preferences();
     }
+}
+
+fn clean_pref(value: &Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
