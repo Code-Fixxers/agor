@@ -318,6 +318,49 @@ textarea {
   padding: 8px;
 }
 
+.sidebar-tree-button,
+.tree-caret-button,
+.worktree-open-button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.sidebar-tree-button {
+  width: 100%;
+}
+
+.tree-caret,
+.tree-caret-button {
+  display: inline-grid;
+  width: 18px;
+  min-width: 18px;
+  height: 24px;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.tree-caret-button {
+  min-height: 28px;
+  border-radius: var(--radius-xs);
+  padding: 0;
+}
+
+.tree-caret-button:hover {
+  background: var(--surface-panel-3);
+  color: var(--text-primary);
+}
+
+.worktree-open-button {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+}
+
 .sidebar-session-row {
   width: 100%;
   padding: 8px 8px 8px 10px;
@@ -407,6 +450,7 @@ textarea {
 .content-area,
 .chat-screen,
 .settings-screen,
+.worktree-screen,
 .hermes-screen,
 .hermes-setup-screen {
   min-width: 0;
@@ -452,6 +496,7 @@ textarea {
 }
 
 .chat-screen,
+.worktree-screen,
 .hermes-screen {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -459,6 +504,7 @@ textarea {
 
 .chat-topbar,
 .settings-topbar,
+.worktree-topbar,
 .hermes-topbar,
 .setup-header {
   display: flex;
@@ -936,6 +982,7 @@ textarea {
 }
 
 .settings-content,
+.worktree-content,
 .setup-form {
   display: flex;
   min-height: 0;
@@ -946,6 +993,7 @@ textarea {
 }
 
 .settings-section,
+.worktree-section,
 .setup-about,
 .server-profile-row,
 .mcp-server-row,
@@ -959,6 +1007,116 @@ textarea {
 
 .settings-section {
   padding: 16px;
+}
+
+.worktree-section {
+  padding: 16px;
+}
+
+.worktree-summary {
+  gap: 14px;
+}
+
+.worktree-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.worktree-hero-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.worktree-hero h2 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 22px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worktree-path,
+.topbar-subtitle {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worktree-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.worktree-meta-item {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel-2);
+  padding: 10px;
+}
+
+.tool-picker {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.tool-button {
+  min-height: 34px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel-2);
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.tool-button:hover,
+.tool-button.active {
+  border-color: rgba(255, 107, 157, 0.45);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+.worktree-prompt {
+  min-height: 120px;
+  padding: 10px 12px;
+}
+
+.worktree-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.worktree-session-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel-2);
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.worktree-session-row:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-panel-3);
 }
 
 .section-header-row,
@@ -1305,6 +1463,7 @@ textarea {
 
   .chat-topbar,
   .settings-topbar,
+  .worktree-topbar,
   .hermes-topbar,
   .setup-header {
     gap: 8px;
@@ -1332,6 +1491,7 @@ textarea {
   }
 
   .chat-messages,
+  .worktree-content,
   .hermes-messages {
     padding: 16px 12px;
   }
@@ -1352,6 +1512,11 @@ textarea {
   .prompt-input-bar,
   .hermes-input-bar {
     padding: 10px;
+  }
+
+  .worktree-meta-grid,
+  .tool-picker {
+    grid-template-columns: 1fr;
   }
 }
 

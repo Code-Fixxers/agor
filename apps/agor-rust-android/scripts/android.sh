@@ -70,6 +70,8 @@ patch_generated_android_project() {
   local app_gradle="$gradle_root/app/build.gradle.kts"
   local manifest="$gradle_root/app/src/main/AndroidManifest.xml"
   local wry_activity="$gradle_root/app/src/main/kotlin/dev/dioxus/main/WryActivity.kt"
+  local main_activity="$gradle_root/app/src/main/kotlin/dev/dioxus/main/MainActivity.kt"
+  local biometric_bridge="$gradle_root/app/src/main/kotlin/dev/dioxus/main/AgorBiometricBridge.kt"
 
   if [[ ! -f "$app_gradle" ]]; then
     echo "Missing generated Gradle file: $app_gradle" >&2
@@ -83,13 +85,251 @@ patch_generated_android_project() {
     perl -0pi -e "s/(compileSdk = $COMPILE_SDK\\n)/\$1    buildToolsVersion = \"$BUILD_TOOLS\"\\n/" "$app_gradle"
   fi
 
+  if ! grep -q 'androidx.biometric:biometric' "$app_gradle"; then
+    perl -0pi -e 's#(dependencies \{\n)#$1    implementation("androidx.biometric:biometric:1.1.0")\n#' "$app_gradle"
+  fi
+
   if [[ -f "$manifest" ]] && ! grep -q 'usesCleartextTraffic' "$manifest"; then
     perl -0pi -e 's/<application /<application android:usesCleartextTraffic="true" /' "$manifest"
+  fi
+
+  if [[ -f "$manifest" ]]; then
+    for permission in \
+      android.permission.RECORD_AUDIO \
+      android.permission.MODIFY_AUDIO_SETTINGS \
+      android.permission.USE_BIOMETRIC
+    do
+      if ! grep -q "$permission" "$manifest"; then
+        perl -0pi -e "s#(<manifest[^>]*>\\s*)#\$1    <uses-permission android:name=\"$permission\" />\\n#" "$manifest"
+      fi
+    done
   fi
 
   if [[ -f "$wry_activity" ]]; then
     perl -0pi -e 's/return info\.versionName$/return info.versionName ?: ""/mg' "$wry_activity"
   fi
+
+  if [[ -f "$main_activity" ]] && ! grep -q 'AgorBiometricBridge' "$main_activity"; then
+    cat >"$main_activity" <<'KOTLIN'
+package dev.dioxus.main;
+
+// need to re-export buildconfig down from the parent
+import android.webkit.WebView
+import com.example.AgorHermesApp.BuildConfig;
+typealias BuildConfig = BuildConfig;
+
+class MainActivity : WryActivity() {
+    override fun onWebViewCreate(webView: WebView) {
+        webView.addJavascriptInterface(AgorBiometricBridge(this, webView), "AgorBiometrics")
+    }
+}
+KOTLIN
+  fi
+
+  cat >"$biometric_bridge" <<'KOTLIN'
+package dev.dioxus.main
+
+import android.os.Build
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import org.json.JSONObject
+import java.security.KeyFactory
+import java.security.KeyPair
+import java.security.KeyPairGenerator
+import java.security.KeyStore
+import java.security.PrivateKey
+import java.security.PublicKey
+import java.security.spec.X509EncodedKeySpec
+import javax.crypto.Cipher
+
+private const val AGOR_KEY_ALIAS = "agor_rust_android_biometric_v1"
+private const val AGOR_KEY_TRANSFORMATION = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding"
+private const val AGOR_KEY_STORE = "AndroidKeyStore"
+
+class AgorBiometricBridge(
+    private val activity: WryActivity,
+    private val webView: WebView,
+) {
+    private val prefs = activity.getSharedPreferences("agor_biometric_secrets", 0)
+
+    @JavascriptInterface
+    fun isAvailable(): Boolean {
+        return BiometricManager.from(activity).canAuthenticate(
+            BiometricManager.Authenticators.BIOMETRIC_STRONG,
+        ) == BiometricManager.BIOMETRIC_SUCCESS
+    }
+
+    @JavascriptInterface
+    fun hasSecret(profileId: String): Boolean {
+        return prefs.contains(key(profileId, "ciphertext"))
+    }
+
+    @JavascriptInterface
+    fun save(profileId: String, kind: String, serverUrl: String, email: String, secret: String): Boolean {
+        if (profileId.isBlank() || secret.isBlank()) return false
+        return runCatching {
+            val cipher = Cipher.getInstance(AGOR_KEY_TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, unrestrictedPublicKey(getOrCreateKeyPair().public))
+            val encrypted = cipher.doFinal(secret.toByteArray(Charsets.UTF_8))
+            prefs.edit()
+                .putString(key(profileId, "kind"), kind)
+                .putString(key(profileId, "server_url"), serverUrl)
+                .putString(key(profileId, "email"), email)
+                .putString(key(profileId, "ciphertext"), Base64.encodeToString(encrypted, Base64.NO_WRAP))
+                .apply()
+            true
+        }.getOrElse {
+            false
+        }
+    }
+
+    @JavascriptInterface
+    fun clear(profileId: String) {
+        prefs.edit()
+            .remove(key(profileId, "kind"))
+            .remove(key(profileId, "server_url"))
+            .remove(key(profileId, "email"))
+            .remove(key(profileId, "ciphertext"))
+            .apply()
+    }
+
+    @JavascriptInterface
+    fun unlock(callbackId: String, profileId: String) {
+        if (!isAvailable()) {
+            complete(callbackId, false, "Biometric authentication is not available.")
+            return
+        }
+
+        val ciphertext = prefs.getString(key(profileId, "ciphertext"), null)
+        if (ciphertext.isNullOrBlank()) {
+            complete(callbackId, false, "No biometric login is saved for this profile.")
+            return
+        }
+
+        val cipher = try {
+            createDecryptCipher()
+        } catch (_: KeyPermanentlyInvalidatedException) {
+            clear(profileId)
+            complete(callbackId, false, "Biometric enrollment changed. Login again to refresh saved credentials.")
+            return
+        } catch (_: Exception) {
+            complete(callbackId, false, "Unable to initialize biometric unlock.")
+            return
+        }
+
+        val encrypted = runCatching { Base64.decode(ciphertext, Base64.NO_WRAP) }.getOrNull()
+        if (encrypted == null) {
+            clear(profileId)
+            complete(callbackId, false, "Saved biometric credentials are corrupted.")
+            return
+        }
+
+        val executor = ContextCompat.getMainExecutor(activity)
+        val prompt = BiometricPrompt(
+            activity,
+            executor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    val decrypted = runCatching {
+                        val useCipher = result.cryptoObject?.cipher ?: cipher
+                        String(useCipher.doFinal(encrypted), Charsets.UTF_8)
+                    }.getOrNull()
+
+                    if (decrypted.isNullOrBlank()) {
+                        complete(callbackId, false, "Unable to unlock saved credentials.")
+                        return
+                    }
+
+                    val payload = JSONObject()
+                        .put("kind", prefs.getString(key(profileId, "kind"), "password"))
+                        .put("server_url", prefs.getString(key(profileId, "server_url"), ""))
+                        .put("email", prefs.getString(key(profileId, "email"), ""))
+                        .put("secret", decrypted)
+                        .toString()
+                    complete(callbackId, true, payload)
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    complete(callbackId, false, errString.toString())
+                }
+
+                override fun onAuthenticationFailed() {
+                    complete(callbackId, false, "Biometric check did not match.")
+                }
+            },
+        )
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Sign in to Agor")
+            .setSubtitle("Use biometrics to unlock saved login credentials")
+            .setNegativeButtonText("Use password")
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .build()
+        prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(cipher))
+    }
+
+    private fun complete(callbackId: String, ok: Boolean, payload: String) {
+        val script = "window.__agorBiometricResult && window.__agorBiometricResult(" +
+            JSONObject.quote(callbackId) + "," +
+            ok.toString() + "," +
+            JSONObject.quote(payload) +
+            ")"
+        webView.post {
+            webView.evaluateJavascript(script, null)
+        }
+    }
+
+    private fun key(profileId: String, suffix: String): String = profileId.trim() + "." + suffix
+
+    private fun createDecryptCipher(): Cipher {
+        val key = getOrCreateKeyPair().private
+        val cipher = Cipher.getInstance(AGOR_KEY_TRANSFORMATION)
+        cipher.init(Cipher.DECRYPT_MODE, key)
+        return cipher
+    }
+
+    private fun getOrCreateKeyPair(): KeyPair {
+        val keyStore = KeyStore.getInstance(AGOR_KEY_STORE)
+        keyStore.load(null)
+        val privateKey = keyStore.getKey(AGOR_KEY_ALIAS, null) as? PrivateKey
+        val publicKey = keyStore.getCertificate(AGOR_KEY_ALIAS)?.publicKey
+        if (privateKey != null && publicKey != null) return KeyPair(publicKey, privateKey)
+
+        val keyGen = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, AGOR_KEY_STORE)
+        val spec = KeyGenParameterSpec.Builder(
+            AGOR_KEY_ALIAS,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+        ).apply {
+            setKeySize(2048)
+            setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512)
+            setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
+            setUserAuthenticationRequired(true)
+            setInvalidatedByBiometricEnrollment(true)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
+            } else {
+                @Suppress("DEPRECATION")
+                setUserAuthenticationValidityDurationSeconds(-1)
+            }
+        }.build()
+
+        keyGen.initialize(spec)
+        return keyGen.generateKeyPair()
+    }
+
+    private fun unrestrictedPublicKey(publicKey: PublicKey): PublicKey {
+        val spec = X509EncodedKeySpec(publicKey.encoded)
+        return KeyFactory.getInstance(publicKey.algorithm).generatePublic(spec)
+    }
+}
+KOTLIN
 }
 
 build_apk() {

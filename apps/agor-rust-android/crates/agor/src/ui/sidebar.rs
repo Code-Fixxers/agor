@@ -11,10 +11,11 @@ use agor_shared::logger::AppLogger;
 #[component]
 pub fn Sidebar(
     on_select_session: EventHandler<String>,
+    on_select_worktree: EventHandler<String>,
     on_open_settings: EventHandler<()>,
 ) -> Element {
     let mut nav = use_context::<Signal<NavStore>>();
-    let storage = use_context::<Signal<AppStorage>>();
+    let mut storage = use_context::<Signal<AppStorage>>();
     let auth = use_context::<Signal<AuthStore>>();
 
     let mut search_query = use_signal(|| String::new());
@@ -29,8 +30,8 @@ pub fn Sidebar(
 
             let mut loaded = NavStore::new();
             loaded.favorites = storage_snapshot.preferences.favorites.clone();
-            loaded.expanded_boards = storage_snapshot.preferences.collapsed_boards.clone();
-            loaded.expanded_worktrees = storage_snapshot.preferences.collapsed_worktrees.clone();
+            loaded.collapsed_boards = storage_snapshot.preferences.collapsed_boards.clone();
+            loaded.collapsed_worktrees = storage_snapshot.preferences.collapsed_worktrees.clone();
 
             let result = navigation::refresh_navigation(&client, &mut loaded, &logger).await;
             let mut n = nav.write();
@@ -115,29 +116,59 @@ pub fn Sidebar(
                         SidebarRow::SectionHeader { label } => rsx! {
                             div { class: "sidebar-section-header", "{label}" }
                         },
-                        SidebarRow::BoardHeader { board, expanded: _ } => {
+                        SidebarRow::BoardHeader { board, expanded } => {
+                            let board_id = board.board_id.clone();
                             let name = board.name.clone();
                             let emoji = board.emoji.clone().unwrap_or_default();
+                            let caret = if *expanded { "▾" } else { "▸" };
                             rsx! {
-                                div { class: "sidebar-board-row",
+                                button {
+                                    class: "sidebar-board-row sidebar-tree-button",
+                                    onclick: move |_| {
+                                        storage.write().toggle_board_collapsed(&board_id);
+                                        let mut n = nav.write();
+                                        if !n.collapsed_boards.remove(&board_id) {
+                                            n.collapsed_boards.insert(board_id.clone());
+                                        }
+                                    },
+                                    span { class: "tree-caret", "{caret}" }
                                     span { class: "board-emoji", "{emoji}" }
                                     span { class: "board-name", "{name}" }
                                 }
                             }
                         }
-                        SidebarRow::WorktreeRow { worktree, repo_name, expanded: _ } => {
+                        SidebarRow::WorktreeRow { worktree, repo_name, expanded } => {
+                            let worktree_id = worktree.worktree_id.clone();
+                            let worktree_id_for_open = worktree.worktree_id.clone();
                             let wt_name = worktree.name.clone();
                             let branch = worktree.branch.clone().unwrap_or_default();
                             let repo = repo_name.clone();
+                            let caret = if *expanded { "▾" } else { "▸" };
                             rsx! {
                                 div { class: "sidebar-worktree-row",
-                                    div { class: "worktree-info",
+                                    button {
+                                        class: "tree-caret-button",
+                                        title: if *expanded { "Collapse worktree" } else { "Expand worktree" },
+                                        onclick: move |_| {
+                                            storage.write().toggle_worktree_collapsed(&worktree_id);
+                                            let mut n = nav.write();
+                                            if !n.collapsed_worktrees.remove(&worktree_id) {
+                                                n.collapsed_worktrees.insert(worktree_id.clone());
+                                            }
+                                        },
+                                        "{caret}"
+                                    }
+                                    button {
+                                        class: "worktree-open-button",
+                                        onclick: move |_| on_select_worktree.call(worktree_id_for_open.clone()),
+                                        div { class: "worktree-info",
                                         span { class: "worktree-name", "{wt_name}" }
                                         if !repo.is_empty() {
                                             span { class: "worktree-repo", "{repo}" }
                                         }
                                         if !branch.is_empty() {
                                             span { class: "worktree-branch", "{branch}" }
+                                        }
                                         }
                                     }
                                 }

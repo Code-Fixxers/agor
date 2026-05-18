@@ -39,8 +39,8 @@ pub struct NavStore {
     pub search_query: String,
     pub is_loading: bool,
     pub error: Option<String>,
-    pub expanded_boards: HashSet<String>,
-    pub expanded_worktrees: HashSet<String>,
+    pub collapsed_boards: HashSet<String>,
+    pub collapsed_worktrees: HashSet<String>,
 }
 
 impl NavStore {
@@ -55,8 +55,8 @@ impl NavStore {
             search_query: String::new(),
             is_loading: false,
             error: None,
-            expanded_boards: HashSet::new(),
-            expanded_worktrees: HashSet::new(),
+            collapsed_boards: HashSet::new(),
+            collapsed_worktrees: HashSet::new(),
         }
     }
 
@@ -232,15 +232,12 @@ impl NavStore {
                 continue;
             }
 
-            let _board_expanded = !self.expanded_boards.contains(&board.board_id)
-                || self.expanded_boards.contains(&board.board_id);
-
             rows.push(SidebarRow::BoardHeader {
                 board: board.clone(),
-                expanded: !self.expanded_boards.contains(&board.board_id),
+                expanded: !self.collapsed_boards.contains(&board.board_id),
             });
 
-            if self.expanded_boards.contains(&board.board_id) {
+            if self.collapsed_boards.contains(&board.board_id) {
                 continue;
             }
 
@@ -256,7 +253,7 @@ impl NavStore {
                         .map(|r| r.name.clone())
                         .unwrap_or_default();
 
-                    let wt_collapsed = self.expanded_worktrees.contains(&wt.worktree_id);
+                    let wt_collapsed = self.collapsed_worktrees.contains(&wt.worktree_id);
 
                     rows.push(SidebarRow::WorktreeRow {
                         worktree: wt.clone(),

@@ -3,11 +3,13 @@ use dioxus::prelude::*;
 use crate::ui::chat::chat_screen::ChatScreen;
 use crate::ui::settings::SettingsScreen;
 use crate::ui::sidebar::Sidebar;
+use crate::ui::worktree_detail::WorktreeDetailScreen;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Route {
     Empty,
     Chat { session_id: String },
+    Worktree { worktree_id: String },
     Settings,
 }
 
@@ -30,6 +32,10 @@ pub fn AppShell() -> Element {
                 Sidebar {
                     on_select_session: move |id: String| {
                         route.set(Route::Chat { session_id: id });
+                        drawer_open.set(false);
+                    },
+                    on_select_worktree: move |id: String| {
+                        route.set(Route::Worktree { worktree_id: id });
                         drawer_open.set(false);
                     },
                     on_open_settings: move |_| {
@@ -79,6 +85,22 @@ pub fn AppShell() -> Element {
                             on_open_drawer: move |_| {
                                 let current = *drawer_open.read();
                                 drawer_open.set(!current);
+                            },
+                        }
+                    },
+                    Route::Worktree { worktree_id } => rsx! {
+                        WorktreeDetailScreen {
+                            key: "{worktree_id}",
+                            worktree_id: worktree_id.clone(),
+                            on_open_drawer: move |_| {
+                                let current = *drawer_open.read();
+                                drawer_open.set(!current);
+                            },
+                            on_back: move |_| {
+                                route.set(Route::Empty);
+                            },
+                            on_open_session: move |session_id: String| {
+                                route.set(Route::Chat { session_id });
                             },
                         }
                     },

@@ -17,6 +17,7 @@ pub struct ProfileCredentials {
     pub user_email: Option<String>,
     pub saved_password: Option<String>,
     pub saved_api_key: Option<String>,
+    pub biometric_secret_kind: Option<String>,
 }
 
 impl Default for ProfileCredentials {
@@ -28,6 +29,7 @@ impl Default for ProfileCredentials {
             user_email: None,
             saved_password: None,
             saved_api_key: None,
+            biometric_secret_kind: None,
         }
     }
 }

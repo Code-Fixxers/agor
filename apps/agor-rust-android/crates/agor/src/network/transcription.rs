@@ -257,11 +257,16 @@ async function postWhisper(url, blob, model) {
   form.append("response_format", "json");
   form.append("model", model);
 
-  const response = await fetch(url, {
-    method: "POST",
-    body: form,
-    headers: { "Accept": "application/json" },
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      body: form,
+      headers: { "Accept": "application/json" },
+    });
+  } catch (error) {
+    throw new Error(`Whisper request failed for ${url}: ${error?.message || String(error)}`);
+  }
   const body = await response.text();
   if (!response.ok) {
     throw new Error(`Whisper ${response.status}: ${body.slice(0, 300)}`);

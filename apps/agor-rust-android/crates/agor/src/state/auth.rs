@@ -46,6 +46,14 @@ pub async fn bootstrap(client: &AgorClient, storage: &AppStorage, logger: &AppLo
     client.set_base_url(&profile.url);
 
     if let Some(creds) = storage.credentials.get(&profile.id) {
+        if creds.biometric_secret_kind.is_some() {
+            logger.info(
+                LogCategory::Auth,
+                "Saved login is protected by biometrics, waiting for unlock",
+            );
+            return AuthState::NeedsLogin;
+        }
+
         if let Some(token) = &creds.access_token {
             let mut tokens = client.tokens.write().unwrap();
             tokens.access_token = Some(token.clone());
@@ -149,6 +157,8 @@ pub async fn login(
             None
         },
         None,
+        None,
+        true,
         logger,
     )
 }
@@ -185,6 +195,8 @@ pub fn persist_login(
     result: LoginResult,
     saved_password: Option<String>,
     saved_api_key: Option<String>,
+    biometric_secret_kind: Option<String>,
+    store_tokens: bool,
     logger: &AppLogger,
 ) -> Result<AuthState, String> {
     let profile_id = uuid::Uuid::new_v4().to_string();
@@ -215,12 +227,17 @@ pub fn persist_login(
     };
 
     let creds = ProfileCredentials {
-        access_token: Some(result.access_token),
-        refresh_token: result.refresh_token,
+        access_token: store_tokens.then_some(result.access_token),
+        refresh_token: if store_tokens {
+            result.refresh_token
+        } else {
+            None
+        },
         user_id: Some(result.user.user_id.clone()),
         user_email: result.user.email.clone(),
         saved_password,
         saved_api_key,
+        biometric_secret_kind,
     };
     storage.save_profile_credentials(&final_id, creds);
     storage.set_active_profile(&final_id);
@@ -255,6 +272,8 @@ pub async fn login_with_api_key(
         } else {
             None
         },
+        None,
+        true,
         logger,
     )
 }

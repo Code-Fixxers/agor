@@ -6,3 +6,4 @@ pub mod login;
 pub mod mcp_sheet;
 pub mod settings;
 pub mod sidebar;
+pub mod worktree_detail;

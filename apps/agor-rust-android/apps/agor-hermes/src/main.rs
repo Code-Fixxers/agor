@@ -74,6 +74,8 @@ fn App() -> Element {
                 },
                 None,
                 None,
+                None,
+                true,
                 &AppLogger::new(),
             );
             drop(s);
@@ -114,6 +116,8 @@ fn App() -> Element {
                         result,
                         None,
                         None,
+                        None,
+                        true,
                         &logger,
                     );
                     drop(s);

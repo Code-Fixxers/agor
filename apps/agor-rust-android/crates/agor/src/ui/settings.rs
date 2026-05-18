@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 
 use crate::models::server_profile::ServerProfile;
 use crate::network::agor_client::AgorClient;
+use crate::network::biometrics::clear_biometric_secret;
 use crate::network::transcription::{
     DEFAULT_BASE_EN_MODEL_ARTIFACT_URL, DEFAULT_REMOTE_WHISPER_MODEL, DEFAULT_REMOTE_WHISPER_URL,
 };
@@ -57,6 +58,15 @@ pub fn SettingsScreen(on_back: EventHandler<()>, on_open_drawer: EventHandler<()
     let on_logout = move |_| {
         let logger = AppLogger::new();
         let client = AgorClient::new(logger.clone());
+        let profile_ids: Vec<String> = storage
+            .read()
+            .profiles
+            .iter()
+            .map(|profile| profile.id.clone())
+            .collect();
+        for profile_id in profile_ids {
+            clear_biometric_secret(&profile_id);
+        }
         let mut s = storage.write();
         auth::logout(&client, &mut s, &logger);
         drop(s);

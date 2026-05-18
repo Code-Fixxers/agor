@@ -1,6 +1,10 @@
 use dioxus::prelude::*;
 
 use crate::network::agor_client::AgorClient;
+use crate::network::biometrics::{
+    has_biometric_secret, is_biometric_available, save_biometric_secret, unlock_biometric_secret,
+    BiometricSecret,
+};
 use crate::state::auth::{self, AuthState, AuthStore};
 use crate::state::storage::AppStorage;
 use agor_shared::logger::AppLogger;
@@ -27,6 +31,7 @@ pub fn LoginScreen() -> Element {
     let mut loading = use_signal(|| false);
 
     let profiles = use_memo(move || storage.read().profiles.clone());
+    let biometrics_available = is_biometric_available();
 
     use_effect(move || {
         let s = storage.read();
@@ -99,6 +104,110 @@ pub fn LoginScreen() -> Element {
                                 }
                             }
                         }
+                        for profile in profiles.read().iter() {
+                            if has_biometric_secret(&profile.id) {
+                                {
+                                    let profile_id = profile.id.clone();
+                                    let profile_label = profile.label.clone();
+                                    let profile_url = profile.url.clone();
+                                    let profile_email = profile.email.clone();
+                                    rsx! {
+                                        button {
+                                            class: "biometric-unlock-btn",
+                                            r#type: "button",
+                                            disabled: *loading.read(),
+                                            onclick: move |_| {
+                                                let profile_id = profile_id.clone();
+                                                let profile_label = profile_label.clone();
+                                                let fallback_url = profile_url.clone();
+                                                let fallback_email = profile_email.clone();
+
+                                                loading.set(true);
+                                                error.set(None);
+
+                                                spawn(async move {
+                                                    match unlock_biometric_secret(&profile_id).await {
+                                                        Ok(secret) => {
+                                                            let logger = AppLogger::new();
+                                                            let client = AgorClient::new(logger.clone());
+                                                            let server_url = if secret.server_url.is_empty() {
+                                                                fallback_url.clone()
+                                                            } else {
+                                                                secret.server_url.clone()
+                                                            };
+                                                            let login_result = if secret.kind == "api-key" {
+                                                                auth::authenticate_with_api_key(
+                                                                    &client,
+                                                                    &logger,
+                                                                    &server_url,
+                                                                    &secret.secret,
+                                                                )
+                                                                .await
+                                                            } else {
+                                                                let email_value = secret
+                                                                    .email
+                                                                    .clone()
+                                                                    .or_else(|| fallback_email.clone())
+                                                                    .unwrap_or_default();
+                                                                auth::authenticate_with_password(
+                                                                    &client,
+                                                                    &logger,
+                                                                    &server_url,
+                                                                    &email_value,
+                                                                    &secret.secret,
+                                                                )
+                                                                .await
+                                                            };
+
+                                                            match login_result {
+                                                                Ok((base_url, result)) => {
+                                                                    let mut s = storage.write();
+                                                                    let state = auth::persist_login(
+                                                                        &mut s,
+                                                                        base_url,
+                                                                        &profile_label,
+                                                                        match secret.kind.as_str() {
+                                                                            "api-key" => result.user.email.clone(),
+                                                                            _ => secret.email.clone().or_else(|| fallback_email.clone()),
+                                                                        },
+                                                                        result,
+                                                                        None,
+                                                                        None,
+                                                                        Some(secret.kind.clone()),
+                                                                        false,
+                                                                        &logger,
+                                                                    );
+                                                                    drop(s);
+                                                                    let state = match state {
+                                                                        Ok(state) => state,
+                                                                        Err(e) => {
+                                                                            error.set(Some(e));
+                                                                            loading.set(false);
+                                                                            return;
+                                                                        }
+                                                                    };
+                                                                    let user = if let AuthState::Authenticated { ref user } = state {
+                                                                        Some(user.clone())
+                                                                    } else {
+                                                                        None
+                                                                    };
+                                                                    auth_store.write().state = state;
+                                                                    auth_store.write().user = user;
+                                                                }
+                                                                Err(e) => error.set(Some(e)),
+                                                            }
+                                                        }
+                                                        Err(e) => error.set(Some(e)),
+                                                    }
+                                                    loading.set(false);
+                                                });
+                                            },
+                                            "Unlock {profile.label} with biometrics"
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -162,11 +271,14 @@ pub fn LoginScreen() -> Element {
                             onchange: move |e| save_secret.set(e.checked()),
                         }
                         if *login_mode.read() == LoginMode::Password {
-                            " Save password for auto-login"
+                            " Protect password with biometrics"
                         } else {
-                            " Save API key for auto-login"
+                            " Protect API key with biometrics"
                         }
                     }
+                }
+                if *save_secret.read() && !biometrics_available {
+                    p { class: "form-hint", "Biometric storage is only available inside the Android APK." }
                 }
 
                 if let Some(err) = error.read().as_ref() {
@@ -188,6 +300,12 @@ pub fn LoginScreen() -> Element {
 
                         loading.set(true);
                         error.set(None);
+
+                        if save_secret_val && !is_biometric_available() {
+                            error.set(Some("Biometric storage is not available in this build.".to_string()));
+                            loading.set(false);
+                            return;
+                        }
 
                         spawn(async move {
                             let logger = AppLogger::new();
@@ -217,6 +335,31 @@ pub fn LoginScreen() -> Element {
 
                             match login_result {
                                 Ok((base_url, result)) => {
+                                    let biometric_kind = if save_secret_val {
+                                        Some(match mode {
+                                            LoginMode::Password => "password".to_string(),
+                                            LoginMode::ApiKey => "api-key".to_string(),
+                                        })
+                                    } else {
+                                        None
+                                    };
+                                    let biometric_secret = if save_secret_val {
+                                        Some(BiometricSecret {
+                                            kind: biometric_kind.clone().unwrap_or_default(),
+                                            server_url: base_url.clone(),
+                                            email: match mode {
+                                                LoginMode::Password => Some(email_val.clone()),
+                                                LoginMode::ApiKey => result.user.email.clone(),
+                                            },
+                                            secret: match mode {
+                                                LoginMode::Password => password_val.clone(),
+                                                LoginMode::ApiKey => api_key_val.clone(),
+                                            },
+                                        })
+                                    } else {
+                                        None
+                                    };
+
                                     let mut s = storage.write();
                                     let state = auth::persist_login(
                                         &mut s,
@@ -227,16 +370,13 @@ pub fn LoginScreen() -> Element {
                                             LoginMode::ApiKey => result.user.email.clone(),
                                         },
                                         result,
-                                        match mode {
-                                            LoginMode::Password if save_secret_val => Some(password_val.clone()),
-                                            _ => None,
-                                        },
-                                        match mode {
-                                            LoginMode::ApiKey if save_secret_val => Some(api_key_val.clone()),
-                                            _ => None,
-                                        },
+                                        None,
+                                        None,
+                                        biometric_kind,
+                                        !save_secret_val,
                                         &logger,
                                     );
+                                    let profile_id = s.preferences.active_profile_id.clone();
                                     drop(s);
                                     let state = match state {
                                         Ok(state) => state,
@@ -246,6 +386,13 @@ pub fn LoginScreen() -> Element {
                                             return;
                                         }
                                     };
+                                    if let (Some(secret), Some(profile_id)) = (biometric_secret.as_ref(), profile_id.as_ref()) {
+                                        if let Err(e) = save_biometric_secret(secret, profile_id) {
+                                            error.set(Some(e));
+                                            loading.set(false);
+                                            return;
+                                        }
+                                    }
                                     let user = if let AuthState::Authenticated { ref user } = state {
                                         Some(user.clone())
                                     } else {
