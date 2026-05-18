@@ -71,6 +71,7 @@ patch_generated_android_project() {
   local manifest="$gradle_root/app/src/main/AndroidManifest.xml"
   local wry_activity="$gradle_root/app/src/main/kotlin/dev/dioxus/main/WryActivity.kt"
   local main_activity="$gradle_root/app/src/main/kotlin/dev/dioxus/main/MainActivity.kt"
+  local build_config_alias="$gradle_root/app/src/main/kotlin/dev/dioxus/main/BuildConfig.kt"
   local biometric_bridge="$gradle_root/app/src/main/kotlin/dev/dioxus/main/AgorBiometricBridge.kt"
 
   if [[ ! -f "$app_gradle" ]]; then
@@ -109,14 +110,26 @@ patch_generated_android_project() {
     perl -0pi -e 's/return info\.versionName$/return info.versionName ?: ""/mg' "$wry_activity"
   fi
 
-  if [[ -f "$main_activity" ]] && ! grep -q 'AgorBiometricBridge' "$main_activity"; then
-    cat >"$main_activity" <<'KOTLIN'
-package dev.dioxus.main;
+  local android_namespace
+  android_namespace="$(sed -n 's/.*namespace *= *"\([^"]*\)".*/\1/p' "$app_gradle" | head -n1)"
+  if [[ -z "$android_namespace" ]]; then
+    echo "Could not determine generated Android namespace from $app_gradle" >&2
+    return 1
+  fi
 
-// need to re-export buildconfig down from the parent
+  cat >"$build_config_alias" <<KOTLIN
+package dev.dioxus.main
+
+import ${android_namespace}.BuildConfig as AppBuildConfig
+
+typealias BuildConfig = AppBuildConfig
+KOTLIN
+
+  if [[ -f "$main_activity" ]]; then
+    cat >"$main_activity" <<'KOTLIN'
+package dev.dioxus.main
+
 import android.webkit.WebView
-import com.example.AgorHermesApp.BuildConfig;
-typealias BuildConfig = BuildConfig;
 
 class MainActivity : WryActivity() {
     override fun onWebViewCreate(webView: WebView) {
