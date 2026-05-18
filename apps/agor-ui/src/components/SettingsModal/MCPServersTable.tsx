@@ -23,6 +23,8 @@ interface MCPServersTableProps {
   client: import('@agor-live/client').AgorClient | null;
   onCreate?: (data: CreateMCPServerInput) => void;
   onDelete?: (serverId: string) => void;
+  activeItemId?: string | null;
+  onCloseItem?: () => void;
 }
 
 interface TestResult {
@@ -41,6 +43,8 @@ export const MCPServersTable: React.FC<MCPServersTableProps> = ({
   client,
   onCreate,
   onDelete,
+  activeItemId,
+  onCloseItem,
 }) => {
   const { showError } = useThemedMessage();
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -54,6 +58,13 @@ export const MCPServersTable: React.FC<MCPServersTableProps> = ({
   const [testing, setTesting] = useState(false);
   const [alreadyCreatedInOAuthFlow, setAlreadyCreatedInOAuthFlow] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
+
+  useEffect(() => {
+    if (activeItemId && mcpServerById.has(activeItemId)) {
+      setEditingServer(mcpServerById.get(activeItemId) || null);
+      setEditModalOpen(true);
+    }
+  }, [activeItemId, mcpServerById]);
 
   // Sync editing server when mcpServerById updates (real-time WebSocket updates).
   // Also keeps the open edit modal in sync if the underlying record changes.
@@ -213,6 +224,7 @@ export const MCPServersTable: React.FC<MCPServersTableProps> = ({
 
   const handleEditClose = () => {
     setEditModalOpen(false);
+    onCloseItem?.();
     setEditingServer(null);
   };
 

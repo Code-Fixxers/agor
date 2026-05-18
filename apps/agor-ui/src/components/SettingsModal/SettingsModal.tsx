@@ -68,6 +68,8 @@ export interface SettingsModalProps {
   cardById?: Map<string, CardWithType>;
   cardTypeById?: Map<string, CardType>;
   activeTab?: string; // Control which tab is shown when modal opens
+  activeItemId?: string | null;
+  onItemClose?: () => void;
   onTabChange?: (tabKey: string) => void;
   onCreateBoard?: (board: Partial<Board>) => void;
   onUpdateBoard?: (boardId: string, updates: Partial<Board>) => void;
@@ -130,6 +132,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   cardById = new Map(),
   cardTypeById = new Map(),
   activeTab = 'boards',
+  activeItemId,
+  onItemClose,
   onTabChange,
   onCreateBoard,
   onUpdateBoard,
@@ -418,6 +422,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             client={client}
             onCreate={onCreateMCPServer}
             onDelete={onDeleteMCPServer}
+            activeItemId={activeItemId}
+            onCloseItem={onItemClose}
           />
         );
       case 'agentic-tools':
@@ -446,6 +452,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             onCreate={onCreateUser}
             onUpdate={onUpdateUser}
             onDelete={onDeleteUser}
+            activeItemId={activeItemId}
+            onCloseItem={onItemClose}
           />
         );
       case 'about':

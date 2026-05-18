@@ -275,10 +275,11 @@ export const App: React.FC<AppProps> = ({
   const {
     isOpen: settingsRouteOpen,
     section: settingsRouteSection,
-    // itemId: settingsRouteItemId, // TODO: wire up to nested modals
+    itemId: settingsRouteItemId,
     openSettings,
     closeSettings,
     setSection: setSettingsSection,
+    closeItem,
   } = useSettingsRoute();
 
   // Combine route-based and prop-based settings state
@@ -1043,6 +1044,8 @@ export const App: React.FC<AppProps> = ({
                 closeSettings();
                 onSettingsClose?.();
               }}
+              activeItemId={settingsRouteItemId}
+              onItemClose={closeItem}
               client={client}
               currentUser={user}
               boardById={boardById}
