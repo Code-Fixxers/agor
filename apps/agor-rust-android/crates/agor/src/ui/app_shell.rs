@@ -60,6 +60,7 @@ pub fn AppShell() -> Element {
                     },
                     Route::Chat { session_id } => rsx! {
                         ChatScreen {
+                            key: "{session_id}",
                             session_id: session_id.clone(),
                             on_open_drawer: move |_| {
                                 let current = *drawer_open.read();

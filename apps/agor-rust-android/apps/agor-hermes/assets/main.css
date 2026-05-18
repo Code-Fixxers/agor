@@ -319,7 +319,13 @@ textarea {
 }
 
 .sidebar-session-row {
+  width: 100%;
   padding: 8px 8px 8px 10px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .sidebar-session-row:hover,

@@ -90,6 +90,7 @@ pub struct ChatStore {
     pub is_loading: bool,
     pub error: Option<String>,
     pub visible_task_limit: usize,
+    pub loading_session_id: Option<String>,
 }
 
 impl ChatStore {
@@ -104,6 +105,7 @@ impl ChatStore {
             is_loading: false,
             error: None,
             visible_task_limit: 20,
+            loading_session_id: None,
         }
     }
 
@@ -117,6 +119,7 @@ impl ChatStore {
         self.is_loading = false;
         self.error = None;
         self.visible_task_limit = 20;
+        self.loading_session_id = None;
     }
 
     pub fn build_chat_rows(&self, live_streams: &HashMap<String, StreamSnapshot>) -> Vec<ChatRow> {

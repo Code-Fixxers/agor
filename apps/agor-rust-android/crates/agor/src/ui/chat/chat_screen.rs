@@ -50,16 +50,24 @@ pub fn ChatScreen(
                 c.reset();
                 c.draft = storage_snapshot.get_draft(&sid);
                 c.is_loading = true;
+                c.loading_session_id = Some(sid.clone());
             }
 
             match chat::load_session(&client, &sid, &logger).await {
                 Ok(loaded) => {
-                    chat::apply_loaded_session(&mut chat.write(), loaded);
+                    let mut c = chat.write();
+                    if c.loading_session_id.as_deref() == Some(sid.as_str()) {
+                        chat::apply_loaded_session(&mut c, loaded);
+                        c.loading_session_id = None;
+                    }
                 }
                 Err(e) => {
                     let mut c = chat.write();
-                    c.is_loading = false;
-                    c.error = Some(e);
+                    if c.loading_session_id.as_deref() == Some(sid.as_str()) {
+                        c.is_loading = false;
+                        c.loading_session_id = None;
+                        c.error = Some(e);
+                    }
                 }
             }
         });

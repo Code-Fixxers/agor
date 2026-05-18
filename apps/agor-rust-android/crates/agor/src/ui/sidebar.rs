@@ -154,15 +154,15 @@ pub fn Sidebar(
                             let tool_cls = agent_icon_class(&session.agentic_tool);
 
                             rsx! {
-                                div {
+                                button {
                                     class: format!("sidebar-session-row depth-{depth}"),
                                     onclick: move |_| on_select_session.call(session_id.clone()),
 
                                     span { class: "agent-icon {tool_cls}" }
 
-                                    div { class: "session-info",
+                                    span { class: "session-info",
                                         span { class: "session-title", "{title}" }
-                                        div { class: "session-meta",
+                                        span { class: "session-meta",
                                             span { class: "status-badge {status_cls}",
                                                 "{status.display_label()}"
                                             }
