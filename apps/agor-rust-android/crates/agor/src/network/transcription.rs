@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::collections::BTreeSet;
 use thiserror::Error;
 
 pub const DEFAULT_REMOTE_WHISPER_URL: &str = "http://100.101.157.56:8091";
@@ -56,6 +57,105 @@ pub fn transcription_endpoint(base_url: &str) -> String {
     } else {
         format!("{base}/v1/audio/transcriptions")
     }
+}
+
+fn whisper_model_discovery_endpoints(base_url: &str) -> Vec<String> {
+    let mut base = base_url.trim().trim_end_matches('/').to_string();
+    for suffix in [
+        "/v1/audio/transcriptions",
+        "/inference",
+        "/v1/models",
+        "/models",
+    ] {
+        if let Some(stripped) = base.strip_suffix(suffix) {
+            base = stripped.trim_end_matches('/').to_string();
+            break;
+        }
+    }
+
+    if base.is_empty() {
+        return vec![];
+    }
+
+    vec![format!("{base}/v1/models"), format!("{base}/models")]
+}
+
+pub fn parse_whisper_models_response(body: &str) -> Vec<String> {
+    let mut models = BTreeSet::new();
+    if let Ok(value) = serde_json::from_str::<Value>(body.trim()) {
+        collect_whisper_models(&value, &mut models);
+    }
+
+    if models.is_empty() {
+        vec!["default".to_string()]
+    } else {
+        models.into_iter().collect()
+    }
+}
+
+fn collect_whisper_models(value: &Value, models: &mut BTreeSet<String>) {
+    match value {
+        Value::String(model) => {
+            let model = model.trim();
+            if model.to_ascii_lowercase().starts_with("whisper") {
+                models.insert(model.to_string());
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_whisper_models(item, models);
+            }
+        }
+        Value::Object(object) => {
+            for key in ["id", "name", "model"] {
+                if let Some(value) = object.get(key) {
+                    collect_whisper_models(value, models);
+                }
+            }
+            for key in ["data", "models"] {
+                if let Some(value) = object.get(key) {
+                    collect_whisper_models(value, models);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+pub async fn discover_whisper_models(base_url: &str) -> Result<Vec<String>, TranscriptionError> {
+    let endpoints = whisper_model_discovery_endpoints(base_url);
+    if endpoints.is_empty() {
+        return Ok(vec!["default".to_string()]);
+    }
+
+    let client = reqwest::Client::new();
+    let mut last_error = None;
+    for endpoint in endpoints {
+        match client
+            .get(&endpoint)
+            .header("Accept", "application/json")
+            .send()
+            .await
+        {
+            Ok(response) => {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                if status.is_success() {
+                    return Ok(parse_whisper_models_response(&body));
+                }
+                last_error = Some(format!("Whisper model discovery {status}: {}", body.trim()));
+            }
+            Err(error) => {
+                last_error = Some(format!(
+                    "Whisper model discovery failed for {endpoint}: {error}"
+                ));
+            }
+        }
+    }
+
+    Err(TranscriptionError::Capture(last_error.unwrap_or_else(
+        || "Whisper model discovery failed".to_string(),
+    )))
 }
 
 pub fn parse_transcription_response(body: &str) -> Result<String, TranscriptionError> {
@@ -438,5 +538,27 @@ mod tests {
             transcription_endpoint("http://100.101.157.56:8091/"),
             "http://100.101.157.56:8091/v1/audio/transcriptions"
         );
+    }
+
+    #[test]
+    fn parses_openai_model_list_for_whisper_models() {
+        let models = parse_whisper_models_response(
+            r#"{"data":[{"id":"gpt-4.1"},{"id":"whisper-base.en"},{"id":"whisper-tiny"}]}"#,
+        );
+        assert_eq!(models, vec!["whisper-base.en", "whisper-tiny"]);
+    }
+
+    #[test]
+    fn parses_simple_model_arrays_and_deduplicates() {
+        let models = parse_whisper_models_response(
+            r#"["whisper-base.en","llama","whisper-base.en","whisper-large-v3"]"#,
+        );
+        assert_eq!(models, vec!["whisper-base.en", "whisper-large-v3"]);
+    }
+
+    #[test]
+    fn falls_back_to_default_when_no_whisper_models_are_returned() {
+        let models = parse_whisper_models_response(r#"{"models":["base.en","tiny.en"]}"#);
+        assert_eq!(models, vec!["default"]);
     }
 }

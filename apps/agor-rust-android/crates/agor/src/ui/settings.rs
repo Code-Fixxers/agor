@@ -4,7 +4,8 @@ use crate::models::server_profile::ServerProfile;
 use crate::network::agor_client::AgorClient;
 use crate::network::biometrics::clear_biometric_secret;
 use crate::network::transcription::{
-    DEFAULT_BASE_EN_MODEL_ARTIFACT_URL, DEFAULT_REMOTE_WHISPER_MODEL, DEFAULT_REMOTE_WHISPER_URL,
+    discover_whisper_models, DEFAULT_BASE_EN_MODEL_ARTIFACT_URL, DEFAULT_REMOTE_WHISPER_MODEL,
+    DEFAULT_REMOTE_WHISPER_URL,
 };
 use crate::state::auth::{self, AuthStore};
 use crate::state::storage::AppStorage;
@@ -35,6 +36,9 @@ pub fn SettingsScreen(on_back: EventHandler<()>, on_open_drawer: EventHandler<()
             .clone()
             .unwrap_or_else(|| DEFAULT_REMOTE_WHISPER_MODEL.to_string())
     });
+    let whisper_model_options = use_signal(|| vec![whisper_model.read().clone()]);
+    let whisper_models_loading = use_signal(|| false);
+    let whisper_model_status = use_signal(|| Option::<String>::None);
     let mut whisper_model_artifact_url = use_signal(|| {
         storage
             .read()
@@ -54,6 +58,19 @@ pub fn SettingsScreen(on_back: EventHandler<()>, on_open_drawer: EventHandler<()
 
     let user = use_memo(move || auth.read().user.clone());
     let profiles = use_memo(move || storage.read().profiles.clone());
+
+    use_future(move || {
+        let base_url = resolve_whisper_url(&whisper_url.read());
+        async move {
+            refresh_whisper_models(
+                whisper_model_options,
+                whisper_model,
+                whisper_model_status,
+                whisper_models_loading,
+                base_url,
+            );
+        }
+    });
 
     let on_logout = move |_| {
         let logger = AppLogger::new();
@@ -193,11 +210,39 @@ pub fn SettingsScreen(on_back: EventHandler<()>, on_open_drawer: EventHandler<()
                     }
                     div { class: "form-group",
                         label { "Whisper model" }
-                        input {
-                            r#type: "text",
-                            placeholder: "{DEFAULT_REMOTE_WHISPER_MODEL}",
-                            value: "{whisper_model}",
-                            oninput: move |e| whisper_model.set(e.value()),
+                        div { class: "select-action-row",
+                            select {
+                                value: "{whisper_model}",
+                                disabled: *whisper_models_loading.read(),
+                                onchange: move |e| whisper_model.set(e.value()),
+                                for model in whisper_model_options.read().iter() {
+                                    option {
+                                        value: "{model}",
+                                        "{model}"
+                                    }
+                                }
+                            }
+                            button {
+                                class: "btn-secondary",
+                                disabled: *whisper_models_loading.read(),
+                                onclick: move |_| {
+                                    refresh_whisper_models(
+                                        whisper_model_options,
+                                        whisper_model,
+                                        whisper_model_status,
+                                        whisper_models_loading,
+                                        resolve_whisper_url(&whisper_url.read()),
+                                    );
+                                },
+                                if *whisper_models_loading.read() {
+                                    "Loading"
+                                } else {
+                                    "Refresh"
+                                }
+                            }
+                        }
+                        if let Some(status) = whisper_model_status.read().as_ref() {
+                            p { class: "form-hint", "{status}" }
                         }
                     }
                     div { class: "form-group",
@@ -274,6 +319,54 @@ pub fn SettingsScreen(on_back: EventHandler<()>, on_open_drawer: EventHandler<()
             }
         }
     }
+}
+
+fn resolve_whisper_url(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        DEFAULT_REMOTE_WHISPER_URL.to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn refresh_whisper_models(
+    mut whisper_model_options: Signal<Vec<String>>,
+    mut whisper_model: Signal<String>,
+    mut whisper_model_status: Signal<Option<String>>,
+    mut whisper_models_loading: Signal<bool>,
+    base_url: String,
+) {
+    whisper_models_loading.set(true);
+    whisper_model_status.set(Some("Loading Whisper models...".to_string()));
+    spawn(async move {
+        match discover_whisper_models(&base_url).await {
+            Ok(models) => {
+                let selected = if models
+                    .iter()
+                    .any(|model| model == whisper_model.read().as_str())
+                {
+                    whisper_model.read().clone()
+                } else {
+                    models
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "default".to_string())
+                };
+                whisper_model_options.set(models);
+                whisper_model.set(selected);
+                whisper_model_status.set(None);
+            }
+            Err(err) => {
+                whisper_model_options.set(vec!["default".to_string()]);
+                whisper_model.set("default".to_string());
+                whisper_model_status.set(Some(format!(
+                    "Could not load remote models; using default. {err}"
+                )));
+            }
+        }
+        whisper_models_loading.set(false);
+    });
 }
 
 fn update_section(meta: Signal<AppMetadata>, mut update_state: Signal<UpdateState>) -> Element {

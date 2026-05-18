@@ -1165,9 +1165,25 @@ textarea {
   font-weight: 700;
 }
 
-.form-group input {
+.form-group input,
+.form-group select {
   height: 40px;
   padding: 0 12px;
+}
+
+.form-group select {
+  width: 100%;
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.select-action-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
 }
 
 .form-row,
