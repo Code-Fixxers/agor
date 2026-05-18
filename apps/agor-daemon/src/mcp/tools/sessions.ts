@@ -129,6 +129,12 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
           .enum(['gateway', 'scheduled', 'agent'])
           .optional()
           .describe('Filter: gateway (messaging) | scheduled | agent (manual)'),
+        detailLevel: z
+          .enum(['summary', 'full'])
+          .optional()
+          .describe(
+            'Level of detail to return (default: summary). Summary omits large text fields like notes and last_message.'
+          ),
       }),
     },
     async (args) => {
@@ -147,21 +153,34 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       }
       const result = await ctx.app.service('sessions').find({ query, ...ctx.baseServiceParams });
 
+      type SessionSummary = Omit<Session, 'notes' | 'last_message'>;
+      let allData: Session[] | SessionSummary[] = Array.isArray(result) ? result : result.data;
+
       // Apply sessionType filter (post-query since custom_context/scheduled_from_worktree aren't in query schema)
       if (args.sessionType) {
         const targetType = args.sessionType as SessionType;
         const filterFn = (s: Session) => getSessionType(s) === targetType;
-        const allData: Session[] = Array.isArray(result) ? result : result.data;
-        const filtered = allData.filter(filterFn);
-        const limited = requestedLimit ? filtered.slice(0, requestedLimit) : filtered;
-
-        if (Array.isArray(result)) {
-          return textResult(limited);
-        }
-        return textResult({ ...result, data: limited, total: filtered.length });
+        const filtered = (allData as Session[]).filter(filterFn);
+        allData = requestedLimit ? filtered.slice(0, requestedLimit) : filtered;
       }
 
-      return textResult(result);
+      const detailLevel = args.detailLevel ?? 'summary';
+      if (detailLevel === 'summary') {
+        allData = (allData as Session[]).map((session) => {
+          const { notes, last_message, ...rest } = session;
+          return rest;
+        });
+      }
+
+      if (Array.isArray(result)) {
+        return textResult(allData);
+      }
+      return textResult({
+        ...result,
+        data: allData,
+        // biome-ignore lint/suspicious/noExplicitAny: Paginated result type
+        total: args.sessionType ? allData.length : (result as any).total,
+      });
     }
   );
 

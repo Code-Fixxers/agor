@@ -79,6 +79,12 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
           .describe(
             'Filter to show ONLY archived worktrees. When true, returns only archived worktrees. Overrides includeArchived.'
           ),
+        detailLevel: z
+          .enum(['summary', 'full'])
+          .optional()
+          .describe(
+            'Level of detail to return (default: summary). Summary omits large text fields like notes.'
+          ),
       }),
     },
     async (args) => {
@@ -93,7 +99,28 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
       const worktrees = await ctx.app
         .service('worktrees')
         .find({ query, ...ctx.baseServiceParams });
-      return textResult(worktrees);
+
+      type WorktreeSummary = Omit<import('@agor/core/db').WorktreeWithZoneAndSessions, 'notes'>;
+      let allData: import('@agor/core/db').WorktreeWithZoneAndSessions[] | WorktreeSummary[] =
+        Array.isArray(worktrees) ? worktrees : worktrees.data;
+      const detailLevel = args.detailLevel ?? 'summary';
+
+      if (detailLevel === 'summary') {
+        allData = (allData as import('@agor/core/db').WorktreeWithZoneAndSessions[]).map(
+          (worktree) => {
+            const { notes, ...rest } = worktree;
+            return rest;
+          }
+        );
+      }
+
+      if (Array.isArray(worktrees)) {
+        return textResult(allData);
+      }
+      return textResult({
+        ...worktrees,
+        data: allData,
+      });
     }
   );
 

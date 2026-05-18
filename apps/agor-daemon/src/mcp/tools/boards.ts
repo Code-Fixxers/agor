@@ -66,6 +66,12 @@ export function registerBoardTools(server: McpServer, ctx: McpContext): void {
           .describe(
             'Filter to show ONLY archived boards. When true, returns only archived boards. Overrides includeArchived.'
           ),
+        detailLevel: z
+          .enum(['summary', 'full'])
+          .optional()
+          .describe(
+            'Level of detail to return (default: summary). Summary omits large fields like objects (zone templates).'
+          ),
       }),
     },
     async (args) => {
@@ -77,7 +83,27 @@ export function registerBoardTools(server: McpServer, ctx: McpContext): void {
         query.archived = false;
       }
       const boards = await ctx.app.service('boards').find({ query, ...ctx.baseServiceParams });
-      return textResult(boards);
+
+      type BoardSummary = Omit<import('@agor/core/types').Board, 'objects'>;
+      let allData: import('@agor/core/types').Board[] | BoardSummary[] = Array.isArray(boards)
+        ? boards
+        : boards.data;
+      const detailLevel = args.detailLevel ?? 'summary';
+
+      if (detailLevel === 'summary') {
+        allData = (allData as import('@agor/core/types').Board[]).map((board) => {
+          const { objects, ...rest } = board;
+          return rest;
+        });
+      }
+
+      if (Array.isArray(boards)) {
+        return textResult(allData);
+      }
+      return textResult({
+        ...boards,
+        data: allData,
+      });
     }
   );
 
