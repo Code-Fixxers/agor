@@ -3,6 +3,7 @@ use dioxus::prelude::*;
 use agor_hermes::client::HermesClient;
 use agor_hermes::models::{HermesConfig, DEFAULT_MODEL, DEFAULT_WEB_UI_URL};
 use agor_hermes::session_store::HermesSessionStore;
+use agor_hermes::ui::webui_screen::HermesWebUiNativeScreen;
 use agor_lib::models::user::User;
 #[cfg(target_arch = "wasm32")]
 use agor_lib::models::user::UserRole;
@@ -32,6 +33,7 @@ fn main() {
 enum AppTab {
     Agor,
     Hermes,
+    HermesWebFallback,
     Settings,
 }
 
@@ -55,7 +57,7 @@ fn App() -> Element {
     let mut dev_login_started = use_signal(|| false);
 
     use_effect(move || {
-        if *dev_login_started.read() {
+        if *dev_login_started.peek() {
             return;
         }
 
@@ -216,6 +218,13 @@ fn App() -> Element {
                             }
                         },
                         AppTab::Hermes => rsx! {
+                            HermesWebUiNativeScreen {
+                                config: hermes_config.read().clone(),
+                                on_open_settings: move |_| active_tab.set(AppTab::Settings),
+                                on_open_web_fallback: move |_| active_tab.set(AppTab::HermesWebFallback),
+                            }
+                        },
+                        AppTab::HermesWebFallback => rsx! {
                             HermesWebScreen {
                                 config: hermes_config.read().clone(),
                                 on_open_settings: move |_| active_tab.set(AppTab::Settings),
@@ -583,14 +592,16 @@ fn hermes_config_path() -> std::path::PathBuf {
 
 fn load_hermes_config() -> HermesConfig {
     let path = hermes_config_path();
-    if path.exists() {
+    let config = if path.exists() {
         std::fs::read_to_string(&path)
             .ok()
             .and_then(|data| serde_json::from_str(&data).ok())
             .unwrap_or_default()
     } else {
         HermesConfig::default()
-    }
+    };
+
+    apply_hermes_query_overrides(config)
 }
 
 fn save_hermes_config(config: &HermesConfig) {
@@ -601,4 +612,26 @@ fn save_hermes_config(config: &HermesConfig) {
     if let Ok(data) = serde_json::to_string_pretty(config) {
         let _ = std::fs::write(&path, data);
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn apply_hermes_query_overrides(mut config: HermesConfig) -> HermesConfig {
+    if let Some(web_url) = query_value("agor_hermes_web_url") {
+        config.web_ui_url = Some(web_url);
+    }
+    config
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn apply_hermes_query_overrides(config: HermesConfig) -> HermesConfig {
+    config
+}
+
+#[cfg(target_arch = "wasm32")]
+fn query_value(name: &str) -> Option<String> {
+    let search = web_sys::window()?.location().search().ok()?;
+    let query = search.strip_prefix('?').unwrap_or(&search);
+    url::form_urlencoded::parse(query.as_bytes())
+        .find_map(|(key, value)| (key.as_ref() == name).then(|| value.into_owned()))
+        .filter(|value| !value.trim().is_empty())
 }

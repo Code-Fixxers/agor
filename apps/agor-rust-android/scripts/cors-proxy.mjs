@@ -34,6 +34,13 @@ const server = http.createServer((clientReq, clientRes) => {
   const headers = { ...clientReq.headers };
   delete headers.host;
   delete headers.origin;
+  delete headers.referer;
+  delete headers['sec-fetch-site'];
+  delete headers['sec-fetch-mode'];
+  delete headers['sec-fetch-dest'];
+  // Browser-side smoke tests can carry stale localhost cookies from another
+  // WebUI instance. The proxy authenticates with explicit headers only.
+  delete headers.cookie;
 
   const upstreamReq = http.request(
     {
@@ -45,6 +52,9 @@ const server = http.createServer((clientReq, clientRes) => {
       headers,
     },
     (upstreamRes) => {
+      if (process.env.AGOR_PROXY_LOG === '1') {
+        console.log(`${clientReq.method} ${clientReq.url} -> ${upstreamRes.statusCode}`);
+      }
       const responseHeaders = {
         ...upstreamRes.headers,
         ...corsHeaders(origin),
