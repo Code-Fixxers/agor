@@ -1,3 +1,4 @@
+import { inArray } from 'drizzle-orm';
 /**
  * Artifact Repository
  *
@@ -133,6 +134,76 @@ export class ArtifactRepository implements BaseRepository<Artifact, Partial<Arti
       if (error instanceof AmbiguousIdError) throw error;
       throw new RepositoryError(
         `Failed to find artifact: ${error instanceof Error ? error.message : String(error)}`,
+        error
+      );
+    }
+  }
+
+  /**
+   * Find many artifacts by a mix of full IDs and short IDs.
+   * Returns a map of the ORIGINAL requested ID to the Artifact.
+   * This is critical so callers can look up the result using the exact short ID they requested.
+   */
+  async findManyByIds(ids: string[]): Promise<Map<string, Artifact>> {
+    const resultMap = new Map<string, Artifact>();
+    if (ids.length === 0) return resultMap;
+
+    const fullIds = ids.filter((id) => id.length === 36 && id.includes('-'));
+    const shortIds = ids.filter((id) => !(id.length === 36 && id.includes('-')));
+
+    const validFullIdsToFetch = new Set<string>(fullIds);
+    const shortIdToFullIdMap = new Map<string, string>();
+
+    if (shortIds.length > 0) {
+      await Promise.allSettled(
+        shortIds.map(async (shortId) => {
+          try {
+            const fullId = await this.resolveId(shortId);
+            shortIdToFullIdMap.set(shortId, fullId);
+            validFullIdsToFetch.add(fullId);
+          } catch (_e) {
+            // Ignore resolution errors for invalid short IDs
+          }
+        })
+      );
+    }
+
+    if (validFullIdsToFetch.size === 0) return resultMap;
+
+    try {
+      const rows = await select(this.db)
+        .from(artifacts)
+        .where(inArray(artifacts.artifact_id, Array.from(validFullIdsToFetch)))
+        .all();
+
+      const fetchedArtifacts = rows.map((row: ArtifactRow) => this.rowToArtifact(row));
+
+      // Build a map of full UUID to Artifact for quick lookup
+      const fullIdToArtifactMap = new Map<string, Artifact>(
+        fetchedArtifacts.map((a: Artifact) => [a.artifact_id, a])
+      );
+
+      // Populate the result map using the originally requested IDs
+      for (const reqId of ids) {
+        let artifact: Artifact | undefined;
+        if (fullIds.includes(reqId)) {
+          artifact = fullIdToArtifactMap.get(reqId);
+        } else {
+          const fullId = shortIdToFullIdMap.get(reqId);
+          if (fullId) {
+            artifact = fullIdToArtifactMap.get(fullId);
+          }
+        }
+
+        if (artifact) {
+          resultMap.set(reqId, artifact);
+        }
+      }
+
+      return resultMap;
+    } catch (error) {
+      throw new RepositoryError(
+        `Failed to find artifacts by ids: ${error instanceof Error ? error.message : String(error)}`,
         error
       );
     }

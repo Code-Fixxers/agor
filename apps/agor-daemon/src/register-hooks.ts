@@ -2069,18 +2069,25 @@ export function registerHooks(ctx: RegisterHooksContext): void {
 
           const artifactRepo = new ArtifactRepository(db);
           const filtered = { ...board.objects };
+          const allArtifactIds = artifactObjectIds
+            .map((o) => o.artifactId)
+            .filter(Boolean) as string[];
+          let artifactsMap = new Map<string, import('@agor/core/types').Artifact>();
+          if (allArtifactIds.length > 0) {
+            try {
+              artifactsMap = await artifactRepo.findManyByIds(allArtifactIds);
+            } catch (e) {
+              console.error('Failed to fetch artifacts for objects', e);
+            }
+          }
+
           for (const { id, artifactId } of artifactObjectIds) {
             if (!artifactId) continue;
-            try {
-              const artifact = await artifactRepo.findById(artifactId);
-              if (!artifact) {
-                delete filtered[id]; // orphaned reference
-              } else if (!artifact.public && artifact.created_by !== userId) {
-                delete filtered[id]; // private, not owned
-              }
-            } catch {
-              // artifact not found, remove stale reference
-              delete filtered[id];
+            const artifact = artifactsMap.get(artifactId);
+            if (!artifact) {
+              delete filtered[id]; // orphaned reference
+            } else if (!artifact.public && artifact.created_by !== userId) {
+              delete filtered[id]; // private, not owned
             }
           }
           context.result = { ...board, objects: filtered };
@@ -2104,15 +2111,23 @@ export function registerHooks(ctx: RegisterHooksContext): void {
             if (artifactEntries.length === 0) continue;
 
             const filtered = { ...board.objects };
+            const allArtifactIds = artifactEntries
+              .map(([, obj]) => (obj as { artifact_id?: string }).artifact_id)
+              .filter(Boolean) as string[];
+            let artifactsMap = new Map<string, import('@agor/core/types').Artifact>();
+            if (allArtifactIds.length > 0) {
+              try {
+                artifactsMap = await artifactRepo.findManyByIds(allArtifactIds);
+              } catch (e) {
+                console.error('Failed to fetch artifacts for objects', e);
+              }
+            }
+
             for (const [id, obj] of artifactEntries) {
               const artifactId = (obj as { artifact_id?: string }).artifact_id;
               if (!artifactId) continue;
-              try {
-                const artifact = await artifactRepo.findById(artifactId);
-                if (!artifact || (!artifact.public && artifact.created_by !== userId)) {
-                  delete filtered[id];
-                }
-              } catch {
+              const artifact = artifactsMap.get(artifactId);
+              if (!artifact || (!artifact.public && artifact.created_by !== userId)) {
                 delete filtered[id];
               }
             }
