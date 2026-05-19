@@ -81,6 +81,7 @@ Experimental ideas and designs not yet crystallized into concepts. These represe
 **UI/UX Enhancements**
 
 - **[text-highlights.md](explorations/text-highlights.md)** - Text highlighting features
+- **[hermes-rust-native-ui.md](explorations/hermes-rust-native-ui.md)** - Rust-native Hermes WebUI replacement scope and MVP API contract
 
 **Infrastructure**
 
