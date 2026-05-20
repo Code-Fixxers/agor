@@ -55,7 +55,7 @@ export function registerAnalyticsTools(server: McpServer, ctx: McpContext): void
         offset: z
           .number()
           .optional()
-          .describe('Number of results to skip for pagination (default: 0)'),
+          .describe('Number of results to skip for pagination (default: 0, max: 10000)'),
         detailLevel: z
           .enum(['summary', 'full'])
           .optional()

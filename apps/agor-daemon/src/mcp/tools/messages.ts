@@ -21,7 +21,7 @@ import { z } from 'zod';
 import { isSuperAdmin } from '../../utils/worktree-authorization.js';
 import { resolveSessionId, resolveTaskId } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../utils.js';
+import { clampMcpOffset, coerceString, textResult } from '../utils.js';
 
 type ExistsQuery = {
   from(table: unknown): ExistsQuery;
@@ -71,7 +71,7 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
             'Content detail level. "preview" returns first 200 chars (default). "full" returns complete text content.'
           ),
         limit: z.number().optional().describe('Maximum number of messages to return (default: 20)'),
-        offset: z.number().optional().describe('Skip first N messages (default: 0)'),
+        offset: z.number().optional().describe('Skip first N messages (default: 0, max: 10000)'),
         order: z
           .enum(['asc', 'desc'])
           .optional()
@@ -110,8 +110,7 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
       const contentMode = args.contentMode === 'full' ? 'full' : 'preview';
       const rawLimit = typeof args.limit === 'number' ? args.limit : 20;
       const limit = Math.min(Math.max(0, Math.floor(rawLimit)) || 20, 100);
-      const rawOffset = typeof args.offset === 'number' ? args.offset : 0;
-      const offset = Math.max(0, Math.floor(rawOffset)) || 0;
+      const offset = clampMcpOffset(args.offset);
       const includeTotal = args.includeTotal === true;
       const order =
         args.order === 'asc' || args.order === 'desc'

@@ -99,7 +99,7 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
         includeArchived: z.boolean().optional().describe('Include archived (default: false)'),
         archived: z.boolean().optional().describe('ONLY archived (overrides includeArchived)'),
         limit: z.number().optional().describe('Default: 10 for list, 50 for full; max: 100'),
-        offset: z.number().optional().describe('Default: 0'),
+        offset: z.number().optional().describe('Default: 0, max: 10000'),
         detail: z
           .enum(['list', 'full'])
           .optional()

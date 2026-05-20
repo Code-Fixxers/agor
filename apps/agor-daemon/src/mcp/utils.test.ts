@@ -19,4 +19,9 @@ describe('MCP pagination helpers', () => {
     expect(clampMcpOffset(-5)).toBe(0);
     expect(clampMcpOffset(4.9)).toBe(4);
   });
+
+  it('caps offsets to avoid unbounded skip scans', () => {
+    expect(clampMcpOffset(100_000)).toBe(10_000);
+    expect(clampMcpOffset(100_000, 500)).toBe(500);
+  });
 });

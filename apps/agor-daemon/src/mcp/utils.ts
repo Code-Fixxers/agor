@@ -35,9 +35,9 @@ export function clampMcpLimit(value: unknown, fallback: number, max = 100): numb
   return Math.min(requested, max);
 }
 
-export function clampMcpOffset(value: unknown): number {
+export function clampMcpOffset(value: unknown, max = 10_000): number {
   const raw = typeof value === 'number' && Number.isFinite(value) ? value : 0;
-  return Math.max(0, Math.floor(raw) || 0);
+  return Math.min(Math.max(0, Math.floor(raw) || 0), max);
 }
 
 /**

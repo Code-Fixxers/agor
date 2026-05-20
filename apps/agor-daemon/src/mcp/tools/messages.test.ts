@@ -177,4 +177,12 @@ describe('agor_messages_list MCP tool', () => {
     expect(parsed.total).toBe(101);
     expect(parsed.has_more).toBe(true);
   });
+
+  it('caps huge offsets before scanning', async () => {
+    const handler = await registerAndGetHandler({ userId: 'user-1' });
+    const result = await handler({ search: 'secret', offset: 1_000_000 });
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.offset).toBe(10_000);
+  });
 });
