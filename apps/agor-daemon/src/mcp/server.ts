@@ -842,11 +842,9 @@ export function setupMCPRoutes(
 
         const mcpServer = createMcpServer(mcpContext, toolSearchEnabled, servicesConfig);
 
-        let sessionInitialized = false;
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId) => {
-            sessionInitialized = true;
             transports.set(newSessionId, {
               transport,
               server: mcpServer,
@@ -855,10 +853,12 @@ export function setupMCPRoutes(
             });
           },
         });
-        let pendingInitClosed = false;
-        const cleanupPendingInit = () => {
-          if (sessionInitialized || pendingInitClosed) return;
-          pendingInitClosed = true;
+        let failedInitClosed = false;
+        const cleanupFailedInit = () => {
+          if (failedInitClosed) return;
+          failedInitClosed = true;
+          const sid = transport.sessionId;
+          if (sid) transports.delete(sid);
           closeMcpTransportState({ transport, server: mcpServer });
         };
 
@@ -875,14 +875,12 @@ export function setupMCPRoutes(
             REQUEST_TIMEOUT_MS,
             'Request processing timed out',
             () => {
-              cleanupPendingInit();
-              const sid = transport.sessionId;
-              if (sid) transports.delete(sid);
+              cleanupFailedInit();
             }
           );
-          sessionInitialized = Boolean(transport.sessionId);
+          if (!transport.sessionId) cleanupFailedInit();
         } catch (error) {
-          cleanupPendingInit();
+          cleanupFailedInit();
           if (error instanceof McpRequestTimeoutError) {
             // For SSE init it's a bit tricky if headers were already sent, but let's try to gracefully handle
             if (!res.headersSent) {

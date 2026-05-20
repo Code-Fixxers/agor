@@ -259,4 +259,106 @@ describe('Stateful MCP Transports and API Key Context', () => {
     expect(transport.close).toHaveBeenCalledTimes(1);
     expect(server.close).toHaveBeenCalledTimes(1);
   });
+
+  it('closes an initialized stateful transport when initialize times out', async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+
+    try {
+      const transportClose = vi.fn(async () => {});
+      const serverClose = vi.fn(async () => {});
+
+      vi.doMock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
+        McpServer: vi.fn().mockImplementation(function MockMcpServer() {
+          return {
+            registerTool: vi.fn(),
+            connect: vi.fn(async () => {}),
+            close: serverClose,
+            server: {
+              setRequestHandler: vi.fn(),
+              sendToolListChanged: vi.fn(async () => {}),
+            },
+          };
+        }),
+      }));
+
+      vi.doMock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
+        StreamableHTTPServerTransport: vi
+          .fn()
+          .mockImplementation(function MockStreamableHTTPServerTransport(options) {
+            return {
+              sessionId: undefined as string | undefined,
+              close: transportClose,
+              handleRequest() {
+                this.sessionId = 'mcp-session-1';
+                options.onsessioninitialized?.('mcp-session-1');
+                return new Promise(() => {});
+              },
+            };
+          }),
+      }));
+
+      vi.doMock('./tokens.js', () => ({
+        validateSessionToken: vi.fn(async () => ({
+          userId: 'user-1',
+          sessionId: 'session-1',
+        })),
+      }));
+
+      const { setupMCPRoutes: setupRoutesWithMocks } = await import('./server.js');
+      let handler: ((req: Request, res: Response) => Promise<unknown> | unknown) | null = null;
+      const app = {
+        post: (_path: string, fn: typeof handler) => {
+          handler = fn;
+        },
+        get: (_path: string, fn: typeof handler) => {
+          handler = fn;
+        },
+        delete: (_path: string, fn: typeof handler) => {
+          handler = fn;
+        },
+        service: (name: string) => {
+          if (name === 'users') {
+            return {
+              get: vi.fn(async () => ({
+                user_id: 'user-1',
+                email: 'user@example.com',
+                role: 'admin',
+              })),
+            };
+          }
+          return {};
+        },
+      } as unknown as Parameters<typeof setupRoutesWithMocks>[0];
+
+      setupRoutesWithMocks(app, {} as never, false);
+      if (!handler) throw new Error('MCP handler was not registered');
+
+      const req = {
+        method: 'POST',
+        query: {},
+        headers: { authorization: 'Bearer session-token' },
+        body: { jsonrpc: '2.0', id: 1, method: 'initialize' },
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' },
+      } as unknown as Request;
+      const res = buildRes();
+
+      const pending = handler(req, res as unknown as Response);
+      await vi.advanceTimersByTimeAsync(30_000);
+      await pending;
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(res.statusCode).toBe(504);
+      expect(transportClose).toHaveBeenCalledTimes(1);
+      expect(serverClose).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+      vi.doUnmock('@modelcontextprotocol/sdk/server/mcp.js');
+      vi.doUnmock('@modelcontextprotocol/sdk/server/streamableHttp.js');
+      vi.doUnmock('./tokens.js');
+      vi.resetModules();
+    }
+  });
 });
