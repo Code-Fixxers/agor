@@ -58,7 +58,7 @@ jobs:
           nix develop .#rust-android -c bash -lc '
             set -euo pipefail
             cd apps/agor-rust-android
-            AGOR_RUST_ANDROID_PACKAGE=agor-hermes-app ./scripts/android.sh build --locked
+            AGOR_RUST_ANDROID_PACKAGE=agor-hermes-app AGOR_RUST_ANDROID_PROFILE=android-ci ./scripts/android.sh build --locked
           '
 
       - name: Build Hermes-only APK
@@ -69,7 +69,7 @@ jobs:
           nix develop .#rust-android -c bash -lc '
             set -euo pipefail
             cd apps/agor-rust-android
-            AGOR_RUST_ANDROID_PACKAGE=hermes-only-app ./scripts/android.sh build --locked
+            AGOR_RUST_ANDROID_PACKAGE=hermes-only-app AGOR_RUST_ANDROID_PROFILE=android-ci ./scripts/android.sh build --locked
           '
 
       - name: Verify APK contents

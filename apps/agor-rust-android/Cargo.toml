@@ -41,3 +41,11 @@ inherits = "dev"
 
 [profile.android-dev]
 inherits = "dev"
+
+[profile.android-ci]
+inherits = "release"
+debug = 0
+strip = "symbols"
+opt-level = "z"
+codegen-units = 1
+panic = "abort"

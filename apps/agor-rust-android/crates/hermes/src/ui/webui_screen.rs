@@ -267,6 +267,7 @@ pub fn HermesWebUiNativeScreen(
                         for session in visible_sessions.read().iter() {
                             {
                                 let sid = session.session_id.clone();
+                                let select_sid = sid.clone();
                                 let selected = state.read().selected_session_id.as_deref() == Some(sid.as_str());
                                 let title = if session.title.trim().is_empty() { "Untitled" } else { session.title.as_str() };
                                 let meta = session.workspace.clone().unwrap_or_default();
@@ -275,7 +276,7 @@ pub fn HermesWebUiNativeScreen(
                                         key: "{sid}",
                                         class: if selected { "sidebar-session-row selected" } else { "sidebar-session-row" },
                                         onclick: move |_| {
-                                            let sid = sid.clone();
+                                            let sid = select_sid.clone();
                                             let client = client.read().clone();
                                             loading.set(true);
                                             spawn(async move {

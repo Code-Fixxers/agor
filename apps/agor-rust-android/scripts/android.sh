@@ -11,6 +11,7 @@ ARCH="${AGOR_RUST_ANDROID_ARCH:-arm64}"
 COMPILE_SDK="${AGOR_RUST_ANDROID_COMPILE_SDK:-35}"
 TARGET_SDK="${AGOR_RUST_ANDROID_TARGET_SDK:-35}"
 BUILD_TOOLS="${AGOR_RUST_ANDROID_BUILD_TOOLS:-35.0.0}"
+BUILD_PROFILE="${AGOR_RUST_ANDROID_PROFILE:-}"
 MODE="${1:-build}"
 
 if [[ "$MODE" == "build" || "$MODE" == "install" || "$MODE" == "run" ]]; then
@@ -353,12 +354,23 @@ build_apk() {
 
   cd "$ROOT"
 
+  local profile_args=()
+  local clean_gradle=false
+  if [[ -n "$BUILD_PROFILE" ]]; then
+    profile_args=(--profile "$BUILD_PROFILE")
+    clean_gradle=true
+  elif [[ "${CI:-}" == "true" ]]; then
+    profile_args=(--profile android-ci)
+    clean_gradle=true
+  fi
+
   set +e
   dx build \
     --platform android \
     --package "$PACKAGE" \
     --arch "$ARCH" \
     --device true \
+    "${profile_args[@]}" \
     -- "$@" -Z build-std=std,panic_abort
   local dx_status=$?
   set -e
@@ -374,7 +386,11 @@ build_apk() {
   patch_generated_android_project "$gradle_root"
 
   cd "$gradle_root"
-  ./gradlew :app:assembleDebug
+  if [[ "$clean_gradle" == "true" ]]; then
+    ./gradlew :app:clean :app:assembleDebug
+  else
+    ./gradlew :app:assembleDebug
+  fi
 
   local apk="$gradle_root/app/build/outputs/apk/debug/app-debug.apk"
   if [[ ! -f "$apk" ]]; then
