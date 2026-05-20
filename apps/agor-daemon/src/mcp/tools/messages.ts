@@ -105,15 +105,6 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
         conditions.push(
           sql`${messagesTable.type} NOT IN ('file-history-snapshot', 'permission_request', 'input_request')`
         );
-        // SQL-level heuristic to drop messages that consist solely of tool calls/results.
-        // If content is an array with tool blocks but no text blocks, we filter it out here
-        // so that SQL pagination (limit/offset) remains perfectly accurate.
-        conditions.push(
-          sql`NOT (${messagesTable.role} = 'user' AND CAST(${messagesTable.data} AS TEXT) LIKE '%"type":"tool_result"%' AND CAST(${messagesTable.data} AS TEXT) NOT LIKE '%"type":"text"%')`
-        );
-        conditions.push(
-          sql`NOT (${messagesTable.role} = 'assistant' AND CAST(${messagesTable.data} AS TEXT) LIKE '%"type":"tool_use"%' AND CAST(${messagesTable.data} AS TEXT) NOT LIKE '%"type":"text"%')`
-        );
       }
 
       // Search: parse "term1 term2 | term3 term4" into (t1 AND t2) OR (t3 AND t4)
@@ -169,27 +160,59 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
       const orderBy = order === 'desc' ? desc(orderCol) : asc(orderCol);
       const whereCondition = conditions.length > 0 ? and(...conditions) : undefined;
 
-      // Count total matches
-      // biome-ignore lint/suspicious/noExplicitAny: Drizzle count
-      // Count total matches
-      // biome-ignore lint/suspicious/noExplicitAny: Drizzle count
-      let countQuery = select(ctx.db, { count: sql`COUNT(*)` } as any).from(messagesTable);
-      if (whereCondition) {
-        // biome-ignore lint/suspicious/noExplicitAny: Drizzle type
-        countQuery = (countQuery as any).where(whereCondition);
-      }
-      const countResult = (await (
-        countQuery as unknown as { one: () => Promise<unknown> }
-      ).one()) as { count: number } | undefined;
-      const total = Number(countResult?.count ?? 0);
+      type MessageRow = typeof messagesTable.$inferSelect;
 
-      const pageRows = await select(ctx.db)
-        .from(messagesTable)
-        .where(whereCondition)
-        .orderBy(orderBy)
-        .limit(limit)
-        .offset(offset)
-        .all();
+      const hasTextContent = (content: unknown, fallback?: string | null): boolean => {
+        if (typeof content === 'string') return content.trim().length > 0;
+        if (!Array.isArray(content)) return Boolean(fallback?.trim());
+        return (content as ContentBlock[]).some(
+          (block) => block.type === 'text' && typeof block.text === 'string' && block.text.trim()
+        );
+      };
+
+      const shouldIncludeRow = (row: MessageRow): boolean => {
+        if (includeToolCalls) return true;
+        const data = row.data as { content?: unknown };
+        const content = data?.content;
+
+        if (row.role === 'user' && Array.isArray(content)) {
+          return (content as ContentBlock[]).some((block) => block.type !== 'tool_result');
+        }
+
+        if (row.role === 'assistant') {
+          return hasTextContent(content, row.content_preview);
+        }
+
+        return true;
+      };
+
+      const pageRows: MessageRow[] = [];
+      let total = 0;
+      let scanOffset = 0;
+      const scanChunkSize = Math.max(limit * 4, 100);
+
+      while (true) {
+        const candidateRows = (await select(ctx.db)
+          .from(messagesTable)
+          .where(whereCondition)
+          .orderBy(orderBy)
+          .limit(scanChunkSize)
+          .offset(scanOffset)
+          .all()) as MessageRow[];
+
+        if (candidateRows.length === 0) break;
+
+        for (const row of candidateRows) {
+          if (!shouldIncludeRow(row)) continue;
+          if (total >= offset && pageRows.length < limit) {
+            pageRows.push(row);
+          }
+          total++;
+        }
+
+        scanOffset += candidateRows.length;
+        if (candidateRows.length < scanChunkSize) break;
+      }
 
       // Post-process
       type ProcessedMessage = {
@@ -242,9 +265,6 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
             if (block.type === 'tool_use') toolCallCount++;
           }
         }
-
-        // We no longer skip empty assistant messages in memory.
-        // The SQL `NOT LIKE '%"type":"text"%'` condition successfully excluded them.
 
         const msg: ProcessedMessage = {
           message_id: row.message_id,

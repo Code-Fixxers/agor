@@ -5,6 +5,7 @@
  * Supports both Authorization: Bearer and X-API-Key headers.
  */
 
+import { createHash } from 'node:crypto';
 import type { UserApiKeysRepository } from '@agor/core/db';
 import { AuthenticationBaseStrategy, NotAuthenticated } from '@agor/core/feathers';
 
@@ -13,13 +14,26 @@ interface CachedKey {
   expiresAt: number;
 }
 
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const LAST_USED_DEBOUNCE_MS = 60 * 1000; // 1 minute
 
 // Module-level caches so they survive across ApiKeyStrategy instantiations
 // (Feathers/MCP creates a new instance or calls it statelessly)
 const globalKeyCache = new Map<string, CachedKey>();
 const globalLastUsedWrites = new Map<string, number>();
+
+function fingerprintApiKey(apiKey: string): string {
+  return createHash('sha256').update(apiKey).digest('hex');
+}
+
+export function clearApiKeyAuthCacheForKeyId(keyId: string): void {
+  for (const [fingerprint, cached] of globalKeyCache.entries()) {
+    if (cached.keyRow.id === keyId) {
+      globalKeyCache.delete(fingerprint);
+    }
+  }
+  globalLastUsedWrites.delete(keyId);
+}
 
 export class ApiKeyStrategy extends AuthenticationBaseStrategy {
   private apiKeysRepo: UserApiKeysRepository | null = null;
@@ -45,9 +59,10 @@ export class ApiKeyStrategy extends AuthenticationBaseStrategy {
 
     const now = Date.now();
     let keyRow: { id: string; user_id: string } | null = null;
+    const cacheKey = fingerprintApiKey(apiKey);
 
     // Check cache
-    const cached = globalKeyCache.get(apiKey);
+    const cached = globalKeyCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
       keyRow = cached.keyRow;
     } else {
@@ -56,7 +71,7 @@ export class ApiKeyStrategy extends AuthenticationBaseStrategy {
       if (!keyRow) {
         throw new NotAuthenticated('Invalid API key');
       }
-      globalKeyCache.set(apiKey, {
+      globalKeyCache.set(cacheKey, {
         keyRow,
         expiresAt: now + CACHE_TTL_MS,
       });

@@ -81,6 +81,14 @@ Common workflows:
 - Delegate a subtask: agor_sessions_spawn(prompt) — inherits current worktree, tracks parent-child genealogy
 - Continue/fork an existing session: agor_sessions_prompt(sessionId, prompt, mode:"continue"|"fork"|"subsession"|"btw")`;
 
+const LOAD_DOMAINS_TOOL_CONFIG = {
+  description:
+    'Load specific tool domains into the current session to avoid using agor_execute_tool for every call. The client tool list will automatically refresh.',
+  inputSchema: z.object({
+    domains: z.array(z.string()).describe('List of domains to load (e.g. ["boards", "cards"])'),
+  }),
+};
+
 /**
  * One-time-per-caller deprecation warning for clients that still send the
  * MCP session token in the query string. Keyed by remote IP so noisy callers
@@ -227,6 +235,9 @@ function buildRegistry(servicesConfig?: DaemonServicesConfig): ToolRegistry {
   // Search/execute tools always registered (meta-tools)
   registry.setCurrentDomain('discovery');
   registerSearchTools(tempServer, registry);
+  tempServer.registerTool('agor_load_domains', LOAD_DOMAINS_TOOL_CONFIG, async () => ({
+    content: [{ type: 'text' as const, text: '{}' }],
+  }));
 
   return registry;
 }
@@ -366,42 +377,30 @@ function createMcpServer(
     // Register search/execute tools with the shared cached registry
     registerSearchTools(server, registry);
 
-    server.registerTool(
-      'agor_load_domains',
-      {
-        description:
-          'Load specific tool domains into the current session to avoid using agor_execute_tool for every call. The client tool list will automatically refresh.',
-        inputSchema: z.object({
-          domains: z
-            .array(z.string())
-            .describe('List of domains to load (e.g. ["boards", "cards"])'),
-        }),
-      },
-      async (args) => {
-        const domains = args.domains as string[];
-        let loaded = 0;
-        for (const d of domains) {
-          if (!activeDomains.has(d)) {
-            activeDomains.add(d);
-            loaded++;
-          }
+    server.registerTool('agor_load_domains', LOAD_DOMAINS_TOOL_CONFIG, async (args) => {
+      const domains = args.domains as string[];
+      let loaded = 0;
+      for (const d of domains) {
+        if (!activeDomains.has(d)) {
+          activeDomains.add(d);
+          loaded++;
         }
-
-        // Notify the client to reload its tools list
-        server.server.sendToolListChanged().catch((err) => {
-          console.error('Failed to send tools/list_changed notification:', err);
-        });
-
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `Loaded ${loaded} new domains into the session. Client tool list is refreshing. Currently active domains: ${Array.from(activeDomains).join(', ')}`,
-            },
-          ],
-        };
       }
-    );
+
+      // Notify the client to reload its tools list
+      server.server.sendToolListChanged().catch((err) => {
+        console.error('Failed to send tools/list_changed notification:', err);
+      });
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Loaded ${loaded} new domains into the session. Client tool list is refreshing. Currently active domains: ${Array.from(activeDomains).join(', ')}`,
+          },
+        ],
+      };
+    });
 
     // Override tools/list with the deterministic response PLUS any dynamically loaded domains
     // All tools remain registered and callable via tools/call.
@@ -483,6 +482,7 @@ export function setupMCPRoutes(
     },
     5 * 60 * 1000
   );
+  cleanupInterval.unref?.();
 
   // Hook into daemon shutdown
   const appEventEmitter = app as unknown as { on?: (event: string, fn: () => void) => void };
