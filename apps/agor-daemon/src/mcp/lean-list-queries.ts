@@ -256,7 +256,9 @@ export async function listSessionSummaries(
     updated_at: sessions.updated_at,
     archived: sessions.archived,
     scheduled_from_worktree: sessions.scheduled_from_worktree,
-    data: sessions.data,
+    title: jsonExtract(ctx.db, sessions.data, 'title'),
+    model_config: jsonExtract(ctx.db, sessions.data, 'model_config'),
+    custom_context: jsonExtract(ctx.db, sessions.data, 'custom_context'),
     worktree_board_id: worktrees.board_id,
     board_slug: boards.slug,
   })
@@ -279,15 +281,12 @@ export async function listSessionSummaries(
     limit,
     has_more: rows.length > limit,
     data: page.map((row) => {
-      const data = parseMaybeJson<{
-        title?: string;
-        model_config?: unknown;
-        custom_context?: unknown;
-      }>(row.data);
+      const modelConfig = parseMaybeJson(row.model_config);
+      const customContext = parseMaybeJson(row.custom_context);
       return {
         session_id: row.session_id,
         worktree_id: row.worktree_id,
-        title: data?.title,
+        title: typeof row.title === 'string' ? row.title : undefined,
         status: row.status,
         agentic_tool: row.agentic_tool,
         url: getSessionUrl(
@@ -299,10 +298,10 @@ export async function listSessionSummaries(
         created_at: toIso(row.created_at),
         last_updated: toIso(row.updated_at) ?? toIso(row.created_at),
         archived: Boolean(row.archived),
-        model_config: data?.model_config,
+        model_config: modelConfig,
         ...(args.sessionType
           ? {
-              custom_context: data?.custom_context,
+              custom_context: customContext,
               scheduled_from_worktree: Boolean(row.scheduled_from_worktree),
             }
           : {}),
