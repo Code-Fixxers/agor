@@ -838,9 +838,11 @@ export function setupMCPRoutes(
 
         const mcpServer = createMcpServer(mcpContext, toolSearchEnabled, servicesConfig);
 
+        let sessionInitialized = false;
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId) => {
+            sessionInitialized = true;
             transports.set(newSessionId, {
               transport,
               server: mcpServer,
@@ -849,6 +851,12 @@ export function setupMCPRoutes(
             });
           },
         });
+        let pendingInitClosed = false;
+        const cleanupPendingInit = () => {
+          if (sessionInitialized || pendingInitClosed) return;
+          pendingInitClosed = true;
+          closeMcpTransportState({ transport, server: mcpServer });
+        };
 
         transport.onclose = () => {
           const sid = transport.sessionId;
@@ -863,12 +871,14 @@ export function setupMCPRoutes(
             REQUEST_TIMEOUT_MS,
             'Request processing timed out',
             () => {
-              closeMcpTransportState({ transport, server: mcpServer });
+              cleanupPendingInit();
               const sid = transport.sessionId;
               if (sid) transports.delete(sid);
             }
           );
+          sessionInitialized = Boolean(transport.sessionId);
         } catch (error) {
+          cleanupPendingInit();
           if (error instanceof McpRequestTimeoutError) {
             // For SSE init it's a bit tricky if headers were already sent, but let's try to gracefully handle
             if (!res.headersSent) {
@@ -902,6 +912,13 @@ export function setupMCPRoutes(
           sessionIdGenerator: undefined,
           enableJsonResponse: true, // Item 7: explicit json-rpc http behavior
         });
+        let closed = false;
+        const cleanupStateless = () => {
+          if (closed) return;
+          closed = true;
+          closeMcpTransportState({ transport, server: mcpServer });
+        };
+        res.on('close', cleanupStateless);
 
         await mcpServer.connect(transport);
         try {
@@ -925,11 +942,9 @@ export function setupMCPRoutes(
             }
           }
           throw error;
+        } finally {
+          cleanupStateless();
         }
-
-        res.on('close', () => {
-          closeMcpTransportState({ transport, server: mcpServer });
-        });
         return;
       }
 
