@@ -124,12 +124,11 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
 
       let cardsList: Card[];
       if (zoneId && boardId) {
-        const all = await cardsService.findByZoneId(boardId as never, zoneId);
-        const filtered =
-          archivedFilter === undefined
-            ? all
-            : all.filter((c) => Boolean(c.archived) === archivedFilter);
-        cardsList = filtered.slice(offset, offset + limit);
+        cardsList = await cardsService.findByZoneId(boardId as never, zoneId, {
+          ...(archivedFilter !== undefined && { archived: archivedFilter }),
+          limit,
+          offset,
+        });
       } else if (search) {
         cardsList = await cardsService.searchCards(search, {
           boardId: boardId as never,
