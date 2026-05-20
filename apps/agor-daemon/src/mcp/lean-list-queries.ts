@@ -152,7 +152,7 @@ export async function listBoardSummaries(
       icon: row.icon ?? undefined,
       url: getBoardUrl(row.board_id as UUID, row.slug as string | null | undefined, baseUrl),
       created_at: toIso(row.created_at),
-      updated_at: toIso(row.updated_at) ?? toIso(row.created_at),
+      last_updated: toIso(row.updated_at) ?? toIso(row.created_at),
       archived: Boolean(row.archived),
     })),
   };
