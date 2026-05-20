@@ -25,7 +25,7 @@ import {
   resolveWorktreeId,
 } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { coerceString, sessionContextRequiredResult, textResult } from '../utils.js';
+import { clampMcpLimit, coerceString, sessionContextRequiredResult, textResult } from '../utils.js';
 import { assertValidVariant } from './_environment-helpers.js';
 
 const WORKTREE_NAME_PATTERN = /^[a-z0-9-]+$/;
@@ -70,7 +70,7 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
         limit: z
           .number()
           .optional()
-          .describe('Maximum number of results (default: 10 for summary, 50 for full)'),
+          .describe('Maximum number of results (default: 10 for summary, 50 for full; max: 100)'),
         includeArchived: z
           .boolean()
           .optional()
@@ -99,7 +99,7 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
       if (detailLevel === 'summary') {
         return textResult(await listWorktreeSummaries(ctx, { ...args, repoId }));
       }
-      query.$limit = args.limit ?? 50;
+      query.$limit = clampMcpLimit(args.limit, 50);
       if (args.archived === true) {
         query.archived = true;
       } else if (!args.includeArchived) {
@@ -922,11 +922,17 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         repoId: z.string().optional().describe('Filter assistants by repository ID'),
-        limit: z.number().optional().describe('Maximum number of worktrees to scan (default: 200)'),
+        limit: z
+          .number()
+          .optional()
+          .describe('Maximum number of worktrees to scan (default: 200, max: 500)'),
       }),
     },
     async (args) => {
-      const query: Record<string, unknown> = { archived: false, $limit: args.limit || 200 };
+      const query: Record<string, unknown> = {
+        archived: false,
+        $limit: clampMcpLimit(args.limit, 200, 500),
+      };
       if (args.repoId) query.repo_id = await resolveRepoId(ctx, args.repoId);
 
       const result = await ctx.app.service('worktrees').find({ query, ...ctx.baseServiceParams });

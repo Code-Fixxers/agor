@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { CardsService } from '../../services/cards.js';
 import { resolveBoardId, resolveCardId } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../utils.js';
+import { clampMcpLimit, clampMcpOffset, coerceString, textResult } from '../utils.js';
 
 export function registerCardTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_cards_create
@@ -98,7 +98,7 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
         search: z.string().optional().describe('Search query for card titles/descriptions'),
         includeArchived: z.boolean().optional().describe('Include archived (default: false)'),
         archived: z.boolean().optional().describe('ONLY archived (overrides includeArchived)'),
-        limit: z.number().optional().describe('Default: 10 for list, 50 for full'),
+        limit: z.number().optional().describe('Default: 10 for list, 50 for full; max: 100'),
         offset: z.number().optional().describe('Default: 0'),
         detail: z
           .enum(['list', 'full'])
@@ -119,8 +119,8 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
       const archivedFilter: boolean | undefined =
         args.archived === true ? true : args.includeArchived ? undefined : false;
       const detail = args.detail ?? 'list';
-      const limit = typeof args.limit === 'number' ? args.limit : detail === 'list' ? 10 : 50;
-      const offset = typeof args.offset === 'number' ? args.offset : 0;
+      const limit = clampMcpLimit(args.limit, detail === 'list' ? 10 : 50);
+      const offset = clampMcpOffset(args.offset);
 
       let cardsList: Card[];
       if (zoneId && boardId) {

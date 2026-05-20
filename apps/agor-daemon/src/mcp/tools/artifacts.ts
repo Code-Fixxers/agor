@@ -28,7 +28,7 @@ import type { ArtifactsService } from '../../services/artifacts.js';
 import { hasWorktreePermission } from '../../utils/worktree-authorization.js';
 import { resolveArtifactId, resolveBoardId, resolveWorktreeId } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../utils.js';
+import { clampMcpLimit, coerceString, textResult } from '../utils.js';
 
 const SANDPACK_TEMPLATES = [
   'react',
@@ -447,7 +447,7 @@ export function registerArtifactTools(server: McpServer, ctx: McpContext): void 
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         boardId: z.string().optional().describe('Filter by board ID'),
-        limit: z.number().optional().describe('Maximum number of results (default: 10)'),
+        limit: z.number().optional().describe('Maximum number of results (default: 10, max: 100)'),
         detail: z
           .enum(['list', 'full'])
           .optional()
@@ -458,7 +458,7 @@ export function registerArtifactTools(server: McpServer, ctx: McpContext): void 
       const service = ctx.app.service('artifacts') as unknown as ArtifactsService;
       const boardIdRaw = coerceString(args.boardId);
       const boardId = boardIdRaw ? await resolveBoardId(ctx, boardIdRaw) : undefined;
-      const limit = typeof args.limit === 'number' ? args.limit : 10;
+      const limit = clampMcpLimit(args.limit, 10);
 
       let artifactsList: unknown[];
       if (boardId) {

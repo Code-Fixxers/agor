@@ -33,7 +33,7 @@ import {
   resolveWorktreeId,
 } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { sessionContextRequiredResult, textResult } from '../utils.js';
+import { clampMcpLimit, sessionContextRequiredResult, textResult } from '../utils.js';
 import { listAttachedMcpServers } from './mcp-servers.js';
 
 /**
@@ -117,7 +117,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       description: 'List sessions accessible to the user. Each result includes a `url` field.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        limit: z.number().optional().describe('Default: 10 for summary, 50 for full'),
+        limit: z.number().optional().describe('Default: 10 for summary, 50 for full; max: 100'),
         status: z
           .enum(['idle', 'running', 'completed', 'failed'])
           .optional()
@@ -143,7 +143,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       // When sessionType is set, skip service-level pagination (it runs before our filter)
       // and apply the requested limit ourselves after filtering.
       const detailLevel = args.detailLevel ?? 'summary';
-      const requestedLimit = args.limit ?? (detailLevel === 'summary' ? 10 : 50);
+      const requestedLimit = clampMcpLimit(args.limit, detailLevel === 'summary' ? 10 : 50);
       if (!args.sessionType) query.$limit = requestedLimit;
       if (args.status) query.status = args.status;
       const boardId = args.boardId ? await resolveBoardId(ctx, args.boardId) : undefined;

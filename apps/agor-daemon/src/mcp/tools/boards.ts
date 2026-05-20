@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { BoardsServiceImpl } from '../../declarations.js';
 import { listBoardSummaries } from '../lean-list-queries.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../utils.js';
+import { clampMcpLimit, coerceString, textResult } from '../utils.js';
 
 export function registerBoardTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_boards_get
@@ -57,7 +57,7 @@ export function registerBoardTools(server: McpServer, ctx: McpContext): void {
         limit: z
           .number()
           .optional()
-          .describe('Maximum number of results (default: 10 for summary, 50 for full)'),
+          .describe('Maximum number of results (default: 10 for summary, 50 for full; max: 100)'),
         includeArchived: z
           .boolean()
           .optional()
@@ -84,7 +84,7 @@ export function registerBoardTools(server: McpServer, ctx: McpContext): void {
       if (detailLevel === 'summary') {
         return textResult(await listBoardSummaries(ctx, args));
       }
-      query.$limit = args.limit ?? 50;
+      query.$limit = clampMcpLimit(args.limit, 50);
       if (args.archived === true) {
         query.archived = true;
       } else if (!args.includeArchived) {

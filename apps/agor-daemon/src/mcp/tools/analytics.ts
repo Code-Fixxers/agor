@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { resolveRepoId, resolveUserId, resolveWorktreeId } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { textResult } from '../utils.js';
+import { clampMcpLimit, clampMcpOffset, textResult } from '../utils.js';
 
 export function registerAnalyticsTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_analytics_leaderboard
@@ -49,7 +49,9 @@ export function registerAnalyticsTools(server: McpServer, ctx: McpContext): void
         limit: z
           .number()
           .optional()
-          .describe('Maximum number of results (default: 10 if detailLevel=summary, else 50)'),
+          .describe(
+            'Maximum number of results (default: 10 if detailLevel=summary, else 50; max: 100)'
+          ),
         offset: z
           .number()
           .optional()
@@ -73,13 +75,9 @@ export function registerAnalyticsTools(server: McpServer, ctx: McpContext): void
       if (args.sortOrder) query.sortOrder = args.sortOrder;
 
       const detailLevel = args.detailLevel ?? 'summary';
-      if (args.limit !== undefined) {
-        query.limit = args.limit;
-      } else if (detailLevel === 'summary') {
-        query.limit = 10;
-      }
+      query.limit = clampMcpLimit(args.limit, detailLevel === 'summary' ? 10 : 50);
 
-      if (args.offset) query.offset = args.offset;
+      if (args.offset) query.offset = clampMcpOffset(args.offset);
 
       const leaderboard = await ctx.app
         .service('leaderboard')

@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ReposServiceImpl } from '../../declarations.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../utils.js';
+import { clampMcpLimit, coerceString, textResult } from '../utils.js';
 
 export function registerRepoTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_repos_list
@@ -14,11 +14,11 @@ export function registerRepoTools(server: McpServer, ctx: McpContext): void {
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         slug: z.string().optional().describe('Filter by repository slug'),
-        limit: z.number().optional().describe('Maximum number of results (default: 10)'),
+        limit: z.number().optional().describe('Maximum number of results (default: 10, max: 100)'),
       }),
     },
     async (args) => {
-      const query: Record<string, unknown> = { $limit: args.limit ?? 10 };
+      const query: Record<string, unknown> = { $limit: clampMcpLimit(args.limit, 10) };
       if (args.slug) query.slug = args.slug;
       const repos = await ctx.app.service('repos').find({ query, ...ctx.baseServiceParams });
       return textResult(repos);

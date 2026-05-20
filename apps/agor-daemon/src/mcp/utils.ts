@@ -24,6 +24,23 @@ export function coerceJsonRecord(value: unknown): unknown {
 }
 
 /**
+ * Clamp user-controlled MCP pagination limits. External API-key callers can
+ * otherwise request huge result sets and turn list tools into accidental scans.
+ */
+export function clampMcpLimit(value: unknown, fallback: number, max = 100): number {
+  const fallbackLimit = Math.min(Math.max(1, Math.floor(fallback)), max);
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallbackLimit;
+  const requested = Math.floor(value);
+  if (requested <= 0) return fallbackLimit;
+  return Math.min(requested, max);
+}
+
+export function clampMcpOffset(value: unknown): number {
+  const raw = typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  return Math.max(0, Math.floor(raw) || 0);
+}
+
+/**
  * Helper: format a value as MCP text content response.
  */
 export function textResult(data: unknown) {
