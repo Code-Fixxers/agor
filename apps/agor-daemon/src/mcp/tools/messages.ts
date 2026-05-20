@@ -66,6 +66,12 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
           .describe(
             'Include messages from archived sessions (default: false). Ignored when sessionId/taskId is explicitly set.'
           ),
+        includeTotal: z
+          .boolean()
+          .optional()
+          .describe(
+            'Compute an exact total count (default: false). Off by default because it can scan long transcripts/searches.'
+          ),
       }),
     },
     async (args) => {
@@ -87,6 +93,7 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
       const limit = Math.min(Math.max(0, Math.floor(rawLimit)) || 20, 100);
       const rawOffset = typeof args.offset === 'number' ? args.offset : 0;
       const offset = Math.max(0, Math.floor(rawOffset)) || 0;
+      const includeTotal = args.includeTotal === true;
       const order =
         args.order === 'asc' || args.order === 'desc'
           ? args.order
@@ -190,8 +197,9 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
       let total = 0;
       let scanOffset = 0;
       const scanChunkSize = Math.max(limit * 4, 100);
+      const scanUntilMatches = includeTotal ? Number.POSITIVE_INFINITY : offset + limit + 1;
 
-      while (true) {
+      scanLoop: while (true) {
         const candidateRows = (await select(ctx.db)
           .from(messagesTable)
           .where(whereCondition)
@@ -208,6 +216,7 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
             pageRows.push(row);
           }
           total++;
+          if (total >= scanUntilMatches) break scanLoop;
         }
 
         scanOffset += candidateRows.length;
@@ -280,7 +289,17 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
         processed.push(msg);
       }
 
-      return textResult({ messages: processed, total, offset, limit });
+      const hasMore = total > offset + pageRows.length;
+      const response: Record<string, unknown> = {
+        messages: processed,
+        offset,
+        limit,
+        has_more: hasMore,
+      };
+      if (includeTotal || total === 0) response.total = total;
+      if (hasMore) response.next_offset = offset + pageRows.length;
+
+      return textResult(response);
     }
   );
 }

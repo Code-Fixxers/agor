@@ -71,6 +71,20 @@ type ToolHandler = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text: string }>;
 }>;
 
+function makeMessageRow(index: number) {
+  return {
+    message_id: `msg-${index}`,
+    session_id: 'sess-active-1',
+    task_id: 'task-1',
+    index,
+    role: 'user',
+    type: 'user',
+    timestamp: new Date('2026-05-20T00:00:00Z'),
+    content_preview: `message ${index}`,
+    data: { content: `message ${index}` },
+  };
+}
+
 async function registerAndGetHandler(ctx: { userId: string; role?: string }): Promise<ToolHandler> {
   const { registerMessageTools } = await import('./messages.js');
   let captured: ToolHandler | undefined;
@@ -178,5 +192,34 @@ describe('agor_messages_list MCP tool', () => {
     await handler({ search: 'secret' });
     expect(mockFindAccessibleSessions).not.toHaveBeenCalled();
     expect(mockAllSpy).toHaveBeenCalled();
+  });
+
+  it('stops scanning after page plus lookahead when exact total is not requested', async () => {
+    mockAllSpy.mockResolvedValueOnce([makeMessageRow(1), makeMessageRow(2), makeMessageRow(3)]);
+
+    const handler = await registerAndGetHandler({ userId: 'user-1' });
+    const result = await handler({ search: 'secret', limit: 1 });
+
+    expect(mockAllSpy).toHaveBeenCalledTimes(1);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.messages).toHaveLength(1);
+    expect(parsed.total).toBeUndefined();
+    expect(parsed.has_more).toBe(true);
+    expect(parsed.next_offset).toBe(1);
+  });
+
+  it('scans to the end only when exact total is requested', async () => {
+    mockAllSpy
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => makeMessageRow(i + 1)))
+      .mockResolvedValueOnce([makeMessageRow(101)]);
+
+    const handler = await registerAndGetHandler({ userId: 'user-1' });
+    const result = await handler({ search: 'secret', limit: 1, includeTotal: true });
+
+    expect(mockAllSpy).toHaveBeenCalledTimes(2);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.messages).toHaveLength(1);
+    expect(parsed.total).toBe(101);
+    expect(parsed.has_more).toBe(true);
   });
 });

@@ -98,7 +98,7 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
         search: z.string().optional().describe('Search query for card titles/descriptions'),
         includeArchived: z.boolean().optional().describe('Include archived (default: false)'),
         archived: z.boolean().optional().describe('ONLY archived (overrides includeArchived)'),
-        limit: z.number().optional().describe('Default: 50'),
+        limit: z.number().optional().describe('Default: 10 for list, 50 for full'),
         offset: z.number().optional().describe('Default: 0'),
         detail: z
           .enum(['list', 'full'])
@@ -118,7 +118,8 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
       // archived semantics: true = only archived, false/undefined with includeArchived = both, otherwise only non-archived
       const archivedFilter: boolean | undefined =
         args.archived === true ? true : args.includeArchived ? undefined : false;
-      const limit = typeof args.limit === 'number' ? args.limit : 50;
+      const detail = args.detail ?? 'list';
+      const limit = typeof args.limit === 'number' ? args.limit : detail === 'list' ? 10 : 50;
       const offset = typeof args.offset === 'number' ? args.offset : 0;
 
       let cardsList: Card[];
@@ -160,7 +161,6 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
         cardsList = 'data' in result ? result.data : result;
       }
 
-      const detail = args.detail ?? 'list';
       if (detail === 'list') {
         // biome-ignore lint/suspicious/noExplicitAny: Omitting fields
         cardsList = cardsList.map((c: any) => {

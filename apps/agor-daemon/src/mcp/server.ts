@@ -22,6 +22,7 @@ import { getServiceTier, SERVICE_GROUP_TO_MCP_DOMAINS, SERVICE_TIER_RANK } from 
 import { NotFoundError } from '@agor/core/utils/errors';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -121,6 +122,39 @@ function logQueryParamDeprecation(req: Request): void {
 let cachedRegistry: ToolRegistry | null = null;
 let cachedToolsList: { tools: Array<Record<string, unknown>> } | null = null;
 
+const LOADED_DOMAIN_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const loadedDomainCache = new Map<
+  string,
+  {
+    domains: Set<string>;
+    lastActive: number;
+  }
+>();
+
+function loadedDomainCacheKey(ctx: McpContext): string {
+  return `${ctx.userId}:${ctx.sessionId ?? 'global'}`;
+}
+
+function getLoadedDomainState(ctx: McpContext): { domains: Set<string>; lastActive: number } {
+  const key = loadedDomainCacheKey(ctx);
+  let state = loadedDomainCache.get(key);
+  if (!state) {
+    state = { domains: new Set<string>(), lastActive: Date.now() };
+    loadedDomainCache.set(key, state);
+  } else {
+    state.lastActive = Date.now();
+  }
+  return state;
+}
+
+function pruneLoadedDomainCache(now = Date.now()): void {
+  for (const [key, state] of loadedDomainCache.entries()) {
+    if (now - state.lastActive > LOADED_DOMAIN_CACHE_TTL_MS) {
+      loadedDomainCache.delete(key);
+    }
+  }
+}
+
 /**
  * Build the tool registry by registering tools against a temporary server.
  * Captures metadata (name, description, JSON Schema, annotations, domain)
@@ -135,6 +169,7 @@ function buildRegistry(servicesConfig?: DaemonServicesConfig): ToolRegistry {
   const originalRegisterTool = tempServer.registerTool.bind(tempServer) as (
     ...args: unknown[]
   ) => ReturnType<typeof tempServer.registerTool>;
+  let currentDomainAccess: 'readonly' | 'full' = 'full';
 
   // Override the registerTool method to intercept metadata.
   // Cast required because registerTool is an overloaded generic method — TypeScript
@@ -144,6 +179,11 @@ function buildRegistry(servicesConfig?: DaemonServicesConfig): ToolRegistry {
       registerTool: (name: string, config: Record<string, unknown>, cb: unknown) => void;
     }
   ).registerTool = (name: string, config: Record<string, unknown>, cb: unknown) => {
+    const annotations = config.annotations as ToolAnnotations | undefined;
+    if (currentDomainAccess === 'readonly' && annotations?.readOnlyHint !== true) {
+      return undefined as unknown as ReturnType<typeof tempServer.registerTool>;
+    }
+
     // Convert Zod schema to JSON Schema using Zod v4's built-in converter
     let jsonSchema: Record<string, unknown> = { type: 'object' };
     if (config.inputSchema) {
@@ -161,8 +201,7 @@ function buildRegistry(servicesConfig?: DaemonServicesConfig): ToolRegistry {
       name,
       description: (config.description as string) ?? '',
       inputSchema: jsonSchema,
-      annotations:
-        config.annotations as import('@modelcontextprotocol/sdk/types.js').ToolAnnotations,
+      annotations,
     });
 
     // Still register with the temp server so Zod schemas are valid
@@ -174,63 +213,46 @@ function buildRegistry(servicesConfig?: DaemonServicesConfig): ToolRegistry {
   // Only register tools for enabled service domains.
   const dummyCtx = {} as McpContext;
 
-  if (isDomainEnabled('sessions', servicesConfig)) {
-    registry.setCurrentDomain('sessions');
+  const registerDomain = (domain: string, fn: () => void, accessDomain: string = domain): void => {
+    const access = getDomainAccess(accessDomain, servicesConfig);
+    if (!access) return;
+    registry.setCurrentDomain(domain);
+    currentDomainAccess = access;
+    try {
+      fn();
+    } finally {
+      currentDomainAccess = 'full';
+    }
+  };
+
+  registerDomain('sessions', () => {
     registerSessionTools(tempServer, dummyCtx);
     registerTaskTools(tempServer, dummyCtx);
     registerMessageTools(tempServer, dummyCtx);
-  }
+  });
 
-  if (isDomainEnabled('repos', servicesConfig)) {
-    registry.setCurrentDomain('repos');
-    registerRepoTools(tempServer, dummyCtx);
-  }
+  registerDomain('repos', () => registerRepoTools(tempServer, dummyCtx));
 
-  if (isDomainEnabled('worktrees', servicesConfig)) {
-    registry.setCurrentDomain('worktrees');
-    registerWorktreeTools(tempServer, dummyCtx);
-    registry.setCurrentDomain('environment');
-    registerEnvironmentTools(tempServer, dummyCtx);
-  }
+  registerDomain('worktrees', () => registerWorktreeTools(tempServer, dummyCtx));
+  registerDomain('environment', () => registerEnvironmentTools(tempServer, dummyCtx), 'worktrees');
 
-  if (isDomainEnabled('boards', servicesConfig)) {
-    registry.setCurrentDomain('boards');
-    registerBoardTools(tempServer, dummyCtx);
-  }
+  registerDomain('boards', () => registerBoardTools(tempServer, dummyCtx));
 
-  if (isDomainEnabled('cards', servicesConfig)) {
-    registry.setCurrentDomain('cards');
+  registerDomain('cards', () => {
     registerCardTools(tempServer, dummyCtx);
     registerCardTypeTools(tempServer, dummyCtx);
-  }
+  });
 
-  if (isDomainEnabled('artifacts', servicesConfig)) {
-    registry.setCurrentDomain('artifacts');
-    registerArtifactTools(tempServer, dummyCtx);
-  }
+  registerDomain('artifacts', () => registerArtifactTools(tempServer, dummyCtx));
 
   // 'proxies' is always registered when 'artifacts' domain is on — the two
   // are tightly coupled (proxies exist to serve artifacts). Read-only by
   // construction, so registering them here is safe regardless of tier.
-  if (isDomainEnabled('artifacts', servicesConfig)) {
-    registry.setCurrentDomain('proxies');
-    registerProxyTools(tempServer, dummyCtx);
-  }
+  registerDomain('proxies', () => registerProxyTools(tempServer, dummyCtx), 'artifacts');
 
-  if (isDomainEnabled('users', servicesConfig)) {
-    registry.setCurrentDomain('users');
-    registerUserTools(tempServer, dummyCtx);
-  }
-
-  if (isDomainEnabled('analytics', servicesConfig)) {
-    registry.setCurrentDomain('analytics');
-    registerAnalyticsTools(tempServer, dummyCtx);
-  }
-
-  if (isDomainEnabled('mcp-servers', servicesConfig)) {
-    registry.setCurrentDomain('mcp-servers');
-    registerMcpServerTools(tempServer, dummyCtx);
-  }
+  registerDomain('users', () => registerUserTools(tempServer, dummyCtx));
+  registerDomain('analytics', () => registerAnalyticsTools(tempServer, dummyCtx));
+  registerDomain('mcp-servers', () => registerMcpServerTools(tempServer, dummyCtx));
 
   // Search/execute tools always registered (meta-tools)
   registry.setCurrentDomain('discovery');
@@ -289,11 +311,6 @@ function getDomainAccess(
     }
   }
   return 'full'; // unknown domain = full access
-}
-
-/** Backwards-compatible wrapper */
-function isDomainEnabled(domain: string, servicesConfig?: DaemonServicesConfig): boolean {
-  return getDomainAccess(domain, servicesConfig) !== false;
 }
 
 /**
@@ -372,12 +389,15 @@ function createMcpServer(
 
   if (toolSearchEnabled) {
     const { registry, toolsList } = getRegistry(servicesConfig);
-    const activeDomains = new Set<string>();
+    const loadedDomainState = getLoadedDomainState(ctx);
+    const activeDomains = loadedDomainState.domains;
+    const alwaysVisibleToolNames = new Set(toolsList.tools.map((tool) => tool.name));
 
     // Register search/execute tools with the shared cached registry
     registerSearchTools(server, registry);
 
     server.registerTool('agor_load_domains', LOAD_DOMAINS_TOOL_CONFIG, async (args) => {
+      loadedDomainState.lastActive = Date.now();
       const domains = args.domains as string[];
       let loaded = 0;
       for (const d of domains) {
@@ -405,18 +425,14 @@ function createMcpServer(
     // Override tools/list with the deterministic response PLUS any dynamically loaded domains
     // All tools remain registered and callable via tools/call.
     server.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      loadedDomainState.lastActive = Date.now();
       if (activeDomains.size === 0) {
         return toolsList;
       }
 
-      // biome-ignore lint/suspicious/noExplicitAny: generic map
       const dynamicTools = registry
         .getAll()
-        .filter(
-          (t) =>
-            activeDomains.has(t.domain) &&
-            !toolsList.tools.some((ext: Record<string, unknown>) => ext.name === t.name)
-        );
+        .filter((t) => activeDomains.has(t.domain) && !alwaysVisibleToolNames.has(t.name));
 
       return {
         tools: [
@@ -479,6 +495,7 @@ export function setupMCPRoutes(
           transports.delete(sid);
         }
       }
+      pruneLoadedDomainCache(now);
     },
     5 * 60 * 1000
   );
@@ -494,6 +511,7 @@ export function setupMCPRoutes(
         server.close().catch(() => {});
       }
       transports.clear();
+      loadedDomainCache.clear();
     });
   }
 

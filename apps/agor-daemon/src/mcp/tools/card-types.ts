@@ -62,11 +62,11 @@ export function registerCardTypeTools(server: McpServer, ctx: McpContext): void 
       description: 'List all available card types.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        limit: z.number().optional().describe('Maximum number of results (default: 50)'),
+        limit: z.number().optional().describe('Maximum number of results (default: 10)'),
       }),
     },
     async (args) => {
-      const limit = typeof args.limit === 'number' ? args.limit : 50;
+      const limit = typeof args.limit === 'number' ? args.limit : 10;
       const result = await ctx.app
         .service('card-types')
         .find({ query: { $limit: limit }, ...ctx.baseServiceParams } as never);

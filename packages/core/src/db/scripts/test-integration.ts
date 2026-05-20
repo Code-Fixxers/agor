@@ -14,7 +14,7 @@
  */
 
 import { formatShortId, generateId } from '../../lib/ids';
-import type { Repo, Session, TaskID, UserID, Worktree, WorktreeID } from '../../types';
+import type { Repo, Session, TaskID, UserID, UUID, Worktree } from '../../types';
 import { SessionStatus, TaskStatus } from '../../types';
 import { createDatabase } from '../client';
 import { initializeDatabase, seedInitialData } from '../migrate';
@@ -239,7 +239,7 @@ async function testBoardRepository(db: ReturnType<typeof createDatabase>, worktr
     throw new Error('BoardObject creation failed');
   }
 
-  console.log(`  ✅ Added worktree to board: ${formatShortId(boardObject.object_id)}`);
+  console.log(`  ✅ Added worktree to board: ${formatShortId(boardObject.object_id as UUID)}`);
 
   // Test findBySlug
   const foundBySlug = await repo.findBySlug('test-board');

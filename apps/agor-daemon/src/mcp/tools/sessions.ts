@@ -116,10 +116,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       description: 'List sessions accessible to the user. Each result includes a `url` field.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        limit: z
-          .number()
-          .optional()
-          .describe('Default: 10 for summary, 50 for full'),
+        limit: z.number().optional().describe('Default: 10 for summary, 50 for full'),
         status: z
           .enum(['idle', 'running', 'completed', 'failed'])
           .optional()
@@ -174,19 +171,22 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
 
       const result = await ctx.app.service('sessions').find({ query, ...ctx.baseServiceParams });
 
-      type SessionSummary = Omit<Session, 'notes' | 'last_message'>;
-      let allData: Session[] | SessionSummary[] = Array.isArray(result) ? result : result.data;
+      type SessionListRow = Session & { notes?: unknown; last_message?: unknown };
+      type SessionSummary = Omit<SessionListRow, 'notes' | 'last_message'>;
+      let allData: SessionListRow[] | SessionSummary[] = Array.isArray(result)
+        ? result
+        : result.data;
 
       // Apply sessionType filter (post-query since custom_context/scheduled_from_worktree aren't in query schema)
       if (args.sessionType) {
         const targetType = args.sessionType as SessionType;
-        const filterFn = (s: Session) => getSessionType(s) === targetType;
-        const filtered = (allData as Session[]).filter(filterFn);
+        const filterFn = (s: SessionListRow) => getSessionType(s) === targetType;
+        const filtered = (allData as SessionListRow[]).filter(filterFn);
         allData = requestedLimit ? filtered.slice(0, requestedLimit) : filtered;
       }
 
       if (detailLevel === 'summary') {
-        allData = (allData as Session[]).map((session) => {
+        allData = (allData as SessionListRow[]).map((session) => {
           const { notes, last_message, ...rest } = session;
           return rest;
         });

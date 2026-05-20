@@ -14,7 +14,7 @@ export function registerTaskTools(server: McpServer, ctx: McpContext): void {
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         sessionId: z.string().optional().describe('Session ID to scope to'),
-        limit: z.number().optional().describe('Default: 50'),
+        limit: z.number().optional().describe('Default: 10'),
         includeArchived: z
           .boolean()
           .optional()
@@ -22,7 +22,7 @@ export function registerTaskTools(server: McpServer, ctx: McpContext): void {
       }),
     },
     async (args) => {
-      const query: Record<string, unknown> = { $limit: args.limit ?? 50 };
+      const query: Record<string, unknown> = { $limit: args.limit ?? 10 };
       if (args.sessionId) {
         // Explicit sessionId = caller opted in, even if archived
         query.session_id = await resolveSessionId(ctx, args.sessionId);
