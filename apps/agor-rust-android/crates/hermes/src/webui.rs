@@ -1,7 +1,7 @@
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tokio::sync::broadcast;
 
 use crate::client::HermesError;
@@ -196,6 +196,12 @@ pub struct WebUiModelsResponse {
     pub models: Vec<Value>,
     #[serde(default)]
     pub data: Vec<Value>,
+    #[serde(default)]
+    pub groups: Vec<Value>,
+    #[serde(default)]
+    pub default_model: Option<String>,
+    #[serde(default)]
+    pub active_provider: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -204,6 +210,14 @@ pub struct WebUiProfilesResponse {
     pub profiles: Vec<Value>,
     #[serde(default)]
     pub active: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WebUiReasoningStatus {
+    #[serde(default)]
+    pub show_reasoning: Option<bool>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -380,6 +394,18 @@ impl HermesWebUiClient {
 
     pub async fn list_profiles(&self) -> Result<WebUiProfilesResponse, HermesError> {
         self.get_json("/api/profiles").await
+    }
+
+    pub async fn reasoning_status(&self) -> Result<WebUiReasoningStatus, HermesError> {
+        self.get_json("/api/reasoning").await
+    }
+
+    pub async fn set_reasoning_effort(
+        &self,
+        effort: &str,
+    ) -> Result<WebUiReasoningStatus, HermesError> {
+        self.post_json("/api/reasoning", &json!({ "effort": effort }))
+            .await
     }
 
     pub async fn upload_file(
