@@ -4,20 +4,39 @@ import {
   asc,
   desc,
   eq,
+  exists,
   inArray,
+  isNotNull,
   messages as messagesTable,
   or,
-  SessionRepository,
   select,
+  sessions,
   sql,
+  worktreeOwners,
+  worktrees,
 } from '@agor/core/db';
-import type { ContentBlock } from '@agor/core/types';
+import { type ContentBlock, WORKTREE_PERMISSION_LEVELS } from '@agor/core/types';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { isSuperAdmin } from '../../utils/worktree-authorization.js';
 import { resolveSessionId, resolveTaskId } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
 import { coerceString, textResult } from '../utils.js';
+
+type ExistsQuery = {
+  from(table: unknown): ExistsQuery;
+  innerJoin(table: unknown, on: unknown): ExistsQuery;
+  leftJoin(table: unknown, on: unknown): ExistsQuery;
+  where(condition: unknown): Parameters<typeof exists>[0];
+};
+
+function rawExistsSelect(ctx: McpContext): ExistsQuery {
+  const dbSelect = (ctx.db as unknown as { select?: (columns: Record<string, unknown>) => unknown })
+    .select;
+  return (typeof dbSelect === 'function'
+    ? dbSelect({ _: sql`1` })
+    : select(ctx.db, { _: sql`1` })) as unknown as ExistsQuery;
+}
 
 export function registerMessageTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_messages_list
@@ -131,35 +150,49 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
       }
 
       // Default-exclude messages from archived sessions for unscoped queries.
-      // An explicit sessionId/taskId (caller opted in) bypasses this filter.
+      // Use correlated SQL predicates instead of hydrating session id lists into
+      // memory; large installations can exceed SQLite variable limits otherwise.
+      const sessionMatchesMessage = eq(sessions.session_id, messagesTable.session_id);
       if (!sessionId && !taskId && !includeArchived) {
-        const activeSessions = await ctx.app.service('sessions').find({
-          query: { archived: false, $limit: 10000, $select: ['session_id'] },
-          ...ctx.baseServiceParams,
-        });
-        const activeIds = (
-          Array.isArray(activeSessions) ? activeSessions : activeSessions.data
-        ).map((s: { session_id: string }) => s.session_id);
-        if (activeIds.length === 0) {
-          return textResult({ messages: [], total: 0, offset, limit });
-        }
-        conditions.push(inArray(messagesTable.session_id, activeIds));
+        conditions.push(
+          exists(
+            rawExistsSelect(ctx)
+              .from(sessions)
+              .where(and(sessionMatchesMessage, eq(sessions.archived, false)))
+          )
+        );
       }
 
       // RBAC enforcement: when worktree_rbac is enabled, restrict this search
-      // to sessions the caller can access. Superadmins bypass. When RBAC is
-      // disabled (default / open-access mode), skip this filter entirely to
-      // preserve backward-compatible behavior.
+      // to sessions the caller can access via an EXISTS semi-join. This preserves
+      // the hook semantics without building a huge `IN (...)` list.
       if (isWorktreeRbacEnabled()) {
         const userRole = ctx.authenticatedUser?.role as string | undefined;
         if (!isSuperAdmin(userRole)) {
-          const sessionRepo = new SessionRepository(ctx.db);
-          const accessibleSessions = await sessionRepo.findAccessibleSessions(ctx.userId);
-          const accessibleIds = accessibleSessions.map((s) => s.session_id);
-          if (accessibleIds.length === 0) {
-            return textResult({ messages: [], total: 0, offset, limit });
-          }
-          conditions.push(inArray(messagesTable.session_id, accessibleIds));
+          const permissiveLevels = WORKTREE_PERMISSION_LEVELS.filter((level) => level !== 'none');
+          conditions.push(
+            exists(
+              rawExistsSelect(ctx)
+                .from(sessions)
+                .innerJoin(worktrees, eq(sessions.worktree_id, worktrees.worktree_id))
+                .leftJoin(
+                  worktreeOwners,
+                  and(
+                    eq(worktreeOwners.worktree_id, worktrees.worktree_id),
+                    eq(worktreeOwners.user_id, ctx.userId)
+                  )
+                )
+                .where(
+                  and(
+                    sessionMatchesMessage,
+                    or(
+                      isNotNull(worktreeOwners.user_id),
+                      inArray(worktrees.others_can, permissiveLevels)
+                    )
+                  )
+                )
+            )
+          );
         }
       }
 

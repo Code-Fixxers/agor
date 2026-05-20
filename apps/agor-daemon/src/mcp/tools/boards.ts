@@ -2,6 +2,7 @@ import type { Board } from '@agor/core/types';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { BoardsServiceImpl } from '../../declarations.js';
+import { listBoardSummaries } from '../lean-list-queries.js';
 import type { McpContext } from '../server.js';
 import { coerceString, textResult } from '../utils.js';
 
@@ -80,39 +81,21 @@ export function registerBoardTools(server: McpServer, ctx: McpContext): void {
     async (args) => {
       const query: Record<string, unknown> = {};
       const detailLevel = args.detailLevel ?? 'summary';
-      query.$limit = args.limit ?? (detailLevel === 'summary' ? 10 : 50);
+      if (detailLevel === 'summary') {
+        return textResult(await listBoardSummaries(ctx, args));
+      }
+      query.$limit = args.limit ?? 50;
       if (args.archived === true) {
         query.archived = true;
       } else if (!args.includeArchived) {
         query.archived = false;
       }
 
-      if (detailLevel === 'summary') {
-        query.$select = [
-          'board_id',
-          'name',
-          'slug',
-          'description',
-          'icon',
-          'url',
-          'created_at',
-          'updated_at',
-          'archived',
-        ];
-      }
-
       const boards = await ctx.app.service('boards').find({ query, ...ctx.baseServiceParams });
 
-      type BoardSummary = Omit<import('@agor/core/types').Board, 'objects'>;
-      let allData: import('@agor/core/types').Board[] | BoardSummary[] = Array.isArray(boards)
+      const allData: import('@agor/core/types').Board[] = Array.isArray(boards)
         ? boards
         : boards.data;
-      if (detailLevel === 'summary') {
-        allData = (allData as import('@agor/core/types').Board[]).map((board) => {
-          const { objects, ...rest } = board;
-          return rest;
-        });
-      }
 
       if (Array.isArray(boards)) {
         return textResult(allData);

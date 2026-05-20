@@ -16,6 +16,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ReposServiceImpl, WorktreesServiceImpl } from '../../declarations.js';
 import type { WorktreeParams } from '../../services/worktrees.js';
+import { listWorktreeSummaries } from '../lean-list-queries.js';
 import {
   resolveBoardId,
   resolveMcpServerId,
@@ -92,45 +93,28 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
     },
     async (args) => {
       const query: Record<string, unknown> = {};
-      if (args.repoId) query.repo_id = await resolveRepoId(ctx, args.repoId);
+      const repoId = args.repoId ? await resolveRepoId(ctx, args.repoId) : undefined;
+      if (repoId) query.repo_id = repoId;
       const detailLevel = args.detailLevel ?? 'summary';
-      query.$limit = args.limit ?? (detailLevel === 'summary' ? 10 : 50);
+      if (detailLevel === 'summary') {
+        return textResult(await listWorktreeSummaries(ctx, { ...args, repoId }));
+      }
+      query.$limit = args.limit ?? 50;
       if (args.archived === true) {
         query.archived = true;
       } else if (!args.includeArchived) {
         query.archived = false;
       }
 
-      if (detailLevel === 'summary') {
-        query.$select = [
-          'worktree_id',
-          'repo_id',
-          'board_id',
-          'name',
-          'ref',
-          'path',
-          'url',
-          'created_at',
-          'updated_at',
-          'archived',
-        ];
-      }
-
       const worktrees = await ctx.app
         .service('worktrees')
         .find({ query, ...ctx.baseServiceParams });
 
-      type WorktreeSummary = Omit<import('@agor/core/db').WorktreeWithZoneAndSessions, 'notes'>;
-      let allData: import('@agor/core/db').WorktreeWithZoneAndSessions[] | WorktreeSummary[] =
-        Array.isArray(worktrees) ? worktrees : worktrees.data;
-      if (detailLevel === 'summary') {
-        allData = (allData as import('@agor/core/db').WorktreeWithZoneAndSessions[]).map(
-          (worktree) => {
-            const { notes, ...rest } = worktree;
-            return rest;
-          }
-        );
-      }
+      const allData: import('@agor/core/db').WorktreeWithZoneAndSessions[] = Array.isArray(
+        worktrees
+      )
+        ? worktrees
+        : worktrees.data;
 
       if (Array.isArray(worktrees)) {
         return textResult(allData);

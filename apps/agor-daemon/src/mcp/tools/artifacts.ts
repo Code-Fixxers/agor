@@ -462,9 +462,12 @@ export function registerArtifactTools(server: McpServer, ctx: McpContext): void 
 
       let artifactsList: unknown[];
       if (boardId) {
-        artifactsList = await service.findByBoardId(boardId as never, ctx.userId);
+        artifactsList = await service.findByBoardId(boardId as never, ctx.userId, {
+          limit,
+          omitFiles: true,
+        });
       } else {
-        artifactsList = await service.findVisible(ctx.userId, { limit });
+        artifactsList = await service.findVisible(ctx.userId, { limit, omitFiles: true });
       }
 
       const detail = args.detail ?? 'list';

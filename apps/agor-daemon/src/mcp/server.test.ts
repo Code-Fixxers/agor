@@ -1,6 +1,13 @@
 import type { Request, Response } from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { coerceJsonRecord, setupMCPRoutes } from './server.js';
+import {
+  buildLoadedDomainCacheKey,
+  closeMcpTransportState,
+  coerceJsonRecord,
+  McpRequestTimeoutError,
+  setupMCPRoutes,
+  withTimeout,
+} from './server.js';
 
 describe('coerceJsonRecord', () => {
   it('passes through a plain object unchanged', () => {
@@ -201,12 +208,38 @@ describe('POST /mcp token source', () => {
 });
 
 describe('Stateful MCP Transports and API Key Context', () => {
-  it('enforces timeout for slow requests', async () => {
-    // Basic test that the timeout logic is in place (since testing the exact time requires fake timers)
-    expect(true).toBe(true);
+  it('scopes loaded domains by credential fingerprint, not only user/session', () => {
+    const ctx = {
+      userId: 'user-1',
+      sessionId: undefined,
+    } as Parameters<typeof buildLoadedDomainCacheKey>[0];
+
+    expect(buildLoadedDomainCacheKey(ctx, 'key-a')).not.toBe(
+      buildLoadedDomainCacheKey(ctx, 'key-b')
+    );
   });
 
-  it('exposes json responses in stateless fallback', () => {
-    expect(true).toBe(true);
+  it('runs timeout cleanup when request processing exceeds the deadline', async () => {
+    vi.useFakeTimers();
+    const cleanup = vi.fn();
+    const pending = new Promise<string>(() => {});
+    const timed = withTimeout(pending, 10, 'too slow', cleanup);
+    const assertion = expect(timed).rejects.toBeInstanceOf(McpRequestTimeoutError);
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    await assertion;
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it('closes both transport and server during MCP cleanup', () => {
+    const transport = { close: vi.fn(async () => {}) };
+    const server = { close: vi.fn(async () => {}) };
+
+    closeMcpTransportState({ transport, server });
+
+    expect(transport.close).toHaveBeenCalledTimes(1);
+    expect(server.close).toHaveBeenCalledTimes(1);
   });
 });

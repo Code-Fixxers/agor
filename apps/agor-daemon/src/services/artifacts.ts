@@ -1644,12 +1644,26 @@ export class ArtifactsService extends DrizzleService<Artifact, Partial<Artifact>
     return artifact;
   }
 
-  async findByBoardId(boardId: BoardID, userId?: string): Promise<Artifact[]> {
-    return this.artifactRepo.findByBoardId(boardId, { userId: userId ?? '__anonymous__' });
+  async findByBoardId(
+    boardId: BoardID,
+    userId?: string,
+    options?: { limit?: number; omitFiles?: boolean }
+  ): Promise<Artifact[]> {
+    return this.artifactRepo.findByBoardId(boardId, {
+      userId: userId ?? '__anonymous__',
+      limit: options?.limit,
+      omitFiles: options?.omitFiles,
+    });
   }
 
-  async findVisible(userId?: string, options?: { limit?: number }): Promise<Artifact[]> {
-    return this.artifactRepo.findVisible(userId ?? '__anonymous__', { limit: options?.limit });
+  async findVisible(
+    userId?: string,
+    options?: { limit?: number; omitFiles?: boolean }
+  ): Promise<Artifact[]> {
+    return this.artifactRepo.findVisible(userId ?? '__anonymous__', {
+      limit: options?.limit,
+      omitFiles: options?.omitFiles,
+    });
   }
 
   // ── Private helpers ──

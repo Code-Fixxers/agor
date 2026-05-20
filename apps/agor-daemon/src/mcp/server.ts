@@ -13,7 +13,7 @@
  * JSON across requests, which is critical for client-side KV prefix caching.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Database } from '@agor/core/db';
 import { UserApiKeysRepository } from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
@@ -68,6 +68,49 @@ export interface McpContext {
   baseServiceParams: Pick<AuthenticatedParams, 'user' | 'authenticated' | 'provider'>;
 }
 
+export class McpRequestTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'McpRequestTimeoutError';
+  }
+}
+
+export function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMsg: string,
+  onTimeout?: () => void | Promise<void>
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      if (settled) return;
+      const cleanupResult = onTimeout?.();
+      if (cleanupResult && typeof (cleanupResult as Promise<void>).catch === 'function') {
+        (cleanupResult as Promise<void>).catch((err) => {
+          console.error('Failed to clean up timed out MCP request:', err);
+        });
+      }
+      reject(new McpRequestTimeoutError(timeoutMsg));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    settled = true;
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
+export function closeMcpTransportState(state: {
+  transport: { close: () => Promise<void> | void };
+  server: { close: () => Promise<void> | void };
+}): void {
+  Promise.resolve(state.transport.close()).catch(() => {});
+  Promise.resolve(state.server.close()).catch(() => {});
+}
+
 /** Server instructions shown to agents when tool search is enabled. */
 const SERVER_INSTRUCTIONS = `Agor: multiplayer canvas for orchestrating AI coding agents (git worktrees, session genealogy, spatial boards).
 
@@ -86,7 +129,11 @@ const LOAD_DOMAINS_TOOL_CONFIG = {
   description:
     'Load specific tool domains into the current session to avoid using agor_execute_tool for every call. The client tool list will automatically refresh.',
   inputSchema: z.object({
-    domains: z.array(z.string()).describe('List of domains to load (e.g. ["boards", "cards"])'),
+    domains: z
+      .array(z.string())
+      .optional()
+      .describe('List of domains to load (e.g. ["boards", "cards"])'),
+    reset: z.boolean().optional().describe('Clear previously loaded domains before loading these.'),
   }),
 };
 
@@ -131,12 +178,15 @@ const loadedDomainCache = new Map<
   }
 >();
 
-function loadedDomainCacheKey(ctx: McpContext): string {
-  return `${ctx.userId}:${ctx.sessionId ?? 'global'}`;
+export function buildLoadedDomainCacheKey(
+  ctx: Pick<McpContext, 'userId' | 'sessionId'>,
+  clientScope: string
+): string {
+  return `${ctx.userId}:${ctx.sessionId ?? 'global'}:${clientScope}`;
 }
 
-function getLoadedDomainState(ctx: McpContext): { domains: Set<string>; lastActive: number } {
-  const key = loadedDomainCacheKey(ctx);
+function getLoadedDomainState(cacheKey: string): { domains: Set<string>; lastActive: number } {
+  const key = cacheKey;
   let state = loadedDomainCache.get(key);
   if (!state) {
     state = { domains: new Set<string>(), lastActive: Date.now() };
@@ -153,6 +203,10 @@ function pruneLoadedDomainCache(now = Date.now()): void {
       loadedDomainCache.delete(key);
     }
   }
+}
+
+function credentialFingerprint(credential: string): string {
+  return createHash('sha256').update(credential).digest('hex');
 }
 
 /**
@@ -338,7 +392,8 @@ function readOnlyProxy(server: McpServer): McpServer {
 function createMcpServer(
   ctx: McpContext,
   toolSearchEnabled: boolean,
-  servicesConfig?: DaemonServicesConfig
+  servicesConfig?: DaemonServicesConfig,
+  loadedDomainsCacheKey?: string
 ): McpServer {
   const server = new McpServer(
     {
@@ -389,18 +444,29 @@ function createMcpServer(
 
   if (toolSearchEnabled) {
     const { registry, toolsList } = getRegistry(servicesConfig);
-    const loadedDomainState = getLoadedDomainState(ctx);
+    const loadedDomainState = loadedDomainsCacheKey
+      ? getLoadedDomainState(loadedDomainsCacheKey)
+      : { domains: new Set<string>(), lastActive: Date.now() };
     const activeDomains = loadedDomainState.domains;
     const alwaysVisibleToolNames = new Set(toolsList.tools.map((tool) => tool.name));
+    const loadableDomains = new Set(registry.listDomains().map((domain) => domain.domain));
 
     // Register search/execute tools with the shared cached registry
     registerSearchTools(server, registry);
 
     server.registerTool('agor_load_domains', LOAD_DOMAINS_TOOL_CONFIG, async (args) => {
       loadedDomainState.lastActive = Date.now();
-      const domains = args.domains as string[];
+      if (args.reset === true) {
+        activeDomains.clear();
+      }
+      const domains = Array.isArray(args.domains) ? (args.domains as string[]) : [];
       let loaded = 0;
+      const unknown: string[] = [];
       for (const d of domains) {
+        if (!loadableDomains.has(d)) {
+          unknown.push(d);
+          continue;
+        }
         if (!activeDomains.has(d)) {
           activeDomains.add(d);
           loaded++;
@@ -416,7 +482,7 @@ function createMcpServer(
         content: [
           {
             type: 'text' as const,
-            text: `Loaded ${loaded} new domains into the session. Client tool list is refreshing. Currently active domains: ${Array.from(activeDomains).join(', ')}`,
+            text: `Loaded ${loaded} new domains into the session. Client tool list is refreshing. Currently active domains: ${Array.from(activeDomains).join(', ') || '(none)'}${unknown.length > 0 ? `. Unknown domains ignored: ${unknown.join(', ')}` : ''}`,
           },
         ],
       };
@@ -490,8 +556,7 @@ export function setupMCPRoutes(
       for (const [sid, { transport, server, lastActive }] of transports.entries()) {
         if (now - lastActive > TRANSPORT_IDLE_TTL_MS) {
           console.log(`🔌 Cleaning up idle MCP transport: ${sid}`);
-          transport.close().catch(() => {});
-          server.close().catch(() => {});
+          closeMcpTransportState({ transport, server });
           transports.delete(sid);
         }
       }
@@ -507,8 +572,7 @@ export function setupMCPRoutes(
     appEventEmitter.on('teardown', () => {
       clearInterval(cleanupInterval);
       for (const { transport, server } of transports.values()) {
-        transport.close().catch(() => {});
-        server.close().catch(() => {});
+        closeMcpTransportState({ transport, server });
       }
       transports.clear();
       loadedDomainCache.clear();
@@ -516,20 +580,6 @@ export function setupMCPRoutes(
   }
 
   const REQUEST_TIMEOUT_MS = 30 * 1000; // 30 seconds
-
-  const withTimeout = async <T>(
-    promise: Promise<T>,
-    timeoutMs: number,
-    timeoutMsg: string
-  ): Promise<T> => {
-    let timeoutId: ReturnType<typeof setTimeout>;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(new Error(timeoutMsg));
-      }, timeoutMs);
-    });
-    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
-  };
 
   const isInitializeRequest = (body: unknown): boolean => {
     if (!body || typeof body !== 'object') return false;
@@ -592,6 +642,7 @@ export function setupMCPRoutes(
       let authenticatedUser: AuthenticatedUser;
       let userId: UserID;
       let sessionId: SessionID | undefined;
+      const loadedDomainsClientScope = credentialFingerprint(credential);
 
       if (credential.startsWith('agor_sk_')) {
         const apiKeysRepo = new UserApiKeysRepository(db);
@@ -731,10 +782,14 @@ export function setupMCPRoutes(
             await withTimeout(
               existing.transport.handleRequest(req, res, req.body),
               REQUEST_TIMEOUT_MS,
-              'Request processing timed out'
+              'Request processing timed out',
+              () => {
+                closeMcpTransportState(existing);
+                transports.delete(mcpSessionId);
+              }
             );
           } catch (error) {
-            if ((error as Error).message === 'Request processing timed out') {
+            if (error instanceof McpRequestTimeoutError) {
               if (!res.headersSent) {
                 return res.status(504).json({
                   jsonrpc: '2.0',
@@ -777,8 +832,7 @@ export function setupMCPRoutes(
             `🔌 User ${userId} reached max transports (${MAX_TRANSPORTS_PER_USER}). Evicting oldest: ${oldestSid}`
           );
           const oldest = transports.get(oldestSid)!;
-          oldest.transport.close().catch(() => {});
-          oldest.server.close().catch(() => {});
+          closeMcpTransportState(oldest);
           transports.delete(oldestSid);
         }
 
@@ -807,10 +861,15 @@ export function setupMCPRoutes(
           await withTimeout(
             transport.handleRequest(req, res, req.body),
             REQUEST_TIMEOUT_MS,
-            'Request processing timed out'
+            'Request processing timed out',
+            () => {
+              closeMcpTransportState({ transport, server: mcpServer });
+              const sid = transport.sessionId;
+              if (sid) transports.delete(sid);
+            }
           );
         } catch (error) {
-          if ((error as Error).message === 'Request processing timed out') {
+          if (error instanceof McpRequestTimeoutError) {
             // For SSE init it's a bit tricky if headers were already sent, but let's try to gracefully handle
             if (!res.headersSent) {
               return res.status(504).json({
@@ -832,7 +891,12 @@ export function setupMCPRoutes(
       // Stateless fallback mode: preserves legacy behavior for direct POST usage
       // ─────────────────────────────────────────────────────────────────────────────
       if (req.method === 'POST') {
-        const mcpServer = createMcpServer(mcpContext, toolSearchEnabled, servicesConfig);
+        const mcpServer = createMcpServer(
+          mcpContext,
+          toolSearchEnabled,
+          servicesConfig,
+          buildLoadedDomainCacheKey(mcpContext, loadedDomainsClientScope)
+        );
 
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
@@ -844,10 +908,11 @@ export function setupMCPRoutes(
           await withTimeout(
             transport.handleRequest(req, res, req.body),
             REQUEST_TIMEOUT_MS,
-            'Request processing timed out'
+            'Request processing timed out',
+            () => closeMcpTransportState({ transport, server: mcpServer })
           );
         } catch (error) {
-          if ((error as Error).message === 'Request processing timed out') {
+          if (error instanceof McpRequestTimeoutError) {
             if (!res.headersSent) {
               return res.status(504).json({
                 jsonrpc: '2.0',
@@ -863,8 +928,7 @@ export function setupMCPRoutes(
         }
 
         res.on('close', () => {
-          transport.close().catch(() => {});
-          mcpServer.close().catch(() => {});
+          closeMcpTransportState({ transport, server: mcpServer });
         });
         return;
       }

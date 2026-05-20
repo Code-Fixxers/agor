@@ -25,6 +25,7 @@ import { z } from 'zod';
 import type { SessionsServiceImpl } from '../../declarations.js';
 import type { SessionParams } from '../../services/sessions.js';
 import { ensureCanPromptTargetSession } from '../../utils/worktree-authorization.js';
+import { listSessionSummaries } from '../lean-list-queries.js';
 import {
   resolveBoardId,
   resolveMcpServerId,
@@ -145,37 +146,25 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       const requestedLimit = args.limit ?? (detailLevel === 'summary' ? 10 : 50);
       if (!args.sessionType) query.$limit = requestedLimit;
       if (args.status) query.status = args.status;
-      if (args.boardId) query.board_id = await resolveBoardId(ctx, args.boardId);
-      if (args.worktreeId) query.worktree_id = await resolveWorktreeId(ctx, args.worktreeId);
+      const boardId = args.boardId ? await resolveBoardId(ctx, args.boardId) : undefined;
+      const worktreeId = args.worktreeId
+        ? await resolveWorktreeId(ctx, args.worktreeId)
+        : undefined;
+      if (boardId) query.board_id = boardId;
+      if (worktreeId) query.worktree_id = worktreeId;
+      if (detailLevel === 'summary') {
+        return textResult(await listSessionSummaries(ctx, { ...args, boardId, worktreeId }));
+      }
       if (args.archived === true) {
         query.archived = true;
       } else if (!args.includeArchived) {
         query.archived = false;
       }
 
-      if (detailLevel === 'summary') {
-        query.$select = [
-          'session_id',
-          'worktree_id',
-          'title',
-          'status',
-          'agentic_tool',
-          'url',
-          'created_at',
-          'updated_at',
-          'archived',
-          'model_config',
-          ...(args.sessionType ? ['custom_context', 'scheduled_from_worktree'] : []),
-        ];
-      }
-
       const result = await ctx.app.service('sessions').find({ query, ...ctx.baseServiceParams });
 
       type SessionListRow = Session & { notes?: unknown; last_message?: unknown };
-      type SessionSummary = Omit<SessionListRow, 'notes' | 'last_message'>;
-      let allData: SessionListRow[] | SessionSummary[] = Array.isArray(result)
-        ? result
-        : result.data;
+      let allData: SessionListRow[] = Array.isArray(result) ? result : result.data;
 
       // Apply sessionType filter (post-query since custom_context/scheduled_from_worktree aren't in query schema)
       if (args.sessionType) {
@@ -183,13 +172,6 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
         const filterFn = (s: SessionListRow) => getSessionType(s) === targetType;
         const filtered = (allData as SessionListRow[]).filter(filterFn);
         allData = requestedLimit ? filtered.slice(0, requestedLimit) : filtered;
-      }
-
-      if (detailLevel === 'summary') {
-        allData = (allData as SessionListRow[]).map((session) => {
-          const { notes, last_message, ...rest } = session;
-          return rest;
-        });
       }
 
       if (Array.isArray(result)) {
@@ -352,7 +334,6 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
           ...ctx.baseServiceParams,
         });
 
-        // biome-ignore lint/suspicious/noExplicitAny: simple shape
         result.recent_sessions = (
           Array.isArray(recentSessions) ? recentSessions : recentSessions.data
         ).map((s: Record<string, unknown>) => ({
