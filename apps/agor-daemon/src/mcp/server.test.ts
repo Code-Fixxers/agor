@@ -233,11 +233,28 @@ describe('Stateful MCP Transports and API Key Context', () => {
     vi.useRealTimers();
   });
 
-  it('closes both transport and server during MCP cleanup', () => {
+  it('closes both transport and server during MCP cleanup', async () => {
     const transport = { close: vi.fn(async () => {}) };
     const server = { close: vi.fn(async () => {}) };
 
     closeMcpTransportState({ transport, server });
+    await Promise.resolve();
+
+    expect(transport.close).toHaveBeenCalledTimes(1);
+    expect(server.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('swallows cleanup close failures so timeout handlers cannot crash', async () => {
+    const transport = {
+      close: vi.fn(() => {
+        throw new Error('transport close failed');
+      }),
+    };
+    const server = { close: vi.fn(async () => {}) };
+
+    expect(() => closeMcpTransportState({ transport, server })).not.toThrow();
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(transport.close).toHaveBeenCalledTimes(1);
     expect(server.close).toHaveBeenCalledTimes(1);

@@ -107,8 +107,12 @@ export function closeMcpTransportState(state: {
   transport: { close: () => Promise<void> | void };
   server: { close: () => Promise<void> | void };
 }): void {
-  Promise.resolve(state.transport.close()).catch(() => {});
-  Promise.resolve(state.server.close()).catch(() => {});
+  Promise.resolve()
+    .then(() => state.transport.close())
+    .catch(() => {});
+  Promise.resolve()
+    .then(() => state.server.close())
+    .catch(() => {});
 }
 
 /** Server instructions shown to agents when tool search is enabled. */
@@ -926,7 +930,7 @@ export function setupMCPRoutes(
             transport.handleRequest(req, res, req.body),
             REQUEST_TIMEOUT_MS,
             'Request processing timed out',
-            () => closeMcpTransportState({ transport, server: mcpServer })
+            cleanupStateless
           );
         } catch (error) {
           if (error instanceof McpRequestTimeoutError) {
