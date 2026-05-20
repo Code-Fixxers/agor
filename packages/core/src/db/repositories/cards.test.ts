@@ -2,12 +2,12 @@
  * CardRepository tests.
  */
 
-import type { BoardID, CardID } from '@agor/core/types';
+import type { BoardID, CardID, CardTypeID } from '@agor/core/types';
 import { describe, expect } from 'vitest';
 import { generateId } from '../../lib/ids';
 import type { Database } from '../client';
 import { insert } from '../database-wrapper';
-import { boards } from '../schema';
+import { boards, cardTypes } from '../schema';
 import { dbTest } from '../test-helpers';
 import { BoardObjectRepository } from './board-objects';
 import { CardRepository } from './cards';
@@ -24,6 +24,20 @@ async function createBoard(db: Database): Promise<BoardID> {
     })
     .run();
   return boardId;
+}
+
+async function createCardType(db: Database): Promise<CardTypeID> {
+  const cardTypeId = generateId() as CardTypeID;
+  const now = new Date();
+  await insert(db, cardTypes)
+    .values({
+      card_type_id: cardTypeId,
+      name: 'Bug',
+      created_at: now,
+      updated_at: now,
+    })
+    .run();
+  return cardTypeId;
 }
 
 describe('CardRepository.findByZoneId', () => {
@@ -64,6 +78,65 @@ describe('CardRepository.findByZoneId', () => {
 
     const pageOne = await cardRepo.findByZoneId(boardId, 'todo', { archived: false, limit: 1 });
     const pageTwo = await cardRepo.findByZoneId(boardId, 'todo', {
+      archived: false,
+      limit: 1,
+      offset: 1,
+    });
+
+    expect(pageOne).toHaveLength(1);
+    expect(pageTwo).toHaveLength(1);
+    expect(pageOne[0].card_id).not.toBe(pageTwo[0].card_id);
+  });
+});
+
+describe('CardRepository.findByCardTypeId', () => {
+  dbTest('applies board, archive, and pagination constraints in SQL', async ({ db }) => {
+    const cardRepo = new CardRepository(db);
+    const boardId = await createBoard(db);
+    const otherBoardId = await createBoard(db);
+    const cardTypeId = await createCardType(db);
+
+    const archived = await cardRepo.create({
+      board_id: boardId,
+      card_type_id: cardTypeId,
+      title: 'Archived',
+    });
+    const first = await cardRepo.create({
+      board_id: boardId,
+      card_type_id: cardTypeId,
+      title: 'First',
+    });
+    const second = await cardRepo.create({
+      board_id: boardId,
+      card_type_id: cardTypeId,
+      title: 'Second',
+    });
+    const otherBoard = await cardRepo.create({
+      board_id: otherBoardId,
+      card_type_id: cardTypeId,
+      title: 'Other Board',
+    });
+
+    await cardRepo.archive(archived.card_id);
+
+    const unarchived = await cardRepo.findByCardTypeId(cardTypeId, {
+      boardId,
+      archived: false,
+      limit: 10,
+    });
+    expect(new Set(unarchived.map((card) => card.card_id))).toEqual(
+      new Set([first.card_id, second.card_id])
+    );
+    expect(unarchived.map((card) => card.card_id)).not.toContain(otherBoard.card_id);
+    expect(unarchived.map((card) => card.card_id)).not.toContain(archived.card_id);
+
+    const pageOne = await cardRepo.findByCardTypeId(cardTypeId, {
+      boardId,
+      archived: false,
+      limit: 1,
+    });
+    const pageTwo = await cardRepo.findByCardTypeId(cardTypeId, {
+      boardId,
       archived: false,
       limit: 1,
       offset: 1,

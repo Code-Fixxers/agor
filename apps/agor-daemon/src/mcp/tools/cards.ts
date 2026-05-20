@@ -137,16 +137,12 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
           offset,
         });
       } else if (cardTypeId) {
-        // Pull a larger window so post-filter can still fill `limit`.
-        const all = await cardsService.findByCardTypeId(cardTypeId as never, {
-          limit: limit + offset,
-          offset: 0,
+        cardsList = await cardsService.findByCardTypeId(cardTypeId as never, {
+          ...(boardId && { boardId: boardId as never }),
+          ...(archivedFilter !== undefined && { archived: archivedFilter }),
+          limit,
+          offset,
         });
-        const filtered =
-          archivedFilter === undefined
-            ? all
-            : all.filter((c) => Boolean(c.archived) === archivedFilter);
-        cardsList = filtered.slice(offset, offset + limit);
       } else if (boardId) {
         cardsList = await cardsService.findByBoardId(boardId as never, {
           ...(archivedFilter !== undefined && { archived: archivedFilter }),

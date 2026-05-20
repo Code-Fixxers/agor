@@ -217,10 +217,16 @@ export class CardRepository implements BaseRepository<Card, Partial<Card>> {
    */
   async findByCardTypeId(
     cardTypeId: CardTypeID,
-    options?: { limit?: number; offset?: number }
+    options?: { boardId?: BoardID; archived?: boolean; limit?: number; offset?: number }
   ): Promise<Card[]> {
     try {
-      let query = select(this.db).from(cards).where(eq(cards.card_type_id, cardTypeId));
+      const conditions = [eq(cards.card_type_id, cardTypeId)];
+      if (options?.boardId) conditions.push(eq(cards.board_id, options.boardId));
+      if (options?.archived !== undefined) conditions.push(eq(cards.archived, options.archived));
+
+      let query = select(this.db)
+        .from(cards)
+        .where(and(...conditions));
 
       if (options?.limit) query = query.limit(options.limit);
       if (options?.offset) query = query.offset(options.offset);
