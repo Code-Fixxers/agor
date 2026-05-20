@@ -17,7 +17,6 @@ import {
   getSessionType,
   type Session,
   type SessionID,
-  type SessionType,
   type ZoneBoardObject,
 } from '@agor/core/types';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -140,11 +139,9 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
     },
     async (args) => {
       const query: Record<string, unknown> = {};
-      // When sessionType is set, skip service-level pagination (it runs before our filter)
-      // and apply the requested limit ourselves after filtering.
       const detailLevel = args.detailLevel ?? 'summary';
       const requestedLimit = clampMcpLimit(args.limit, detailLevel === 'summary' ? 10 : 50);
-      if (!args.sessionType) query.$limit = requestedLimit;
+      query.$limit = requestedLimit;
       if (args.status) query.status = args.status;
       const boardId = args.boardId ? await resolveBoardId(ctx, args.boardId) : undefined;
       const worktreeId = args.worktreeId
@@ -155,6 +152,24 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       if (detailLevel === 'summary') {
         return textResult(await listSessionSummaries(ctx, { ...args, boardId, worktreeId }));
       }
+      if (args.sessionType) {
+        const summaryPage = (await listSessionSummaries(ctx, {
+          ...args,
+          boardId,
+          worktreeId,
+          limit: requestedLimit,
+        })) as { limit: number; has_more: boolean; data: Array<{ session_id: SessionID }> };
+        const sessionService = ctx.app.service('sessions');
+        const data = await Promise.all(
+          summaryPage.data.map((row) =>
+            sessionService.get(
+              row.session_id,
+              ctx.baseServiceParams as Parameters<SessionsServiceImpl['get']>[1]
+            )
+          )
+        );
+        return textResult({ ...summaryPage, data });
+      }
       if (args.archived === true) {
         query.archived = true;
       } else if (!args.includeArchived) {
@@ -164,15 +179,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       const result = await ctx.app.service('sessions').find({ query, ...ctx.baseServiceParams });
 
       type SessionListRow = Session & { notes?: unknown; last_message?: unknown };
-      let allData: SessionListRow[] = Array.isArray(result) ? result : result.data;
-
-      // Apply sessionType filter (post-query since custom_context/scheduled_from_worktree aren't in query schema)
-      if (args.sessionType) {
-        const targetType = args.sessionType as SessionType;
-        const filterFn = (s: SessionListRow) => getSessionType(s) === targetType;
-        const filtered = (allData as SessionListRow[]).filter(filterFn);
-        allData = requestedLimit ? filtered.slice(0, requestedLimit) : filtered;
-      }
+      const allData: SessionListRow[] = Array.isArray(result) ? result : result.data;
 
       if (Array.isArray(result)) {
         return textResult(allData);
@@ -181,7 +188,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
         ...result,
         data: allData,
         // biome-ignore lint/suspicious/noExplicitAny: Paginated result type
-        total: args.sessionType ? allData.length : (result as any).total,
+        total: (result as any).total,
       });
     }
   );

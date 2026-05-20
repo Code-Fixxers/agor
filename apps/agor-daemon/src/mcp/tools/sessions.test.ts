@@ -16,11 +16,17 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const listSessionSummariesMock = vi.hoisted(() => vi.fn());
+
 vi.mock('../resolve-ids.js', () => ({
   resolveBoardId: async (_ctx: unknown, id: string) => id,
   resolveSessionId: async (_ctx: unknown, id: string) => id,
   resolveWorktreeId: async (_ctx: unknown, id: string) => id,
   resolveMcpServerId: async (_ctx: unknown, id: string) => `full-${id}`,
+}));
+
+vi.mock('../lean-list-queries.js', () => ({
+  listSessionSummaries: listSessionSummariesMock,
 }));
 
 vi.mock('../../utils/worktree-authorization.js', () => ({
@@ -138,6 +144,54 @@ describe('sessionless API-key context', () => {
     expect(parsed.error).toMatch(/requires session context/i);
     expect(parsed.error).toMatch(/X-Agor-Session-Id/);
     expect(spawn).not.toHaveBeenCalled();
+  });
+});
+
+describe('agor_sessions_list', () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it('uses bounded lean IDs before hydrating full sessionType results', async () => {
+    listSessionSummariesMock.mockResolvedValueOnce({
+      limit: 100,
+      has_more: true,
+      data: [{ session_id: 'sess-1' }, { session_id: 'sess-2' }],
+    });
+    const sessionsFind = vi.fn();
+    const sessionsGet = vi.fn(async (id: string) => ({
+      session_id: id,
+      data: { title: `Session ${id}` },
+    }));
+    const app = makeFakeApp({
+      sessions: { find: sessionsFind, get: sessionsGet },
+    });
+    const { agor_sessions_list } = await registerAndCaptureHandlers({ app, userId: 'user-1' }, [
+      'agor_sessions_list',
+    ]);
+
+    const result = await agor_sessions_list({
+      detailLevel: 'full',
+      sessionType: 'gateway',
+      limit: 10_000,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(listSessionSummariesMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ detailLevel: 'full', sessionType: 'gateway', limit: 100 })
+    );
+    expect(sessionsFind).not.toHaveBeenCalled();
+    expect(sessionsGet).toHaveBeenCalledTimes(2);
+    expect(parsed).toEqual({
+      limit: 100,
+      has_more: true,
+      data: [
+        { session_id: 'sess-1', data: { title: 'Session sess-1' } },
+        { session_id: 'sess-2', data: { title: 'Session sess-2' } },
+      ],
+    });
   });
 });
 
