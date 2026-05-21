@@ -2,7 +2,7 @@ import { ROLES } from '@agor/core/types';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { McpContext } from '../server.js';
-import { textResult } from '../utils.js';
+import { clampMcpLimit, textResult } from '../utils.js';
 
 export function registerUserTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_users_list
@@ -12,11 +12,11 @@ export function registerUserTools(server: McpServer, ctx: McpContext): void {
       description: 'List all users in the system',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        limit: z.number().optional().describe('Maximum number of results (default: 50)'),
+        limit: z.number().optional().describe('Maximum number of results (default: 10, max: 100)'),
       }),
     },
     async (args) => {
-      const query: Record<string, unknown> = { $limit: args.limit ?? 50 };
+      const query: Record<string, unknown> = { $limit: clampMcpLimit(args.limit, 10) };
       const users = await ctx.app.service('users').find({ query, ...ctx.baseServiceParams });
       return textResult(users);
     }

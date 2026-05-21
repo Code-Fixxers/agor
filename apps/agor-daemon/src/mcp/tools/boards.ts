@@ -2,8 +2,9 @@ import type { Board } from '@agor/core/types';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { BoardsServiceImpl } from '../../declarations.js';
+import { listBoardSummaries } from '../lean-list-queries.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../utils.js';
+import { clampMcpLimit, coerceString, textResult } from '../utils.js';
 
 export function registerBoardTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_boards_get
@@ -53,7 +54,10 @@ export function registerBoardTools(server: McpServer, ctx: McpContext): void {
         'List all boards accessible to the current user. Each board includes a `url` field with a clickable link to view the board in the UI. By default, archived boards are excluded.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        limit: z.number().optional().describe('Maximum number of results (default: 50)'),
+        limit: z
+          .number()
+          .optional()
+          .describe('Maximum number of results (default: 10 for summary, 50 for full; max: 100)'),
         includeArchived: z
           .boolean()
           .optional()
@@ -76,26 +80,22 @@ export function registerBoardTools(server: McpServer, ctx: McpContext): void {
     },
     async (args) => {
       const query: Record<string, unknown> = {};
-      query.$limit = args.limit ?? 50;
+      const detailLevel = args.detailLevel ?? 'summary';
+      if (detailLevel === 'summary') {
+        return textResult(await listBoardSummaries(ctx, args));
+      }
+      query.$limit = clampMcpLimit(args.limit, 50);
       if (args.archived === true) {
         query.archived = true;
       } else if (!args.includeArchived) {
         query.archived = false;
       }
+
       const boards = await ctx.app.service('boards').find({ query, ...ctx.baseServiceParams });
 
-      type BoardSummary = Omit<import('@agor/core/types').Board, 'objects'>;
-      let allData: import('@agor/core/types').Board[] | BoardSummary[] = Array.isArray(boards)
+      const allData: import('@agor/core/types').Board[] = Array.isArray(boards)
         ? boards
         : boards.data;
-      const detailLevel = args.detailLevel ?? 'summary';
-
-      if (detailLevel === 'summary') {
-        allData = (allData as import('@agor/core/types').Board[]).map((board) => {
-          const { objects, ...rest } = board;
-          return rest;
-        });
-      }
 
       if (Array.isArray(boards)) {
         return textResult(allData);
@@ -112,7 +112,7 @@ export function registerBoardTools(server: McpServer, ctx: McpContext): void {
     'agor_boards_update',
     {
       description:
-        'Update board metadata and manage zones/objects. Can update name, icon, background, and create/update zones for organizing worktrees. Zone objects have: type="zone", x, y, width, height, label, borderColor, backgroundColor, borderStyle (optional), trigger (optional: "always_new" auto-creates sessions, "show_picker" shows agent selection). Text objects have: type="text", x, y, text, fontSize, color. Markdown objects have: type="markdown", x, y, width, height, content.',
+        'Update board metadata (name, icon, background) or objects (zones, text, markdown). Zones group worktrees and trigger sessions.',
       annotations: { idempotentHint: true },
       inputSchema: z.object({
         boardId: z.string().describe('Board ID (UUIDv7 or short ID)'),
@@ -147,6 +147,7 @@ export function registerBoardTools(server: McpServer, ctx: McpContext): void {
           .array(z.string())
           .optional()
           .describe('Array of object IDs to remove from the board'),
+        archived: z.boolean().optional().describe('Archive (true) or unarchive (false) the board'),
       }),
     },
     async (args) => {
@@ -192,6 +193,14 @@ export function registerBoardTools(server: McpServer, ctx: McpContext): void {
           );
         }
         if (finalBoard) ctx.app.service('boards').emit('patched', finalBoard);
+      }
+
+      if (args.archived !== undefined) {
+        if (args.archived) {
+          await boardsService.archive(boardId, ctx.baseServiceParams);
+        } else {
+          await boardsService.unarchive(boardId, ctx.baseServiceParams);
+        }
       }
 
       const board = await ctx.app.service('boards').get(boardId, ctx.baseServiceParams);
@@ -246,47 +255,49 @@ export function registerBoardTools(server: McpServer, ctx: McpContext): void {
     }
   );
 
-  // Tool 5: agor_boards_archive
+  // Tool 5: agor_boards_bulk_create
   server.registerTool(
-    'agor_boards_archive',
+    'agor_boards_bulk_create',
     {
-      description:
-        'Archive a board (soft delete). Archived boards are hidden from listings by default. Use agor_boards_unarchive to restore.',
-      annotations: { destructiveHint: true },
+      description: 'Create multiple boards in one operation.',
       inputSchema: z.object({
-        boardId: z.string().describe('Board ID to archive (UUIDv7 or short ID)'),
+        boards: z
+          .array(
+            z.object({
+              name: z.string().describe('Board name'),
+              slug: z.string().optional().describe('URL-friendly slug'),
+              description: z.string().optional().describe('Board description'),
+              icon: z.string().optional().describe('Board icon/emoji'),
+              color: z.string().optional().describe('Board color'),
+              backgroundColor: z.string().optional().describe('Board background color'),
+              customCss: z.string().optional().describe('Custom CSS'),
+            })
+          )
+          .describe('List of boards to create'),
       }),
     },
     async (args) => {
-      const boardId = coerceString(args.boardId)!;
-      const boardsService = ctx.app.service('boards') as unknown as BoardsServiceImpl;
-      const result = await boardsService.archive(boardId, ctx.baseServiceParams);
-      return textResult({
-        success: true,
-        board: result,
-        message: 'Board archived successfully.',
+      const creations = args.boards.map((b) => {
+        const boardData: Record<string, unknown> = {
+          name: coerceString(b.name)!,
+          created_by: ctx.userId,
+        };
+        if (b.slug !== undefined) boardData.slug = coerceString(b.slug);
+        if (b.description !== undefined) boardData.description = coerceString(b.description);
+        if (b.icon !== undefined) boardData.icon = coerceString(b.icon);
+        if (b.color !== undefined) boardData.color = coerceString(b.color);
+        if (b.backgroundColor !== undefined)
+          boardData.background_color = coerceString(b.backgroundColor);
+        if (b.customCss !== undefined) boardData.custom_css = coerceString(b.customCss);
+        return boardData;
       });
-    }
-  );
 
-  // Tool 6: agor_boards_unarchive
-  server.registerTool(
-    'agor_boards_unarchive',
-    {
-      description: 'Restore a previously archived board. The board will appear in listings again.',
-      inputSchema: z.object({
-        boardId: z.string().describe('Board ID to unarchive (UUIDv7 or short ID)'),
-      }),
-    },
-    async (args) => {
-      const boardId = coerceString(args.boardId)!;
-      const boardsService = ctx.app.service('boards') as unknown as BoardsServiceImpl;
-      const result = await boardsService.unarchive(boardId, ctx.baseServiceParams);
-      return textResult({
-        success: true,
-        board: result,
-        message: 'Board unarchived successfully.',
-      });
+      const results = [];
+      for (const boardData of creations) {
+        const result = await ctx.app.service('boards').create(boardData, ctx.baseServiceParams);
+        results.push(result);
+      }
+      return textResult({ created: results.length, boards: results });
     }
   );
 }

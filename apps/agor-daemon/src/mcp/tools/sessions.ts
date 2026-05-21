@@ -17,7 +17,6 @@ import {
   getSessionType,
   type Session,
   type SessionID,
-  type SessionType,
   type ZoneBoardObject,
 } from '@agor/core/types';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -25,6 +24,7 @@ import { z } from 'zod';
 import type { SessionsServiceImpl } from '../../declarations.js';
 import type { SessionParams } from '../../services/sessions.js';
 import { ensureCanPromptTargetSession } from '../../utils/worktree-authorization.js';
+import { listSessionSummaries } from '../lean-list-queries.js';
 import {
   resolveBoardId,
   resolveMcpServerId,
@@ -32,7 +32,7 @@ import {
   resolveWorktreeId,
 } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { sessionContextRequiredResult, textResult } from '../utils.js';
+import { clampMcpLimit, sessionContextRequiredResult, textResult } from '../utils.js';
 import { listAttachedMcpServers } from './mcp-servers.js';
 
 /**
@@ -116,7 +116,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       description: 'List sessions accessible to the user. Each result includes a `url` field.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        limit: z.number().optional().describe('Default: 50'),
+        limit: z.number().optional().describe('Default: 10 for summary, 50 for full; max: 100'),
         status: z
           .enum(['idle', 'running', 'completed', 'failed'])
           .optional()
@@ -139,38 +139,47 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
     },
     async (args) => {
       const query: Record<string, unknown> = {};
-      // When sessionType is set, skip service-level pagination (it runs before our filter)
-      // and apply the requested limit ourselves after filtering.
-      const requestedLimit = args.limit ?? 50;
-      if (!args.sessionType) query.$limit = requestedLimit;
+      const detailLevel = args.detailLevel ?? 'summary';
+      const requestedLimit = clampMcpLimit(args.limit, detailLevel === 'summary' ? 10 : 50);
+      query.$limit = requestedLimit;
       if (args.status) query.status = args.status;
-      if (args.boardId) query.board_id = await resolveBoardId(ctx, args.boardId);
-      if (args.worktreeId) query.worktree_id = await resolveWorktreeId(ctx, args.worktreeId);
+      const boardId = args.boardId ? await resolveBoardId(ctx, args.boardId) : undefined;
+      const worktreeId = args.worktreeId
+        ? await resolveWorktreeId(ctx, args.worktreeId)
+        : undefined;
+      if (boardId) query.board_id = boardId;
+      if (worktreeId) query.worktree_id = worktreeId;
+      if (detailLevel === 'summary') {
+        return textResult(await listSessionSummaries(ctx, { ...args, boardId, worktreeId }));
+      }
+      if (args.sessionType) {
+        const summaryPage = (await listSessionSummaries(ctx, {
+          ...args,
+          boardId,
+          worktreeId,
+          limit: requestedLimit,
+        })) as { limit: number; has_more: boolean; data: Array<{ session_id: SessionID }> };
+        const sessionService = ctx.app.service('sessions');
+        const data = await Promise.all(
+          summaryPage.data.map((row) =>
+            sessionService.get(
+              row.session_id,
+              ctx.baseServiceParams as Parameters<SessionsServiceImpl['get']>[1]
+            )
+          )
+        );
+        return textResult({ ...summaryPage, data });
+      }
       if (args.archived === true) {
         query.archived = true;
       } else if (!args.includeArchived) {
         query.archived = false;
       }
+
       const result = await ctx.app.service('sessions').find({ query, ...ctx.baseServiceParams });
 
-      type SessionSummary = Omit<Session, 'notes' | 'last_message'>;
-      let allData: Session[] | SessionSummary[] = Array.isArray(result) ? result : result.data;
-
-      // Apply sessionType filter (post-query since custom_context/scheduled_from_worktree aren't in query schema)
-      if (args.sessionType) {
-        const targetType = args.sessionType as SessionType;
-        const filterFn = (s: Session) => getSessionType(s) === targetType;
-        const filtered = (allData as Session[]).filter(filterFn);
-        allData = requestedLimit ? filtered.slice(0, requestedLimit) : filtered;
-      }
-
-      const detailLevel = args.detailLevel ?? 'summary';
-      if (detailLevel === 'summary') {
-        allData = (allData as Session[]).map((session) => {
-          const { notes, last_message, ...rest } = session;
-          return rest;
-        });
-      }
+      type SessionListRow = Session & { notes?: unknown; last_message?: unknown };
+      const allData: SessionListRow[] = Array.isArray(result) ? result : result.data;
 
       if (Array.isArray(result)) {
         return textResult(allData);
@@ -179,7 +188,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
         ...result,
         data: allData,
         // biome-ignore lint/suspicious/noExplicitAny: Paginated result type
-        total: args.sessionType ? allData.length : (result as any).total,
+        total: (result as any).total,
       });
     }
   );
@@ -291,14 +300,14 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
     }
   );
 
-  // Tool 3b: agor_sessions_get_current_context
+  // Tool 3b: agor_get_context
   // Returns a lean, deduplicated orientation payload. Each field appears exactly once.
   // Agents needing full entity details should call get_current, sessions_get, etc.
   server.registerTool(
-    'agor_sessions_get_current_context',
+    'agor_get_context',
     {
       description:
-        'Lean orientation snapshot for the current session: identity, user, git, worktree, board, repo, genealogy, siblings. Deduplicated.',
+        'Composite orientation endpoint. Returns common orientation data in a single call: current user, active board, recent sessions, and board state. If called within a session, includes session-specific git, worktree, genealogy, and sibling data.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         includeSiblings: z
@@ -308,32 +317,55 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
       }),
     },
     async (args) => {
-      if (!ctx.sessionId) return sessionContextRequiredResult();
       const currentSessionId = ctx.sessionId;
       const includeSiblings = args.includeSiblings !== false;
 
-      // Fetch session and user in parallel (no dependencies)
-      const [session, user] = await Promise.all([
-        ctx.app.service('sessions').get(currentSessionId, ctx.baseServiceParams),
-        ctx.app.service('users').get(ctx.userId, ctx.baseServiceParams),
-      ]);
+      // Fetch user context
+      const user = await ctx.app.service('users').get(ctx.userId, ctx.baseServiceParams);
 
-      // Build the lean response — each piece of information appears exactly once
       const result: Record<string, unknown> = {
-        // Session identity (the minimum to know "who am I")
-        session_id: session.session_id,
-        url: session.url,
-        status: session.status,
-        agentic_tool: session.agentic_tool,
-        title: session.title,
-        model: session.model_config?.model || null,
-        effort: session.model_config?.effort || null,
-
-        // User (who is authenticated / who is prompting)
         user_name: user.name,
         user_email: user.email,
         user_role: user.role,
       };
+
+      if (!currentSessionId) {
+        // If there's no active session, fetch recent sessions across the workspace
+        const recentSessions = await ctx.app.service('sessions').find({
+          query: {
+            archived: false,
+            created_by: ctx.userId,
+            $limit: 5,
+            $sort: { last_updated: -1 },
+          },
+          ...ctx.baseServiceParams,
+        });
+
+        result.recent_sessions = (
+          Array.isArray(recentSessions) ? recentSessions : recentSessions.data
+        ).map((s: Record<string, unknown>) => ({
+          session_id: s.session_id,
+          title: s.title,
+          status: s.status,
+          url: s.url,
+        }));
+
+        return textResult(result);
+      }
+
+      // Fetch session
+      const session = await ctx.app
+        .service('sessions')
+        .get(currentSessionId, ctx.baseServiceParams);
+
+      // Session identity (the minimum to know "who am I")
+      result.session_id = session.session_id;
+      result.url = session.url;
+      result.status = session.status;
+      result.agentic_tool = session.agentic_tool;
+      result.title = session.title;
+      result.model = session.model_config?.model || null;
+      result.effort = session.model_config?.effort || null;
 
       // Creator info only when different from authenticated user
       if (session.created_by && session.created_by !== ctx.userId) {
@@ -922,7 +954,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
     'agor_sessions_update',
     {
       description:
-        'Update session metadata (title, description, status, archived, callback config). Useful for agents to self-document their work or manage callback settings.',
+        'Update session metadata (title, description, status, archived, callback config).',
       annotations: { idempotentHint: true },
       inputSchema: z.object({
         sessionId: z.string().describe('Session ID to update (UUIDv7 or short ID)'),
@@ -1105,7 +1137,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
     'agor_sessions_bulk_archive',
     {
       description:
-        'Archive multiple sessions matching filter criteria. Supports filtering by session type (gateway/scheduled/agent), age, status, board, and worktree. Returns a dry-run preview by default — set dryRun to false to actually archive. Respects RBAC: sessions the current user cannot modify are skipped and reported as errors.',
+        'Archive multiple sessions based on filters. Supports dry-run (default). Skips sessions user lacks permission for.',
       annotations: { destructiveHint: true },
       inputSchema: z.object({
         sessionType: z
@@ -1229,8 +1261,7 @@ export function registerSessionTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'agor_sessions_stop',
     {
-      description:
-        'Stop a running session. Kills the executor process and sets the session to idle. Use this for emergency stops, timeout-based cancellation, or human-in-the-loop gates. Only works on sessions in active states (running, awaiting_permission, stopping).',
+      description: 'Stop a running session. Kills the process and sets status to idle.',
       annotations: { destructiveHint: true },
       inputSchema: z.object({
         sessionId: z.string().describe('Session ID to stop (UUIDv7 or short ID)'),

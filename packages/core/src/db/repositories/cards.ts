@@ -7,10 +7,10 @@
 
 import type { BoardID, Card, CardType, CardTypeID, CardWithType, UUID } from '@agor/core/types';
 import { prefixToLikePattern } from '@agor/core/types';
-import { and, eq, like } from 'drizzle-orm';
+import { and, eq, getTableColumns, like } from 'drizzle-orm';
 import { generateId } from '../../lib/ids';
 import type { Database } from '../client';
-import { deleteFrom, insert, select, update } from '../database-wrapper';
+import { deleteFrom, insert, jsonExtract, select, update } from '../database-wrapper';
 import { boardObjects, type CardInsert, type CardRow, cards, cardTypes } from '../schema';
 import {
   AmbiguousIdError,
@@ -217,10 +217,16 @@ export class CardRepository implements BaseRepository<Card, Partial<Card>> {
    */
   async findByCardTypeId(
     cardTypeId: CardTypeID,
-    options?: { limit?: number; offset?: number }
+    options?: { boardId?: BoardID; archived?: boolean; limit?: number; offset?: number }
   ): Promise<Card[]> {
     try {
-      let query = select(this.db).from(cards).where(eq(cards.card_type_id, cardTypeId));
+      const conditions = [eq(cards.card_type_id, cardTypeId)];
+      if (options?.boardId) conditions.push(eq(cards.board_id, options.boardId));
+      if (options?.archived !== undefined) conditions.push(eq(cards.archived, options.archived));
+
+      let query = select(this.db)
+        .from(cards)
+        .where(and(...conditions));
 
       if (options?.limit) query = query.limit(options.limit);
       if (options?.offset) query = query.offset(options.offset);
@@ -266,31 +272,31 @@ export class CardRepository implements BaseRepository<Card, Partial<Card>> {
   /**
    * Find cards by zone ID (join with board_objects)
    */
-  async findByZoneId(boardId: BoardID, zoneId: string): Promise<Card[]> {
+  async findByZoneId(
+    boardId: BoardID,
+    zoneId: string,
+    options?: { archived?: boolean; limit?: number; offset?: number }
+  ): Promise<Card[]> {
     try {
-      // Get board objects in this zone that reference cards
-      const objectRows = await select(this.db)
-        .from(boardObjects)
-        .where(eq(boardObjects.board_id, boardId))
-        .all();
-
-      const cardIds: string[] = [];
-      for (const row of objectRows) {
-        const data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
-        if (data.zone_id === zoneId && row.card_id) {
-          cardIds.push(row.card_id);
-        }
+      const conditions = [
+        eq(boardObjects.board_id, boardId),
+        eq(cards.board_id, boardId),
+        eq(jsonExtract(this.db, boardObjects.data, 'zone_id'), zoneId),
+      ];
+      if (options?.archived !== undefined) {
+        conditions.push(eq(cards.archived, options.archived));
       }
 
-      if (cardIds.length === 0) return [];
+      let query = select(this.db, getTableColumns(cards))
+        .from(cards)
+        .innerJoin(boardObjects, eq(boardObjects.card_id, cards.card_id))
+        .where(and(...conditions));
 
-      // Fetch all cards by IDs
-      const result: Card[] = [];
-      for (const cardId of cardIds) {
-        const card = await this.findById(cardId);
-        if (card) result.push(card);
-      }
-      return result;
+      if (options?.limit) query = query.limit(options.limit);
+      if (options?.offset) query = query.offset(options.offset);
+
+      const rows = await query.all();
+      return rows.map((row: CardRow) => this.rowToCard(row));
     } catch (error) {
       throw new RepositoryError(
         `Failed to find cards by zone: ${error instanceof Error ? error.message : String(error)}`,

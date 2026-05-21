@@ -16,7 +16,7 @@ import type {
   WorktreeID,
 } from '@agor/core/types';
 import { prefixToLikePattern } from '@agor/core/types';
-import { and, eq, like, or } from 'drizzle-orm';
+import { and, eq, getTableColumns, like, or } from 'drizzle-orm';
 import { generateId } from '../../lib/ids';
 import type { Database } from '../client';
 import { deleteFrom, insert, select, update } from '../database-wrapper';
@@ -28,8 +28,21 @@ import {
   RepositoryError,
 } from './base';
 
+type ArtifactListOptions = { limit?: number; omitFiles?: boolean };
+type ArtifactBoardListOptions = ArtifactListOptions & {
+  archived?: boolean;
+  userId?: string;
+};
+
 export class ArtifactRepository implements BaseRepository<Artifact, Partial<Artifact>> {
   constructor(private db: Database) {}
+
+  private listColumns(omitFiles?: boolean) {
+    const columns = getTableColumns(artifacts);
+    if (!omitFiles) return columns;
+    const { files: _files, ...withoutFiles } = columns;
+    return withoutFiles;
+  }
 
   private rowToArtifact(row: ArtifactRow): Artifact {
     return {
@@ -161,9 +174,9 @@ export class ArtifactRepository implements BaseRepository<Artifact, Partial<Arti
   /**
    * Find all visible artifacts for a user: public + private owned by userId.
    */
-  async findVisible(userId: string, options?: { limit?: number }): Promise<Artifact[]> {
+  async findVisible(userId: string, options?: ArtifactListOptions): Promise<Artifact[]> {
     try {
-      let query = select(this.db)
+      let query = select(this.db, this.listColumns(options?.omitFiles))
         .from(artifacts)
         .where(or(eq(artifacts.public, true), eq(artifacts.created_by, userId))!);
 
@@ -196,10 +209,7 @@ export class ArtifactRepository implements BaseRepository<Artifact, Partial<Arti
     }
   }
 
-  async findByBoardId(
-    boardId: BoardID,
-    options?: { archived?: boolean; limit?: number; userId?: string }
-  ): Promise<Artifact[]> {
+  async findByBoardId(boardId: BoardID, options?: ArtifactBoardListOptions): Promise<Artifact[]> {
     try {
       const conditions = [eq(artifacts.board_id, boardId)];
       if (options?.archived !== undefined) {
@@ -211,7 +221,7 @@ export class ArtifactRepository implements BaseRepository<Artifact, Partial<Arti
         conditions.push(or(eq(artifacts.public, true), eq(artifacts.created_by, options.userId))!);
       }
 
-      let query = select(this.db)
+      let query = select(this.db, this.listColumns(options?.omitFiles))
         .from(artifacts)
         .where(and(...conditions));
 

@@ -130,7 +130,7 @@ export class CardsService extends DrizzleService<Card, Partial<Card>, CardParams
    */
   async findByCardTypeId(
     cardTypeId: CardTypeID,
-    options?: { limit?: number; offset?: number }
+    options?: { boardId?: BoardID; archived?: boolean; limit?: number; offset?: number }
   ): Promise<Card[]> {
     return this.cardRepo.findByCardTypeId(cardTypeId, options);
   }
@@ -138,8 +138,12 @@ export class CardsService extends DrizzleService<Card, Partial<Card>, CardParams
   /**
    * Find cards by zone ID
    */
-  async findByZoneId(boardId: BoardID, zoneId: string): Promise<Card[]> {
-    return this.cardRepo.findByZoneId(boardId, zoneId);
+  async findByZoneId(
+    boardId: BoardID,
+    zoneId: string,
+    options?: { archived?: boolean; limit?: number; offset?: number }
+  ): Promise<Card[]> {
+    return this.cardRepo.findByZoneId(boardId, zoneId, options);
   }
 
   /**

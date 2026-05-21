@@ -4,20 +4,39 @@ import {
   asc,
   desc,
   eq,
+  exists,
   inArray,
+  isNotNull,
   messages as messagesTable,
   or,
-  SessionRepository,
   select,
+  sessions,
   sql,
+  worktreeOwners,
+  worktrees,
 } from '@agor/core/db';
-import type { ContentBlock } from '@agor/core/types';
+import { type ContentBlock, WORKTREE_PERMISSION_LEVELS } from '@agor/core/types';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { isSuperAdmin } from '../../utils/worktree-authorization.js';
 import { resolveSessionId, resolveTaskId } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../utils.js';
+import { clampMcpOffset, coerceString, textResult } from '../utils.js';
+
+type ExistsQuery = {
+  from(table: unknown): ExistsQuery;
+  innerJoin(table: unknown, on: unknown): ExistsQuery;
+  leftJoin(table: unknown, on: unknown): ExistsQuery;
+  where(condition: unknown): Parameters<typeof exists>[0];
+};
+
+function rawExistsSelect(ctx: McpContext): ExistsQuery {
+  const dbSelect = (ctx.db as unknown as { select?: (columns: Record<string, unknown>) => unknown })
+    .select;
+  return (typeof dbSelect === 'function'
+    ? dbSelect({ _: sql`1` })
+    : select(ctx.db, { _: sql`1` })) as unknown as ExistsQuery;
+}
 
 export function registerMessageTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_messages_list
@@ -52,7 +71,7 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
             'Content detail level. "preview" returns first 200 chars (default). "full" returns complete text content.'
           ),
         limit: z.number().optional().describe('Maximum number of messages to return (default: 20)'),
-        offset: z.number().optional().describe('Skip first N messages (default: 0)'),
+        offset: z.number().optional().describe('Skip first N messages (default: 0, max: 10000)'),
         order: z
           .enum(['asc', 'desc'])
           .optional()
@@ -65,6 +84,12 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
           .optional()
           .describe(
             'Include messages from archived sessions (default: false). Ignored when sessionId/taskId is explicitly set.'
+          ),
+        includeTotal: z
+          .boolean()
+          .optional()
+          .describe(
+            'Compute an exact total count (default: false). Off by default because it can scan long transcripts/searches.'
           ),
       }),
     },
@@ -85,8 +110,8 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
       const contentMode = args.contentMode === 'full' ? 'full' : 'preview';
       const rawLimit = typeof args.limit === 'number' ? args.limit : 20;
       const limit = Math.min(Math.max(0, Math.floor(rawLimit)) || 20, 100);
-      const rawOffset = typeof args.offset === 'number' ? args.offset : 0;
-      const offset = Math.max(0, Math.floor(rawOffset)) || 0;
+      const offset = clampMcpOffset(args.offset);
+      const includeTotal = args.includeTotal === true;
       const order =
         args.order === 'asc' || args.order === 'desc'
           ? args.order
@@ -124,45 +149,111 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
       }
 
       // Default-exclude messages from archived sessions for unscoped queries.
-      // An explicit sessionId/taskId (caller opted in) bypasses this filter.
+      // Use correlated SQL predicates instead of hydrating session id lists into
+      // memory; large installations can exceed SQLite variable limits otherwise.
+      const sessionMatchesMessage = eq(sessions.session_id, messagesTable.session_id);
       if (!sessionId && !taskId && !includeArchived) {
-        const activeSessions = await ctx.app.service('sessions').find({
-          query: { archived: false, $limit: 10000, $select: ['session_id'] },
-          ...ctx.baseServiceParams,
-        });
-        const activeIds = (
-          Array.isArray(activeSessions) ? activeSessions : activeSessions.data
-        ).map((s: { session_id: string }) => s.session_id);
-        if (activeIds.length === 0) {
-          return textResult({ messages: [], total: 0, offset, limit });
-        }
-        conditions.push(inArray(messagesTable.session_id, activeIds));
+        conditions.push(
+          exists(
+            rawExistsSelect(ctx)
+              .from(sessions)
+              .where(and(sessionMatchesMessage, eq(sessions.archived, false)))
+          )
+        );
       }
 
       // RBAC enforcement: when worktree_rbac is enabled, restrict this search
-      // to sessions the caller can access. Superadmins bypass. When RBAC is
-      // disabled (default / open-access mode), skip this filter entirely to
-      // preserve backward-compatible behavior.
+      // to sessions the caller can access via an EXISTS semi-join. This preserves
+      // the hook semantics without building a huge `IN (...)` list.
       if (isWorktreeRbacEnabled()) {
         const userRole = ctx.authenticatedUser?.role as string | undefined;
         if (!isSuperAdmin(userRole)) {
-          const sessionRepo = new SessionRepository(ctx.db);
-          const accessibleSessions = await sessionRepo.findAccessibleSessions(ctx.userId);
-          const accessibleIds = accessibleSessions.map((s) => s.session_id);
-          if (accessibleIds.length === 0) {
-            return textResult({ messages: [], total: 0, offset, limit });
-          }
-          conditions.push(inArray(messagesTable.session_id, accessibleIds));
+          const permissiveLevels = WORKTREE_PERMISSION_LEVELS.filter((level) => level !== 'none');
+          conditions.push(
+            exists(
+              rawExistsSelect(ctx)
+                .from(sessions)
+                .innerJoin(worktrees, eq(sessions.worktree_id, worktrees.worktree_id))
+                .leftJoin(
+                  worktreeOwners,
+                  and(
+                    eq(worktreeOwners.worktree_id, worktrees.worktree_id),
+                    eq(worktreeOwners.user_id, ctx.userId)
+                  )
+                )
+                .where(
+                  and(
+                    sessionMatchesMessage,
+                    or(
+                      isNotNull(worktreeOwners.user_id),
+                      inArray(worktrees.others_can, permissiveLevels)
+                    )
+                  )
+                )
+            )
+          );
         }
       }
 
       const orderCol = sessionId ? messagesTable.index : messagesTable.timestamp;
       const orderBy = order === 'desc' ? desc(orderCol) : asc(orderCol);
-      const allRows = await select(ctx.db)
-        .from(messagesTable)
-        .where(conditions.length > 0 ? and(...conditions) : undefined)
-        .orderBy(orderBy)
-        .all();
+      const whereCondition = conditions.length > 0 ? and(...conditions) : undefined;
+
+      type MessageRow = typeof messagesTable.$inferSelect;
+
+      const hasTextContent = (content: unknown, fallback?: string | null): boolean => {
+        if (typeof content === 'string') return content.trim().length > 0;
+        if (!Array.isArray(content)) return Boolean(fallback?.trim());
+        return (content as ContentBlock[]).some(
+          (block) => block.type === 'text' && typeof block.text === 'string' && block.text.trim()
+        );
+      };
+
+      const shouldIncludeRow = (row: MessageRow): boolean => {
+        if (includeToolCalls) return true;
+        const data = row.data as { content?: unknown };
+        const content = data?.content;
+
+        if (row.role === 'user' && Array.isArray(content)) {
+          return (content as ContentBlock[]).some((block) => block.type !== 'tool_result');
+        }
+
+        if (row.role === 'assistant') {
+          return hasTextContent(content, row.content_preview);
+        }
+
+        return true;
+      };
+
+      const pageRows: MessageRow[] = [];
+      let total = 0;
+      let scanOffset = 0;
+      const scanChunkSize = Math.max(limit * 4, 100);
+      const scanUntilMatches = includeTotal ? Number.POSITIVE_INFINITY : offset + limit + 1;
+
+      scanLoop: while (true) {
+        const candidateRows = (await select(ctx.db)
+          .from(messagesTable)
+          .where(whereCondition)
+          .orderBy(orderBy)
+          .limit(scanChunkSize)
+          .offset(scanOffset)
+          .all()) as MessageRow[];
+
+        if (candidateRows.length === 0) break;
+
+        for (const row of candidateRows) {
+          if (!shouldIncludeRow(row)) continue;
+          if (total >= offset && pageRows.length < limit) {
+            pageRows.push(row);
+          }
+          total++;
+          if (total >= scanUntilMatches) break scanLoop;
+        }
+
+        scanOffset += candidateRows.length;
+        if (candidateRows.length < scanChunkSize) break;
+      }
 
       // Post-process
       type ProcessedMessage = {
@@ -178,20 +269,13 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
 
       const processed: ProcessedMessage[] = [];
 
-      for (const row of allRows) {
+      for (const row of pageRows) {
         const data = row.data as {
           content?: unknown;
           tool_uses?: unknown[];
           metadata?: unknown;
         };
         const content = data?.content;
-
-        if (!includeToolCalls && row.role === 'user' && Array.isArray(content)) {
-          const hasNonToolResult = (content as ContentBlock[]).some(
-            (block) => block.type !== 'tool_result'
-          );
-          if (!hasNonToolResult) continue;
-        }
 
         let text: string;
         let toolCallCount = 0;
@@ -223,10 +307,6 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
           }
         }
 
-        if (!includeToolCalls && row.role === 'assistant' && !text.trim()) {
-          continue;
-        }
-
         const msg: ProcessedMessage = {
           message_id: row.message_id,
           session_id: row.session_id,
@@ -241,9 +321,17 @@ export function registerMessageTools(server: McpServer, ctx: McpContext): void {
         processed.push(msg);
       }
 
-      const total = processed.length;
-      const paged = processed.slice(offset, offset + limit);
-      return textResult({ messages: paged, total, offset, limit });
+      const hasMore = total > offset + pageRows.length;
+      const response: Record<string, unknown> = {
+        messages: processed,
+        offset,
+        limit,
+        has_more: hasMore,
+      };
+      if (includeTotal || total === 0) response.total = total;
+      if (hasMore) response.next_offset = offset + pageRows.length;
+
+      return textResult(response);
     }
   );
 }

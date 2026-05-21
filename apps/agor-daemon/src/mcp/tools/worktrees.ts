@@ -16,6 +16,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ReposServiceImpl, WorktreesServiceImpl } from '../../declarations.js';
 import type { WorktreeParams } from '../../services/worktrees.js';
+import { listWorktreeSummaries } from '../lean-list-queries.js';
 import {
   resolveBoardId,
   resolveMcpServerId,
@@ -24,7 +25,7 @@ import {
   resolveWorktreeId,
 } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { coerceString, sessionContextRequiredResult, textResult } from '../utils.js';
+import { clampMcpLimit, coerceString, sessionContextRequiredResult, textResult } from '../utils.js';
 import { assertValidVariant } from './_environment-helpers.js';
 
 const WORKTREE_NAME_PATTERN = /^[a-z0-9-]+$/;
@@ -66,7 +67,10 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         repoId: z.string().optional().describe('Repository ID to filter by'),
-        limit: z.number().optional().describe('Maximum number of results (default: 50)'),
+        limit: z
+          .number()
+          .optional()
+          .describe('Maximum number of results (default: 10 for summary, 50 for full; max: 100)'),
         includeArchived: z
           .boolean()
           .optional()
@@ -89,30 +93,28 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
     },
     async (args) => {
       const query: Record<string, unknown> = {};
-      if (args.repoId) query.repo_id = await resolveRepoId(ctx, args.repoId);
-      query.$limit = args.limit ?? 50;
+      const repoId = args.repoId ? await resolveRepoId(ctx, args.repoId) : undefined;
+      if (repoId) query.repo_id = repoId;
+      const detailLevel = args.detailLevel ?? 'summary';
+      if (detailLevel === 'summary') {
+        return textResult(await listWorktreeSummaries(ctx, { ...args, repoId }));
+      }
+      query.$limit = clampMcpLimit(args.limit, 50);
       if (args.archived === true) {
         query.archived = true;
       } else if (!args.includeArchived) {
         query.archived = false;
       }
+
       const worktrees = await ctx.app
         .service('worktrees')
         .find({ query, ...ctx.baseServiceParams });
 
-      type WorktreeSummary = Omit<import('@agor/core/db').WorktreeWithZoneAndSessions, 'notes'>;
-      let allData: import('@agor/core/db').WorktreeWithZoneAndSessions[] | WorktreeSummary[] =
-        Array.isArray(worktrees) ? worktrees : worktrees.data;
-      const detailLevel = args.detailLevel ?? 'summary';
-
-      if (detailLevel === 'summary') {
-        allData = (allData as import('@agor/core/db').WorktreeWithZoneAndSessions[]).map(
-          (worktree) => {
-            const { notes, ...rest } = worktree;
-            return rest;
-          }
-        );
-      }
+      const allData: import('@agor/core/db').WorktreeWithZoneAndSessions[] = Array.isArray(
+        worktrees
+      )
+        ? worktrees
+        : worktrees.data;
 
       if (Array.isArray(worktrees)) {
         return textResult(allData);
@@ -565,7 +567,7 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
     'agor_worktrees_set_zone',
     {
       description:
-        "Pin a worktree to a zone on a board and optionally trigger the zone's prompt template. Calculates zone center position automatically and creates board association. If the zone has an 'always_new' trigger, a new session is automatically created and the prompt template is executed (matching UI drag-drop behavior). For 'show_picker' zones, use triggerTemplate + targetSessionId to send to an existing session.",
+        "Pin a worktree to a board zone. Optionally trigger the zone's prompt template ('always_new' creates a session, 'show_picker' needs targetSessionId).",
       inputSchema: z.object({
         worktreeId: z.string().describe('Worktree ID to pin to the zone (UUIDv7 or short ID)'),
         zoneId: z.string().describe('Zone ID to pin the worktree to (e.g., "zone-1770152859108")'),
@@ -920,11 +922,17 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         repoId: z.string().optional().describe('Filter assistants by repository ID'),
-        limit: z.number().optional().describe('Maximum number of worktrees to scan (default: 200)'),
+        limit: z
+          .number()
+          .optional()
+          .describe('Maximum number of worktrees to scan (default: 200, max: 500)'),
       }),
     },
     async (args) => {
-      const query: Record<string, unknown> = { archived: false, $limit: args.limit || 200 };
+      const query: Record<string, unknown> = {
+        archived: false,
+        $limit: clampMcpLimit(args.limit, 200, 500),
+      };
       if (args.repoId) query.repo_id = await resolveRepoId(ctx, args.repoId);
 
       const result = await ctx.app.service('worktrees').find({ query, ...ctx.baseServiceParams });
@@ -960,6 +968,56 @@ export function registerWorktreeTools(server: McpServer, ctx: McpContext): void 
         total: shaped.length,
         assistants: shaped,
       });
+    }
+  );
+
+  // Tool 7: agor_worktrees_bulk_update
+  server.registerTool(
+    'agor_worktrees_bulk_update',
+    {
+      description: 'Update multiple worktrees in one operation (e.g. for batch zone reassignment).',
+      annotations: { idempotentHint: true },
+      inputSchema: z.object({
+        updates: z
+          .array(
+            z.object({
+              worktreeId: z.string().describe('Worktree ID'),
+              boardId: z.string().nullable().optional().describe('Board ID. null to unplace.'),
+              archived: z.boolean().optional().describe('Archive state'),
+            })
+          )
+          .describe('List of updates'),
+      }),
+    },
+    async (args) => {
+      const results = [];
+      const worktreesService = ctx.app.service('worktrees') as unknown as WorktreesServiceImpl;
+
+      for (const update of args.updates) {
+        let worktree = await ctx.app
+          .service('worktrees')
+          .patch(update.worktreeId, { board_id: update.boardId }, ctx.baseServiceParams);
+
+        if (update.archived !== undefined) {
+          if (update.archived) {
+            worktree = await worktreesService.archiveOrDelete(
+              update.worktreeId as WorktreeID,
+              { metadataAction: 'archive', filesystemAction: 'cleaned' },
+              ctx.baseServiceParams
+            );
+          } else {
+            // biome-ignore lint/suspicious/noExplicitAny: ID typing
+            const bId = (update.boardId || undefined) as any;
+            worktree = await worktreesService.unarchive(
+              update.worktreeId as WorktreeID,
+              { boardId: bId },
+              ctx.baseServiceParams
+            );
+          }
+        }
+        results.push(worktree);
+      }
+      return textResult({ updated: results.length, worktrees: results });
     }
   );
 }

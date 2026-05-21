@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { CardsService } from '../../services/cards.js';
 import { resolveBoardId, resolveCardId } from '../resolve-ids.js';
 import type { McpContext } from '../server.js';
-import { coerceString, textResult } from '../utils.js';
+import { clampMcpLimit, clampMcpOffset, coerceString, textResult } from '../utils.js';
 
 export function registerCardTools(server: McpServer, ctx: McpContext): void {
   // Tool 1: agor_cards_create
@@ -98,8 +98,14 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
         search: z.string().optional().describe('Search query for card titles/descriptions'),
         includeArchived: z.boolean().optional().describe('Include archived (default: false)'),
         archived: z.boolean().optional().describe('ONLY archived (overrides includeArchived)'),
-        limit: z.number().optional().describe('Default: 50'),
-        offset: z.number().optional().describe('Default: 0'),
+        limit: z.number().optional().describe('Default: 10 for list, 50 for full; max: 100'),
+        offset: z.number().optional().describe('Default: 0, max: 10000'),
+        detail: z
+          .enum(['list', 'full'])
+          .optional()
+          .describe(
+            '"list" (default) returns summaries; "full" returns descriptions, notes, and full data object.'
+          ),
       }),
     },
     async (args) => {
@@ -112,17 +118,17 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
       // archived semantics: true = only archived, false/undefined with includeArchived = both, otherwise only non-archived
       const archivedFilter: boolean | undefined =
         args.archived === true ? true : args.includeArchived ? undefined : false;
-      const limit = typeof args.limit === 'number' ? args.limit : 50;
-      const offset = typeof args.offset === 'number' ? args.offset : 0;
+      const detail = args.detail ?? 'list';
+      const limit = clampMcpLimit(args.limit, detail === 'list' ? 10 : 50);
+      const offset = clampMcpOffset(args.offset);
 
       let cardsList: Card[];
       if (zoneId && boardId) {
-        const all = await cardsService.findByZoneId(boardId as never, zoneId);
-        const filtered =
-          archivedFilter === undefined
-            ? all
-            : all.filter((c) => Boolean(c.archived) === archivedFilter);
-        cardsList = filtered.slice(offset, offset + limit);
+        cardsList = await cardsService.findByZoneId(boardId as never, zoneId, {
+          ...(archivedFilter !== undefined && { archived: archivedFilter }),
+          limit,
+          offset,
+        });
       } else if (search) {
         cardsList = await cardsService.searchCards(search, {
           boardId: boardId as never,
@@ -131,16 +137,12 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
           offset,
         });
       } else if (cardTypeId) {
-        // Pull a larger window so post-filter can still fill `limit`.
-        const all = await cardsService.findByCardTypeId(cardTypeId as never, {
-          limit: limit + offset,
-          offset: 0,
+        cardsList = await cardsService.findByCardTypeId(cardTypeId as never, {
+          ...(boardId && { boardId: boardId as never }),
+          ...(archivedFilter !== undefined && { archived: archivedFilter }),
+          limit,
+          offset,
         });
-        const filtered =
-          archivedFilter === undefined
-            ? all
-            : all.filter((c) => Boolean(c.archived) === archivedFilter);
-        cardsList = filtered.slice(offset, offset + limit);
       } else if (boardId) {
         cardsList = await cardsService.findByBoardId(boardId as never, {
           ...(archivedFilter !== undefined && { archived: archivedFilter }),
@@ -152,6 +154,14 @@ export function registerCardTools(server: McpServer, ctx: McpContext): void {
         if (archivedFilter !== undefined) query.archived = archivedFilter;
         const result = await cardsService.find({ query } as never);
         cardsList = 'data' in result ? result.data : result;
+      }
+
+      if (detail === 'list') {
+        // biome-ignore lint/suspicious/noExplicitAny: Omitting fields
+        cardsList = cardsList.map((c: any) => {
+          const { description, note, data, ...rest } = c;
+          return rest;
+        }) as unknown as Card[];
       }
 
       return textResult({

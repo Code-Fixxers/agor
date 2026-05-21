@@ -8,6 +8,7 @@
 import type { UserApiKeysRepository } from '@agor/core/db';
 import { BadRequest, NotAuthenticated } from '@agor/core/feathers';
 import type { AuthenticatedParams } from '@agor/core/types';
+import { clearApiKeyAuthCacheForKeyId } from '../auth/api-key-strategy.js';
 
 export function createUserApiKeysService(apiKeysRepo: UserApiKeysRepository) {
   return {
@@ -50,6 +51,7 @@ export function createUserApiKeysService(apiKeysRepo: UserApiKeysRepository) {
         if (!name) throw new BadRequest('Key name is required');
         if (name.length > 100) throw new BadRequest('Key name must be 100 characters or less');
         await apiKeysRepo.updateName(id, user.user_id, name);
+        clearApiKeyAuthCacheForKeyId(id);
       }
 
       return { id, ...data };
@@ -61,6 +63,7 @@ export function createUserApiKeysService(apiKeysRepo: UserApiKeysRepository) {
       if (!user) throw new NotAuthenticated('Authentication required');
 
       await apiKeysRepo.delete(id, user.user_id);
+      clearApiKeyAuthCacheForKeyId(id);
       console.log(
         `[API Keys] Deleted: ${id.substring(0, 8)} for user ${user.user_id.substring(0, 8)}`
       );

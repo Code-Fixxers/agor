@@ -5,8 +5,35 @@
  * Supports both Authorization: Bearer and X-API-Key headers.
  */
 
+import { createHash } from 'node:crypto';
 import type { UserApiKeysRepository } from '@agor/core/db';
 import { AuthenticationBaseStrategy, NotAuthenticated } from '@agor/core/feathers';
+
+interface CachedKey {
+  keyRow: { id: string; user_id: string };
+  expiresAt: number;
+}
+
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const LAST_USED_DEBOUNCE_MS = 60 * 1000; // 1 minute
+
+// Module-level caches so they survive across ApiKeyStrategy instantiations
+// (Feathers/MCP creates a new instance or calls it statelessly)
+const globalKeyCache = new Map<string, CachedKey>();
+const globalLastUsedWrites = new Map<string, number>();
+
+function fingerprintApiKey(apiKey: string): string {
+  return createHash('sha256').update(apiKey).digest('hex');
+}
+
+export function clearApiKeyAuthCacheForKeyId(keyId: string): void {
+  for (const [fingerprint, cached] of globalKeyCache.entries()) {
+    if (cached.keyRow.id === keyId) {
+      globalKeyCache.delete(fingerprint);
+    }
+  }
+  globalLastUsedWrites.delete(keyId);
+}
 
 export class ApiKeyStrategy extends AuthenticationBaseStrategy {
   private apiKeysRepo: UserApiKeysRepository | null = null;
@@ -26,20 +53,38 @@ export class ApiKeyStrategy extends AuthenticationBaseStrategy {
     }
 
     const apiKey = authentication.apiKey;
-    if (!apiKey || !apiKey.startsWith('agor_sk_')) {
+    if (!apiKey || typeof apiKey !== 'string' || !apiKey.startsWith('agor_sk_')) {
       throw new NotAuthenticated('Invalid API key format');
     }
 
-    // Verify key against stored hashes
-    const keyRow = await this.apiKeysRepo.verifyKey(apiKey);
-    if (!keyRow) {
-      throw new NotAuthenticated('Invalid API key');
+    const now = Date.now();
+    let keyRow: { id: string; user_id: string } | null = null;
+    const cacheKey = fingerprintApiKey(apiKey);
+
+    // Check cache
+    const cached = globalKeyCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      keyRow = cached.keyRow;
+    } else {
+      // Cache miss or expired: Verify key against stored hashes
+      keyRow = await this.apiKeysRepo.verifyKey(apiKey);
+      if (!keyRow) {
+        throw new NotAuthenticated('Invalid API key');
+      }
+      globalKeyCache.set(cacheKey, {
+        keyRow,
+        expiresAt: now + CACHE_TTL_MS,
+      });
     }
 
-    // Update last_used_at (non-blocking)
-    this.apiKeysRepo.updateLastUsed(keyRow.id).catch((err: unknown) => {
-      console.warn('Failed to update API key last_used_at:', err);
-    });
+    // Debounce last_used_at updates (non-blocking)
+    const lastWrite = globalLastUsedWrites.get(keyRow.id) || 0;
+    if (now - lastWrite > LAST_USED_DEBOUNCE_MS) {
+      globalLastUsedWrites.set(keyRow.id, now);
+      this.apiKeysRepo.updateLastUsed(keyRow.id).catch((err: unknown) => {
+        console.warn('Failed to update API key last_used_at:', err);
+      });
+    }
 
     // Load the user
     const user = await this.usersService.get(keyRow.user_id);

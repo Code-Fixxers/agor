@@ -13,7 +13,7 @@
  * JSON across requests, which is critical for client-side KV prefix caching.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Database } from '@agor/core/db';
 import { UserApiKeysRepository } from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
@@ -22,8 +22,10 @@ import { getServiceTier, SERVICE_GROUP_TO_MCP_DOMAINS, SERVICE_TIER_RANK } from 
 import { NotFoundError } from '@agor/core/utils/errors';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { Request, Response } from 'express';
+import { z } from 'zod';
 import { toJSONSchema } from 'zod/v4-mini';
 import { ApiKeyStrategy } from '../auth/api-key-strategy.js';
 import type { AuthenticatedParams, AuthenticatedUser } from '../declarations.js';
@@ -66,18 +68,78 @@ export interface McpContext {
   baseServiceParams: Pick<AuthenticatedParams, 'user' | 'authenticated' | 'provider'>;
 }
 
+export class McpRequestTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'McpRequestTimeoutError';
+  }
+}
+
+export function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMsg: string,
+  onTimeout?: () => void | Promise<void>
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      if (settled) return;
+      const cleanupResult = onTimeout?.();
+      if (cleanupResult && typeof (cleanupResult as Promise<void>).catch === 'function') {
+        (cleanupResult as Promise<void>).catch((err) => {
+          console.error('Failed to clean up timed out MCP request:', err);
+        });
+      }
+      reject(new McpRequestTimeoutError(timeoutMsg));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    settled = true;
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
+export function closeMcpTransportState(state: {
+  transport: { close: () => Promise<void> | void };
+  server: { close: () => Promise<void> | void };
+}): void {
+  Promise.resolve()
+    .then(() => state.transport.close())
+    .catch(() => {});
+  Promise.resolve()
+    .then(() => state.server.close())
+    .catch(() => {});
+}
+
 /** Server instructions shown to agents when tool search is enabled. */
 const SERVER_INSTRUCTIONS = `Agor: multiplayer canvas for orchestrating AI coding agents (git worktrees, session genealogy, spatial boards).
 
-Progressive tool discovery — only two tools are listed:
+Progressive tool discovery — only three tools are listed by default:
 - agor_search_tools: no args = domains overview. Pass a domain or query to list tools. Use detail:"full" to fetch inputSchema before execute.
-- agor_execute_tool: invoke any tool by name. Args go under \`arguments\` (or flattened at top level).
+- agor_load_domains: load entire domains into your active session to call them directly without execute_tool.
+- agor_execute_tool: invoke any un-loaded tool by name. Args go under \`arguments\` (or flattened at top level).
 
 Common workflows:
-- Orient yourself: agor_execute_tool agor_sessions_get_current_context
+- Orient yourself: agor_execute_tool agor_get_context (or use agor_get_context directly if sessions domain is loaded)
 - Create a worktree + start a session: agor_repos_list → agor_boards_list → agor_worktrees_create → agor_sessions_create
 - Delegate a subtask: agor_sessions_spawn(prompt) — inherits current worktree, tracks parent-child genealogy
 - Continue/fork an existing session: agor_sessions_prompt(sessionId, prompt, mode:"continue"|"fork"|"subsession"|"btw")`;
+
+const LOAD_DOMAINS_TOOL_CONFIG = {
+  description:
+    'Load specific tool domains into the current session to avoid using agor_execute_tool for every call. The client tool list will automatically refresh.',
+  inputSchema: z.object({
+    domains: z
+      .array(z.string())
+      .optional()
+      .describe('List of domains to load (e.g. ["boards", "cards"])'),
+    reset: z.boolean().optional().describe('Clear previously loaded domains before loading these.'),
+  }),
+};
 
 /**
  * One-time-per-caller deprecation warning for clients that still send the
@@ -111,6 +173,46 @@ function logQueryParamDeprecation(req: Request): void {
 let cachedRegistry: ToolRegistry | null = null;
 let cachedToolsList: { tools: Array<Record<string, unknown>> } | null = null;
 
+const LOADED_DOMAIN_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const loadedDomainCache = new Map<
+  string,
+  {
+    domains: Set<string>;
+    lastActive: number;
+  }
+>();
+
+export function buildLoadedDomainCacheKey(
+  ctx: Pick<McpContext, 'userId' | 'sessionId'>,
+  clientScope: string
+): string {
+  return `${ctx.userId}:${ctx.sessionId ?? 'global'}:${clientScope}`;
+}
+
+function getLoadedDomainState(cacheKey: string): { domains: Set<string>; lastActive: number } {
+  const key = cacheKey;
+  let state = loadedDomainCache.get(key);
+  if (!state) {
+    state = { domains: new Set<string>(), lastActive: Date.now() };
+    loadedDomainCache.set(key, state);
+  } else {
+    state.lastActive = Date.now();
+  }
+  return state;
+}
+
+function pruneLoadedDomainCache(now = Date.now()): void {
+  for (const [key, state] of loadedDomainCache.entries()) {
+    if (now - state.lastActive > LOADED_DOMAIN_CACHE_TTL_MS) {
+      loadedDomainCache.delete(key);
+    }
+  }
+}
+
+function credentialFingerprint(credential: string): string {
+  return createHash('sha256').update(credential).digest('hex');
+}
+
 /**
  * Build the tool registry by registering tools against a temporary server.
  * Captures metadata (name, description, JSON Schema, annotations, domain)
@@ -125,6 +227,7 @@ function buildRegistry(servicesConfig?: DaemonServicesConfig): ToolRegistry {
   const originalRegisterTool = tempServer.registerTool.bind(tempServer) as (
     ...args: unknown[]
   ) => ReturnType<typeof tempServer.registerTool>;
+  let currentDomainAccess: 'readonly' | 'full' = 'full';
 
   // Override the registerTool method to intercept metadata.
   // Cast required because registerTool is an overloaded generic method — TypeScript
@@ -134,6 +237,11 @@ function buildRegistry(servicesConfig?: DaemonServicesConfig): ToolRegistry {
       registerTool: (name: string, config: Record<string, unknown>, cb: unknown) => void;
     }
   ).registerTool = (name: string, config: Record<string, unknown>, cb: unknown) => {
+    const annotations = config.annotations as ToolAnnotations | undefined;
+    if (currentDomainAccess === 'readonly' && annotations?.readOnlyHint !== true) {
+      return undefined as unknown as ReturnType<typeof tempServer.registerTool>;
+    }
+
     // Convert Zod schema to JSON Schema using Zod v4's built-in converter
     let jsonSchema: Record<string, unknown> = { type: 'object' };
     if (config.inputSchema) {
@@ -151,8 +259,7 @@ function buildRegistry(servicesConfig?: DaemonServicesConfig): ToolRegistry {
       name,
       description: (config.description as string) ?? '',
       inputSchema: jsonSchema,
-      annotations:
-        config.annotations as import('@modelcontextprotocol/sdk/types.js').ToolAnnotations,
+      annotations,
     });
 
     // Still register with the temp server so Zod schemas are valid
@@ -164,67 +271,53 @@ function buildRegistry(servicesConfig?: DaemonServicesConfig): ToolRegistry {
   // Only register tools for enabled service domains.
   const dummyCtx = {} as McpContext;
 
-  if (isDomainEnabled('sessions', servicesConfig)) {
-    registry.setCurrentDomain('sessions');
+  const registerDomain = (domain: string, fn: () => void, accessDomain: string = domain): void => {
+    const access = getDomainAccess(accessDomain, servicesConfig);
+    if (!access) return;
+    registry.setCurrentDomain(domain);
+    currentDomainAccess = access;
+    try {
+      fn();
+    } finally {
+      currentDomainAccess = 'full';
+    }
+  };
+
+  registerDomain('sessions', () => {
     registerSessionTools(tempServer, dummyCtx);
     registerTaskTools(tempServer, dummyCtx);
     registerMessageTools(tempServer, dummyCtx);
-  }
+  });
 
-  if (isDomainEnabled('repos', servicesConfig)) {
-    registry.setCurrentDomain('repos');
-    registerRepoTools(tempServer, dummyCtx);
-  }
+  registerDomain('repos', () => registerRepoTools(tempServer, dummyCtx));
 
-  if (isDomainEnabled('worktrees', servicesConfig)) {
-    registry.setCurrentDomain('worktrees');
-    registerWorktreeTools(tempServer, dummyCtx);
-    registry.setCurrentDomain('environment');
-    registerEnvironmentTools(tempServer, dummyCtx);
-  }
+  registerDomain('worktrees', () => registerWorktreeTools(tempServer, dummyCtx));
+  registerDomain('environment', () => registerEnvironmentTools(tempServer, dummyCtx), 'worktrees');
 
-  if (isDomainEnabled('boards', servicesConfig)) {
-    registry.setCurrentDomain('boards');
-    registerBoardTools(tempServer, dummyCtx);
-  }
+  registerDomain('boards', () => registerBoardTools(tempServer, dummyCtx));
 
-  if (isDomainEnabled('cards', servicesConfig)) {
-    registry.setCurrentDomain('cards');
+  registerDomain('cards', () => {
     registerCardTools(tempServer, dummyCtx);
     registerCardTypeTools(tempServer, dummyCtx);
-  }
+  });
 
-  if (isDomainEnabled('artifacts', servicesConfig)) {
-    registry.setCurrentDomain('artifacts');
-    registerArtifactTools(tempServer, dummyCtx);
-  }
+  registerDomain('artifacts', () => registerArtifactTools(tempServer, dummyCtx));
 
   // 'proxies' is always registered when 'artifacts' domain is on — the two
   // are tightly coupled (proxies exist to serve artifacts). Read-only by
   // construction, so registering them here is safe regardless of tier.
-  if (isDomainEnabled('artifacts', servicesConfig)) {
-    registry.setCurrentDomain('proxies');
-    registerProxyTools(tempServer, dummyCtx);
-  }
+  registerDomain('proxies', () => registerProxyTools(tempServer, dummyCtx), 'artifacts');
 
-  if (isDomainEnabled('users', servicesConfig)) {
-    registry.setCurrentDomain('users');
-    registerUserTools(tempServer, dummyCtx);
-  }
-
-  if (isDomainEnabled('analytics', servicesConfig)) {
-    registry.setCurrentDomain('analytics');
-    registerAnalyticsTools(tempServer, dummyCtx);
-  }
-
-  if (isDomainEnabled('mcp-servers', servicesConfig)) {
-    registry.setCurrentDomain('mcp-servers');
-    registerMcpServerTools(tempServer, dummyCtx);
-  }
+  registerDomain('users', () => registerUserTools(tempServer, dummyCtx));
+  registerDomain('analytics', () => registerAnalyticsTools(tempServer, dummyCtx));
+  registerDomain('mcp-servers', () => registerMcpServerTools(tempServer, dummyCtx));
 
   // Search/execute tools always registered (meta-tools)
   registry.setCurrentDomain('discovery');
   registerSearchTools(tempServer, registry);
+  tempServer.registerTool('agor_load_domains', LOAD_DOMAINS_TOOL_CONFIG, async () => ({
+    content: [{ type: 'text' as const, text: '{}' }],
+  }));
 
   return registry;
 }
@@ -278,11 +371,6 @@ function getDomainAccess(
   return 'full'; // unknown domain = full access
 }
 
-/** Backwards-compatible wrapper */
-function isDomainEnabled(domain: string, servicesConfig?: DaemonServicesConfig): boolean {
-  return getDomainAccess(domain, servicesConfig) !== false;
-}
-
 /**
  * Create a proxy McpServer that silently skips tools without
  * readOnlyHint: true. Uses Object.create so the original server is unmodified.
@@ -308,7 +396,8 @@ function readOnlyProxy(server: McpServer): McpServer {
 function createMcpServer(
   ctx: McpContext,
   toolSearchEnabled: boolean,
-  servicesConfig?: DaemonServicesConfig
+  servicesConfig?: DaemonServicesConfig,
+  loadedDomainsCacheKey?: string
 ): McpServer {
   const server = new McpServer(
     {
@@ -359,13 +448,74 @@ function createMcpServer(
 
   if (toolSearchEnabled) {
     const { registry, toolsList } = getRegistry(servicesConfig);
+    const loadedDomainState = loadedDomainsCacheKey
+      ? getLoadedDomainState(loadedDomainsCacheKey)
+      : { domains: new Set<string>(), lastActive: Date.now() };
+    const activeDomains = loadedDomainState.domains;
+    const alwaysVisibleToolNames = new Set(toolsList.tools.map((tool) => tool.name));
+    const loadableDomains = new Set(registry.listDomains().map((domain) => domain.domain));
 
     // Register search/execute tools with the shared cached registry
     registerSearchTools(server, registry);
 
-    // Override tools/list with the pre-computed, deterministic response.
+    server.registerTool('agor_load_domains', LOAD_DOMAINS_TOOL_CONFIG, async (args) => {
+      loadedDomainState.lastActive = Date.now();
+      if (args.reset === true) {
+        activeDomains.clear();
+      }
+      const domains = Array.isArray(args.domains) ? (args.domains as string[]) : [];
+      let loaded = 0;
+      const unknown: string[] = [];
+      for (const d of domains) {
+        if (!loadableDomains.has(d)) {
+          unknown.push(d);
+          continue;
+        }
+        if (!activeDomains.has(d)) {
+          activeDomains.add(d);
+          loaded++;
+        }
+      }
+
+      // Notify the client to reload its tools list
+      server.server.sendToolListChanged().catch((err) => {
+        console.error('Failed to send tools/list_changed notification:', err);
+      });
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Loaded ${loaded} new domains into the session. Client tool list is refreshing. Currently active domains: ${Array.from(activeDomains).join(', ') || '(none)'}${unknown.length > 0 ? `. Unknown domains ignored: ${unknown.join(', ')}` : ''}`,
+          },
+        ],
+      };
+    });
+
+    // Override tools/list with the deterministic response PLUS any dynamically loaded domains
     // All tools remain registered and callable via tools/call.
-    server.server.setRequestHandler(ListToolsRequestSchema, async () => toolsList);
+    server.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      loadedDomainState.lastActive = Date.now();
+      if (activeDomains.size === 0) {
+        return toolsList;
+      }
+
+      const dynamicTools = registry
+        .getAll()
+        .filter((t) => activeDomains.has(t.domain) && !alwaysVisibleToolNames.has(t.name));
+
+      return {
+        tools: [
+          ...toolsList.tools,
+          ...dynamicTools.map((t) => ({
+            name: t.name,
+            description: t.description,
+            inputSchema: t.inputSchema,
+            annotations: t.annotations,
+          })),
+        ],
+      };
+    });
   }
 
   return server;
@@ -396,8 +546,44 @@ export function setupMCPRoutes(
       transport: StreamableHTTPServerTransport;
       server: McpServer;
       userId: UserID;
+      lastActive: number;
     }
   >();
+
+  const TRANSPORT_IDLE_TTL_MS = 60 * 60 * 1000; // 1 hour
+  const MAX_TRANSPORTS_PER_USER = 10;
+
+  // Cleanup idle transports periodically
+  const cleanupInterval = setInterval(
+    () => {
+      const now = Date.now();
+      for (const [sid, { transport, server, lastActive }] of transports.entries()) {
+        if (now - lastActive > TRANSPORT_IDLE_TTL_MS) {
+          console.log(`🔌 Cleaning up idle MCP transport: ${sid}`);
+          closeMcpTransportState({ transport, server });
+          transports.delete(sid);
+        }
+      }
+      pruneLoadedDomainCache(now);
+    },
+    5 * 60 * 1000
+  );
+  cleanupInterval.unref?.();
+
+  // Hook into daemon shutdown
+  const appEventEmitter = app as unknown as { on?: (event: string, fn: () => void) => void };
+  if (typeof appEventEmitter.on === 'function') {
+    appEventEmitter.on('teardown', () => {
+      clearInterval(cleanupInterval);
+      for (const { transport, server } of transports.values()) {
+        closeMcpTransportState({ transport, server });
+      }
+      transports.clear();
+      loadedDomainCache.clear();
+    });
+  }
+
+  const REQUEST_TIMEOUT_MS = 30 * 1000; // 30 seconds
 
   const isInitializeRequest = (body: unknown): boolean => {
     if (!body || typeof body !== 'object') return false;
@@ -460,6 +646,7 @@ export function setupMCPRoutes(
       let authenticatedUser: AuthenticatedUser;
       let userId: UserID;
       let sessionId: SessionID | undefined;
+      const loadedDomainsClientScope = credentialFingerprint(credential);
 
       if (credential.startsWith('agor_sk_')) {
         const apiKeysRepo = new UserApiKeysRepository(db);
@@ -484,6 +671,10 @@ export function setupMCPRoutes(
 
         // Session context for tools like agor_sessions_get_current/agor_sessions_spawn.
         // In API key mode, allow explicit session selection via query/header.
+        // NOTE: Because McpServer instances are created at POST /mcp initialize and
+        // cached in `transports`, the session context is captured ONCE per MCP session.
+        // Changing X-Agor-Session-Id on subsequent GET/POST requests will not change
+        // the tools' closure over `ctx.sessionId`.
         const requestedSessionId =
           coerceString(req.query.sessionId as string | undefined) ||
           coerceString(
@@ -584,29 +775,92 @@ export function setupMCPRoutes(
           });
         }
 
-        if (req.method === 'GET') {
-          let closed = false;
-          req.on('close', () => {
-            if (closed) return;
-            closed = true;
-            existing.transport.close().catch(() => {});
-          });
-        }
+        existing.lastActive = Date.now();
 
-        await existing.transport.handleRequest(req, res, req.body);
+        // Note: We DO NOT close the transport on req.on('close') for GET requests.
+        // A streamable HTTP GET stream closing is a normal reconnect condition,
+        // not a session termination.
+
+        if (req.method === 'POST') {
+          try {
+            await withTimeout(
+              existing.transport.handleRequest(req, res, req.body),
+              REQUEST_TIMEOUT_MS,
+              'Request processing timed out',
+              () => {
+                closeMcpTransportState(existing);
+                transports.delete(mcpSessionId);
+              }
+            );
+          } catch (error) {
+            if (error instanceof McpRequestTimeoutError) {
+              if (!res.headersSent) {
+                return res.status(504).json({
+                  jsonrpc: '2.0',
+                  id: (req.body as { id?: unknown })?.id,
+                  error: {
+                    code: -32000,
+                    message: 'Server timeout: The tool or request took too long to complete',
+                  },
+                });
+              }
+            }
+            throw error; // Re-throw other errors
+          }
+        } else {
+          // GET or DELETE (long-lived streams or simple teardown)
+          await existing.transport.handleRequest(req, res, req.body);
+        }
         return;
       }
 
       // Initialize a new stateful streamable HTTP session
       if (req.method === 'POST' && isInitializeRequest(req.body)) {
+        // Enforce max active sessions per user
+        let userTransportCount = 0;
+        let oldestSid: string | undefined;
+        let oldestTime = Infinity;
+
+        for (const [sid, t] of transports.entries()) {
+          if (t.userId === userId) {
+            userTransportCount++;
+            if (t.lastActive < oldestTime) {
+              oldestTime = t.lastActive;
+              oldestSid = sid;
+            }
+          }
+        }
+
+        if (userTransportCount >= MAX_TRANSPORTS_PER_USER && oldestSid) {
+          console.log(
+            `🔌 User ${userId} reached max transports (${MAX_TRANSPORTS_PER_USER}). Evicting oldest: ${oldestSid}`
+          );
+          const oldest = transports.get(oldestSid)!;
+          closeMcpTransportState(oldest);
+          transports.delete(oldestSid);
+        }
+
         const mcpServer = createMcpServer(mcpContext, toolSearchEnabled, servicesConfig);
 
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId) => {
-            transports.set(newSessionId, { transport, server: mcpServer, userId });
+            transports.set(newSessionId, {
+              transport,
+              server: mcpServer,
+              userId,
+              lastActive: Date.now(),
+            });
           },
         });
+        let failedInitClosed = false;
+        const cleanupFailedInit = () => {
+          if (failedInitClosed) return;
+          failedInitClosed = true;
+          const sid = transport.sessionId;
+          if (sid) transports.delete(sid);
+          closeMcpTransportState({ transport, server: mcpServer });
+        };
 
         transport.onclose = () => {
           const sid = transport.sessionId;
@@ -615,7 +869,33 @@ export function setupMCPRoutes(
         };
 
         await mcpServer.connect(transport);
-        await transport.handleRequest(req, res, req.body);
+        try {
+          await withTimeout(
+            transport.handleRequest(req, res, req.body),
+            REQUEST_TIMEOUT_MS,
+            'Request processing timed out',
+            () => {
+              cleanupFailedInit();
+            }
+          );
+          if (!transport.sessionId) cleanupFailedInit();
+        } catch (error) {
+          cleanupFailedInit();
+          if (error instanceof McpRequestTimeoutError) {
+            // For SSE init it's a bit tricky if headers were already sent, but let's try to gracefully handle
+            if (!res.headersSent) {
+              return res.status(504).json({
+                jsonrpc: '2.0',
+                id: (req.body as { id?: unknown })?.id,
+                error: {
+                  code: -32000,
+                  message: 'Server timeout during initialization',
+                },
+              });
+            }
+          }
+          throw error;
+        }
         return;
       }
 
@@ -623,19 +903,50 @@ export function setupMCPRoutes(
       // Stateless fallback mode: preserves legacy behavior for direct POST usage
       // ─────────────────────────────────────────────────────────────────────────────
       if (req.method === 'POST') {
-        const mcpServer = createMcpServer(mcpContext, toolSearchEnabled, servicesConfig);
+        const mcpServer = createMcpServer(
+          mcpContext,
+          toolSearchEnabled,
+          servicesConfig,
+          buildLoadedDomainCacheKey(mcpContext, loadedDomainsClientScope)
+        );
 
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
+          enableJsonResponse: true, // Item 7: explicit json-rpc http behavior
         });
+        let closed = false;
+        const cleanupStateless = () => {
+          if (closed) return;
+          closed = true;
+          closeMcpTransportState({ transport, server: mcpServer });
+        };
+        res.on('close', cleanupStateless);
 
         await mcpServer.connect(transport);
-        await transport.handleRequest(req, res, req.body);
-
-        res.on('close', () => {
-          transport.close().catch(() => {});
-          mcpServer.close().catch(() => {});
-        });
+        try {
+          await withTimeout(
+            transport.handleRequest(req, res, req.body),
+            REQUEST_TIMEOUT_MS,
+            'Request processing timed out',
+            cleanupStateless
+          );
+        } catch (error) {
+          if (error instanceof McpRequestTimeoutError) {
+            if (!res.headersSent) {
+              return res.status(504).json({
+                jsonrpc: '2.0',
+                id: (req.body as { id?: unknown })?.id,
+                error: {
+                  code: -32000,
+                  message: 'Server timeout: The tool or request took too long to complete',
+                },
+              });
+            }
+          }
+          throw error;
+        } finally {
+          cleanupStateless();
+        }
         return;
       }
 

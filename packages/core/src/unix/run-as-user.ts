@@ -26,7 +26,10 @@
  * @see context/guides/rbac-and-unix-isolation.md
  */
 
-import { execSync } from 'node:child_process';
+import { exec, execSync } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execAsync = promisify(exec);
 
 import { isValidUnixUsername } from './user-manager.js';
 
@@ -47,6 +50,33 @@ const DEFAULT_TIMEOUT_MS = 5000;
  */
 export function escapeShellArg(arg: string): string {
   return `'${arg.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Async equivalent of runAsUser.
+ * Use this to avoid blocking the Node.js event loop on long operations (like git status).
+ */
+export async function runAsUserAsync(
+  command: string,
+  options: RunAsUserOptions = {}
+): Promise<string> {
+  const { asUser, timeout = DEFAULT_TIMEOUT_MS, encoding = 'utf-8' } = options;
+
+  let fullCommand: string;
+
+  if (asUser) {
+    const escapedCommand = escapeShellArg(command);
+    fullCommand = `sudo -n -u ${asUser} bash -c ${escapedCommand}`;
+  } else {
+    fullCommand = command;
+  }
+
+  const { stdout } = await execAsync(fullCommand, {
+    encoding: encoding as BufferEncoding,
+    timeout,
+  });
+
+  return stdout;
 }
 
 /**

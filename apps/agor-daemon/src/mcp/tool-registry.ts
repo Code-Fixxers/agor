@@ -60,7 +60,7 @@ const DOMAIN_DESCRIPTIONS: Record<string, string> = {
 };
 
 /** Tools always visible in `tools/list` even when search mode is enabled. */
-const ALWAYS_VISIBLE = new Set(['agor_search_tools', 'agor_execute_tool']);
+const ALWAYS_VISIBLE = new Set(['agor_search_tools', 'agor_execute_tool', 'agor_load_domains']);
 
 function normalizeText(value: string, maxLength: number): string {
   const normalized = value.replace(/\s+/g, ' ').trim();
@@ -110,6 +110,11 @@ export class ToolRegistry {
 
   get size(): number {
     return this.tools.size;
+  }
+
+  /** Return all tools. */
+  getAll(): ToolEntry[] {
+    return Array.from(this.tools.values());
   }
 
   /** Return only the always-visible tools (for filtered tools/list). */

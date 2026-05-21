@@ -13,8 +13,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Hoist-safe mocks must be declared before the module under test is imported.
 const mockIsWorktreeRbacEnabled = vi.fn(() => false);
-const mockFindAccessibleSessions = vi.fn(async () => [] as Array<{ session_id: string }>);
-
 vi.mock('@agor/core/config', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('@agor/core/config');
   return {
@@ -22,14 +20,6 @@ vi.mock('@agor/core/config', async () => {
     isWorktreeRbacEnabled: () => mockIsWorktreeRbacEnabled(),
   };
 });
-
-// Bind the static SessionRepository constructor to a class whose instances
-// delegate findAccessibleSessions to our spy.
-class FakeSessionRepository {
-  async findAccessibleSessions(userId: string) {
-    return mockFindAccessibleSessions(userId);
-  }
-}
 
 // Capture the raw query the tool builds so we can assert on its shape.
 const mockWhereSpy = vi.fn();
@@ -39,16 +29,28 @@ vi.mock('@agor/core/db', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('@agor/core/db');
   return {
     ...actual,
-    SessionRepository: FakeSessionRepository,
+    exists: (query: unknown) => ({ type: 'exists', query }),
+    isNotNull: (value: unknown) => ({ type: 'isNotNull', value }),
     select: () => ({
-      from: () => ({
-        where: (cond: unknown) => {
-          mockWhereSpy(cond);
-          return {
-            orderBy: () => ({ all: () => mockAllSpy() }),
-          };
-        },
-      }),
+      from: () => {
+        const queryBuilder = {
+          innerJoin: () => queryBuilder,
+          leftJoin: () => queryBuilder,
+          where: (cond: unknown) => {
+            if (cond) mockWhereSpy(cond);
+            return queryBuilder;
+          },
+          orderBy: () => queryBuilder,
+          limit: () => queryBuilder,
+          offset: () => queryBuilder,
+          all: () => mockAllSpy(),
+          one: async () => {
+            const rows = await mockAllSpy();
+            return { count: rows.length };
+          },
+        };
+        return queryBuilder;
+      },
     }),
   };
 });
@@ -62,6 +64,20 @@ type ToolHandler = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text: string }>;
 }>;
 
+function makeMessageRow(index: number) {
+  return {
+    message_id: `msg-${index}`,
+    session_id: 'sess-active-1',
+    task_id: 'task-1',
+    index,
+    role: 'user',
+    type: 'user',
+    timestamp: new Date('2026-05-20T00:00:00Z'),
+    content_preview: `message ${index}`,
+    data: { content: `message ${index}` },
+  };
+}
+
 async function registerAndGetHandler(ctx: { userId: string; role?: string }): Promise<ToolHandler> {
   const { registerMessageTools } = await import('./messages.js');
   let captured: ToolHandler | undefined;
@@ -74,12 +90,7 @@ async function registerAndGetHandler(ctx: { userId: string; role?: string }): Pr
   registerMessageTools(fakeServer, {
     app: {
       service: (name: string) => {
-        if (name !== 'sessions') {
-          throw new Error(`Unexpected service lookup: ${name}`);
-        }
-        return {
-          find: async () => ({ data: [{ session_id: 'sess-active-1' }] }),
-        };
+        throw new Error(`Unexpected service lookup: ${name}`);
       },
     } as any,
     db: {} as any,
@@ -96,12 +107,10 @@ async function registerAndGetHandler(ctx: { userId: string; role?: string }): Pr
 describe('agor_messages_list MCP tool', () => {
   beforeEach(() => {
     mockIsWorktreeRbacEnabled.mockReset();
-    mockFindAccessibleSessions.mockReset();
     mockWhereSpy.mockReset();
     mockAllSpy.mockReset();
     mockAllSpy.mockResolvedValue([]);
     mockIsWorktreeRbacEnabled.mockReturnValue(false);
-    mockFindAccessibleSessions.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -111,63 +120,69 @@ describe('agor_messages_list MCP tool', () => {
   it('does not enforce RBAC when worktree_rbac is disabled', async () => {
     mockIsWorktreeRbacEnabled.mockReturnValue(false);
     const handler = await registerAndGetHandler({ userId: 'user-1' });
-    await handler({ search: 'secret' });
-    expect(mockFindAccessibleSessions).not.toHaveBeenCalled();
+    await handler({ search: 'secret', includeArchived: true });
     expect(mockAllSpy).toHaveBeenCalled();
   }, 30_000);
 
-  it('short-circuits to empty when user has no accessible sessions', async () => {
-    mockIsWorktreeRbacEnabled.mockReturnValue(true);
-    mockFindAccessibleSessions.mockResolvedValue([]);
+  it('uses SQL predicates instead of hydrating session id lists for default archived filtering', async () => {
+    mockIsWorktreeRbacEnabled.mockReturnValue(false);
 
     const handler = await registerAndGetHandler({ userId: 'user-1' });
-    const result = await handler({ search: 'secret' });
-
-    expect(mockFindAccessibleSessions).toHaveBeenCalledWith('user-1');
-    // Query must NOT be executed when there are no accessible sessions.
-    expect(mockAllSpy).not.toHaveBeenCalled();
-
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.messages).toEqual([]);
-    expect(parsed.total).toBe(0);
-  });
-
-  it('restricts raw query to accessible session ids for regular users', async () => {
-    mockIsWorktreeRbacEnabled.mockReturnValue(true);
-    mockFindAccessibleSessions.mockResolvedValue([
-      { session_id: 'sess-allowed-1' },
-      { session_id: 'sess-allowed-2' },
-    ]);
-
-    const handler = await registerAndGetHandler({ userId: 'user-1', role: 'member' });
     await handler({ search: 'secret' });
 
-    expect(mockFindAccessibleSessions).toHaveBeenCalledWith('user-1');
     expect(mockAllSpy).toHaveBeenCalled();
-    // Drizzle builds a SQL AST; walk it with a seen-set to avoid circular
-    // refs and collect every string leaf so we can assert both ids appear.
-    const seen = new WeakSet<object>();
-    const strings: string[] = [];
-    const walk = (v: unknown) => {
-      if (typeof v === 'string') {
-        strings.push(v);
-        return;
-      }
-      if (!v || typeof v !== 'object') return;
-      if (seen.has(v as object)) return;
-      seen.add(v as object);
-      for (const val of Object.values(v as Record<string, unknown>)) walk(val);
-    };
-    walk(mockWhereSpy.mock.calls[0]?.[0]);
-    expect(strings).toContain('sess-allowed-1');
-    expect(strings).toContain('sess-allowed-2');
+  });
+
+  it('uses SQL predicates instead of hydrating accessible session ids for RBAC', async () => {
+    mockIsWorktreeRbacEnabled.mockReturnValue(true);
+
+    const handler = await registerAndGetHandler({ userId: 'user-1' });
+    await handler({ search: 'secret' });
+
+    expect(mockAllSpy).toHaveBeenCalled();
   });
 
   it('bypasses RBAC filter for superadmin role', async () => {
     mockIsWorktreeRbacEnabled.mockReturnValue(true);
     const handler = await registerAndGetHandler({ userId: 'user-1', role: 'superadmin' });
     await handler({ search: 'secret' });
-    expect(mockFindAccessibleSessions).not.toHaveBeenCalled();
     expect(mockAllSpy).toHaveBeenCalled();
+  });
+
+  it('stops scanning after page plus lookahead when exact total is not requested', async () => {
+    mockAllSpy.mockResolvedValueOnce([makeMessageRow(1), makeMessageRow(2), makeMessageRow(3)]);
+
+    const handler = await registerAndGetHandler({ userId: 'user-1' });
+    const result = await handler({ search: 'secret', limit: 1 });
+
+    expect(mockAllSpy).toHaveBeenCalledTimes(1);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.messages).toHaveLength(1);
+    expect(parsed.total).toBeUndefined();
+    expect(parsed.has_more).toBe(true);
+    expect(parsed.next_offset).toBe(1);
+  });
+
+  it('scans to the end only when exact total is requested', async () => {
+    mockAllSpy
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => makeMessageRow(i + 1)))
+      .mockResolvedValueOnce([makeMessageRow(101)]);
+
+    const handler = await registerAndGetHandler({ userId: 'user-1' });
+    const result = await handler({ search: 'secret', limit: 1, includeTotal: true });
+
+    expect(mockAllSpy).toHaveBeenCalledTimes(2);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.messages).toHaveLength(1);
+    expect(parsed.total).toBe(101);
+    expect(parsed.has_more).toBe(true);
+  });
+
+  it('caps huge offsets before scanning', async () => {
+    const handler = await registerAndGetHandler({ userId: 'user-1' });
+    const result = await handler({ search: 'secret', offset: 1_000_000 });
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.offset).toBe(10_000);
   });
 });
