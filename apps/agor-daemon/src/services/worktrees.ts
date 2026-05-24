@@ -10,7 +10,13 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { ENVIRONMENT, isWorktreeRbacEnabled, loadConfig, PAGINATION } from '@agor/core/config';
+import {
+  type AgorConfig,
+  ENVIRONMENT,
+  isWorktreeRbacEnabled,
+  loadConfig,
+  PAGINATION,
+} from '@agor/core/config';
 import { type Database, WorktreeRepository, type WorktreeWithZoneAndSessions } from '@agor/core/db';
 import { renderWorktreeSnapshot } from '@agor/core/environment/render-snapshot';
 import type { Application } from '@agor/core/feathers';
@@ -226,8 +232,10 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
    * so admins can set org-wide defaults in config.yaml. Explicit values on the
    * input always win; defaults fill in only when the caller omits the field.
    */
-  private async applyWorktreeCreateDefaults(data: Partial<Worktree>): Promise<Partial<Worktree>> {
-    const config = await loadConfig();
+  private applyWorktreeCreateDefaults(
+    data: Partial<Worktree>,
+    config: AgorConfig
+  ): Partial<Worktree> {
     const defaults = config.worktrees;
     if (!defaults) return data;
 
@@ -251,13 +259,15 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
     data: Partial<Worktree> | Partial<Worktree>[],
     params?: WorktreeParams
   ): Promise<Worktree | Worktree[]> {
+    const config = await loadConfig();
+
     if (Array.isArray(data)) {
-      const withDefaults = await Promise.all(
-        data.map((item) => this.applyWorktreeCreateDefaults(item))
-      );
+      // ⚡ Bolt Performance Optimization:
+      // Load config once outside the loop instead of reading and parsing the file O(N) times.
+      const withDefaults = data.map((item) => this.applyWorktreeCreateDefaults(item, config));
       return super.create(withDefaults, params) as Promise<Worktree[]>;
     }
-    const withDefaults = await this.applyWorktreeCreateDefaults(data);
+    const withDefaults = this.applyWorktreeCreateDefaults(data, config);
     return super.create(withDefaults, params) as Promise<Worktree>;
   }
 
