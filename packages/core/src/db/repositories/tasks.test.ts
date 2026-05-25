@@ -4,10 +4,10 @@
  * Tests for type-safe CRUD operations on tasks with short ID support.
  */
 
-import type { Task, UUID } from '@agor/core/types';
-import { TaskStatus } from '@agor/core/types';
 import { describe, expect } from 'vitest';
 import { generateId } from '../../lib/ids';
+import type { Task, UUID } from '../../types';
+import { TaskStatus } from '../../types';
 import type { Database } from '../client';
 import { dbTest } from '../test-helpers';
 import { AmbiguousIdError, EntityNotFoundError, RepositoryError } from './base';
