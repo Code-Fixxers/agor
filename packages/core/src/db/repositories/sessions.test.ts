@@ -5,10 +5,10 @@
  * genealogy tracking, and JSON field handling.
  */
 
-import type { Session, UUID } from '@agor/core/types';
-import { SessionStatus } from '@agor/core/types';
 import { describe, expect } from 'vitest';
 import { generateId } from '../../lib/ids';
+import type { Session, UUID } from '../../types';
+import { SessionStatus } from '../../types';
 import { dbTest } from '../test-helpers';
 import { AmbiguousIdError, EntityNotFoundError, RepositoryError } from './base';
 import { RepoRepository } from './repos';
