@@ -7,7 +7,7 @@
  * @see context/guides/rbac-and-unix-isolation.md
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import type { UnixUserMode } from '../config/types.js';
 import { formatShortId } from '../lib/ids.js';
 import type { UserID, UUID } from '../types/index.js';
@@ -339,7 +339,7 @@ export class UnixUserNotFoundError extends Error {
  */
 export function unixUserExists(username: string): boolean {
   try {
-    execSync(`id "${username}" > /dev/null 2>&1`, { stdio: 'pipe' });
+    execFileSync('id', ['--', username], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
