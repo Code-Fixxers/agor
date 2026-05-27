@@ -22,7 +22,7 @@
  * @see context/guides/rbac-and-unix-isolation.md
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -236,7 +236,7 @@ export default class SyncUnix extends Command {
           // Running under sudo - use the invoking user's home directory
           // Try to get home directory from passwd entry
           try {
-            const passwdEntry = execSync(`getent passwd ${sudoUser}`, {
+            const passwdEntry = execFileSync('getent', ['passwd', '--', String(sudoUser)], {
               encoding: 'utf-8',
               stdio: ['pipe', 'pipe', 'ignore'],
             }).trim();
