@@ -18,7 +18,7 @@
  * - xterm.js frontend for rendering
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -51,7 +51,7 @@ interface CreateTerminalData {
  */
 function isZellijAvailable(): boolean {
   try {
-    execSync('which zellij', { stdio: 'pipe', timeout: 2000 });
+    execFileSync('which', ['zellij'], { stdio: 'pipe', timeout: 2000 });
     return true;
   } catch {
     return false;
@@ -109,7 +109,7 @@ ${exportLines.join('\n')}
       try {
         // CRITICAL: Use -n flag to prevent password prompts that freeze the system
         // Also add timeout to prevent any hangs
-        execSync(`sudo -n chown "${chownTo}" "${envFile}"`, { stdio: 'pipe', timeout: 2000 });
+        execFileSync('sudo', ['-n', 'chown', '--', chownTo, envFile], { stdio: 'pipe', timeout: 2000 });
       } catch (chownError) {
         console.warn(`Failed to chown env file to ${chownTo}:`, chownError);
         // Continue anyway - file may still be readable in some configurations
