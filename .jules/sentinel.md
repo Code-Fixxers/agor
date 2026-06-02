@@ -1,9 +1,4 @@
-## 2025-05-13 - [SQL Injection Risk via sql.raw in Bulk Insert Retrieval]
-**Vulnerability:** A potential SQL injection vulnerability in `createMany` inside `packages/core/src/db/repositories/tasks.ts`. The code used `sql.raw` to interpolate task IDs into an `IN` clause manually without parameterization.
-**Learning:** Using `sql.raw` to join dynamically generated strings (like UUID arrays) bypasses Drizzle's parameterization, exposing the app to SQL injection if any ID string is manipulated.
-**Prevention:** Always use Drizzle ORM's built-in parameterization functions like `inArray` instead of manual string concatenation or `sql.raw`.
-
-## 2024-05-21 - [CRITICAL] Fix config.yaml file permissions
-**Vulnerability:** The daemon configuration file (`~/.agor/config.yaml`) and its parent directory (`~/.agor`) were created with default file permissions (e.g., `0o755`/`0o644`), which made them readable by other users on the system. This file stores extremely sensitive information such as API keys and master JWT secrets.
-**Learning:** Default Node.js filesystem operations (`fs.writeFile` and `fs.mkdir`) do not enforce strict permissions unless explicitly specified with a `mode` parameter. When handling sensitive files, relying on the system `umask` is insufficient.
-**Prevention:** Always specify `mode: 0o600` for sensitive files and `mode: 0o700` for their parent directories. Additionally, use `fs.chmod` to retroactively secure existing files and directories that might have been created with permissive defaults.
+## 2025-02-26 - Command Injection via execSync with String Interpolation
+**Vulnerability:** Shell command injection vulnerability in ID lookup and user existence checks (e.g., `execSync(\`id "${username}" > /dev/null 2>&1\`)`). Malicious usernames could escape quotes and execute arbitrary shell commands.
+**Learning:** `execSync` executes commands via `/bin/sh` which parses metacharacters. Even if quoted, inputs can sometimes break out depending on the shell or if the input isn't fully validated elsewhere.
+**Prevention:** Replace `execSync` with `execFileSync` (or `execFile` for async) when executing static binaries with dynamic arguments. Pass dynamic inputs explicitly via the `args` array preceded by `--` to prevent argument injection, and strictly avoid string interpolation. E.g., `execFileSync('id', ['--', String(username)], { stdio: 'ignore' })`.
