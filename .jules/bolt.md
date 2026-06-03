@@ -4,3 +4,6 @@
 ## 2026-05-16 - [Batch FeathersJS user fetches with $in operator to fix N+1 query]
 **Learning:** FeathersJS allows passing `$in` clauses through the query parameter (e.g. `user_id: { $in: ownerIds }`). When writing custom Feathers service logic, you can easily parse this array and pass it to Drizzle's `inArray()` to perform a batched query, instead of looping over `service.get(id)` causing N+1 database roundtrips.
 **Action:** When implementing or updating custom Feathers `find()` methods, extract and parse the `$in` parameters to support batched Drizzle `inArray()` lookups, and always replace `Promise.all(ids.map(id => service.get(id)))` with a single batched `find()` call.
+## 2026-06-03 - [Batch configuration loads when iterating data creations/modifications]
+**Learning:** The `loadConfig()` utility reads and parses the YAML file from disk on every call. Calling it within a mapping loop (e.g., `data.map((item) => applyWorktreeCreateDefaults(item))` where `applyWorktreeCreateDefaults` internally calls `loadConfig()`) results in severe performance bottlenecks due to O(N) disk I/O operations.
+**Action:** When implementing default injections or map-based operations on arrays of data, always load the configuration once synchronously outside the loop and pass it as an argument down to the handler functions.
