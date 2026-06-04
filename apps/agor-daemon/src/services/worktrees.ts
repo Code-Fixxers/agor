@@ -226,8 +226,10 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
    * so admins can set org-wide defaults in config.yaml. Explicit values on the
    * input always win; defaults fill in only when the caller omits the field.
    */
-  private async applyWorktreeCreateDefaults(data: Partial<Worktree>): Promise<Partial<Worktree>> {
-    const config = await loadConfig();
+  private applyWorktreeCreateDefaults(
+    data: Partial<Worktree>,
+    config: import('@agor/core/config').AgorConfig
+  ): Partial<Worktree> {
     const defaults = config.worktrees;
     if (!defaults) return data;
 
@@ -251,13 +253,15 @@ export class WorktreesService extends DrizzleService<Worktree, Partial<Worktree>
     data: Partial<Worktree> | Partial<Worktree>[],
     params?: WorktreeParams
   ): Promise<Worktree | Worktree[]> {
+    const config = await loadConfig();
     if (Array.isArray(data)) {
-      const withDefaults = await Promise.all(
-        data.map((item) => this.applyWorktreeCreateDefaults(item))
-      );
+      // ⚡ Bolt Performance Optimization:
+      // Prevent O(N) disk I/O when bulk creating worktrees by loading the config once
+      // outside the loop instead of inside applyWorktreeCreateDefaults for each item.
+      const withDefaults = data.map((item) => this.applyWorktreeCreateDefaults(item, config));
       return super.create(withDefaults, params) as Promise<Worktree[]>;
     }
-    const withDefaults = await this.applyWorktreeCreateDefaults(data);
+    const withDefaults = this.applyWorktreeCreateDefaults(data, config);
     return super.create(withDefaults, params) as Promise<Worktree>;
   }
 
