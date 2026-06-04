@@ -1,3 +1,7 @@
+## 2025-02-14 - [Batch config loading for repeated synchronous operations]
+**Learning:** Loading configuration synchronously or asynchronously within a mapped operation or loop causes multiple disk I/O reads (O(N) operations), leading to severe performance bottlenecks.
+**Action:** When applying configuration-driven defaults over collections of items (like bulk creates), always load the configuration once outside the loop and pass it as an argument rather than loading it iteratively for each item.
+
 ## 2023-10-27 - [Fix N+1 query fetching last session messages]
 **Learning:** When retrieving the latest associated row (e.g., max index) for a list of parent IDs in Drizzle, avoid N+1 queries with loops using `.limit(1)`. This causes significant latency. Instead, use a batched approach by first querying `max(index)` grouped by the parent ID in a subquery, and then joining that subquery back to the main table. Be aware that simple syntax strings like `$1` might conflict with variables in tools like esbuild during testing but not Drizzle syntax when done correctly.
 **Action:** Always batch aggregate child queries when enriching list-type responses by utilizing SQL `max()` or equivalent within a subquery joined on the original table to minimize round-trips.
