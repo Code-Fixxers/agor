@@ -4,7 +4,7 @@
  * Supports both Linux (using getent) and macOS (parsing /etc/group and /etc/passwd)
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 
 /**
@@ -26,7 +26,7 @@ export function getGidFromGroupName(groupName: string | undefined | null): numbe
   try {
     // Try getent first (Linux, some BSD)
     try {
-      const result = execSync(`getent group "${groupName}"`, {
+      const result = execFileSync('getent', ['group', '--', groupName], {
         encoding: 'utf-8',
         stdio: 'pipe',
         timeout: 2000,
@@ -91,7 +91,7 @@ export function getUidFromUsername(username: string | undefined | null): number 
   try {
     // Try `id -u username` first (most reliable)
     try {
-      const result = execSync(`id -u "${username}"`, {
+      const result = execFileSync('id', ['-u', '--', username], {
         encoding: 'utf-8',
         stdio: 'pipe',
         timeout: 2000,
@@ -107,7 +107,7 @@ export function getUidFromUsername(username: string | undefined | null): number 
 
     // Try getent (Linux, some BSD)
     try {
-      const result = execSync(`getent passwd "${username}"`, {
+      const result = execFileSync('getent', ['passwd', '--', username], {
         encoding: 'utf-8',
         stdio: 'pipe',
         timeout: 2000,
@@ -171,7 +171,7 @@ export function getHomedirFromUsername(username: string | undefined | null): str
   try {
     // Try getent first (Linux, some BSD)
     try {
-      const result = execSync(`getent passwd "${username}"`, {
+      const result = execFileSync('getent', ['passwd', '--', username], {
         encoding: 'utf-8',
         stdio: 'pipe',
         timeout: 2000,
