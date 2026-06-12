@@ -125,7 +125,7 @@ export function createUploadStorage(
         if (DEBUG_UPLOAD) console.log(`📁 [Upload Storage] Target directory: ${dest}`);
 
         // Ensure directory exists
-        await fs.mkdir(dest, { recursive: true });
+        await fs.mkdir(dest, { recursive: true, mode: 0o700 });
         if (DEBUG_UPLOAD) console.log(`✅ [Upload Storage] Directory created/verified: ${dest}`);
 
         cb(null, dest);
