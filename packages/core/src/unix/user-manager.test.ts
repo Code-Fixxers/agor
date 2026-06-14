@@ -30,11 +30,12 @@ import {
 // Mock execSync for system-dependent tests
 vi.mock('node:child_process', () => ({
   execSync: vi.fn(),
+  execFileSync: vi.fn(),
 }));
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
-const mockedExecSync = vi.mocked(execSync);
+const mockedExecFileSync = vi.mocked(execFileSync);
 
 describe('user-manager', () => {
   beforeEach(() => {
@@ -309,10 +310,10 @@ describe('user-manager', () => {
   // =========================================================================
 
   describe('unixUserExists (mocked)', () => {
-    // Note: These tests use mocked execSync since we can't create real users
+    // Note: These tests use mocked execFileSync since we can't create real users
 
     it('returns true when user exists', async () => {
-      mockedExecSync.mockReturnValueOnce(Buffer.from('')); // Success (no throw)
+      mockedExecFileSync.mockReturnValueOnce(Buffer.from('')); // Success (no throw)
 
       // Import fresh to use mock
       const { unixUserExists } = await import('./user-manager.js');
@@ -320,7 +321,7 @@ describe('user-manager', () => {
     });
 
     it('returns false when user does not exist', async () => {
-      mockedExecSync.mockImplementationOnce(() => {
+      mockedExecFileSync.mockImplementationOnce(() => {
         throw new Error('id: nonexistent: no such user');
       });
 
@@ -456,7 +457,7 @@ describe('user-manager', () => {
     });
 
     it('validates user exists for strict mode', () => {
-      mockedExecSync.mockImplementationOnce(() => {
+      mockedExecFileSync.mockImplementationOnce(() => {
         throw new Error('no such user');
       });
 
@@ -466,7 +467,7 @@ describe('user-manager', () => {
     });
 
     it('validates user exists for insulated mode', () => {
-      mockedExecSync.mockImplementationOnce(() => {
+      mockedExecFileSync.mockImplementationOnce(() => {
         throw new Error('no such user');
       });
 
@@ -482,13 +483,13 @@ describe('user-manager', () => {
     });
 
     it('passes when user exists', () => {
-      mockedExecSync.mockReturnValueOnce(Buffer.from('')); // user exists
+      mockedExecFileSync.mockReturnValueOnce(Buffer.from('')); // user exists
 
       expect(() => validateResolvedUnixUser('strict', 'alice')).not.toThrow();
     });
 
     it('error message includes mode context', () => {
-      mockedExecSync.mockImplementationOnce(() => {
+      mockedExecFileSync.mockImplementationOnce(() => {
         throw new Error('no such user');
       });
 
