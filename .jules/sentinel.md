@@ -7,3 +7,8 @@
 **Vulnerability:** The daemon configuration file (`~/.agor/config.yaml`) and its parent directory (`~/.agor`) were created with default file permissions (e.g., `0o755`/`0o644`), which made them readable by other users on the system. This file stores extremely sensitive information such as API keys and master JWT secrets.
 **Learning:** Default Node.js filesystem operations (`fs.writeFile` and `fs.mkdir`) do not enforce strict permissions unless explicitly specified with a `mode` parameter. When handling sensitive files, relying on the system `umask` is insufficient.
 **Prevention:** Always specify `mode: 0o600` for sensitive files and `mode: 0o700` for their parent directories. Additionally, use `fs.chmod` to retroactively secure existing files and directories that might have been created with permissive defaults.
+
+## 2025-05-15 - [Command Injection Risk via execSync in sudo chown]
+**Vulnerability:** A command injection vulnerability in `writeEnvFile` inside `apps/agor-daemon/src/services/terminals.ts`. The code used `execSync` with string interpolation to run `sudo chown` on a dynamically generated file path using `chownTo` as the target username.
+**Learning:** `execSync` executes commands via a shell (`/bin/sh` or `cmd.exe`), which allows attackers to inject arbitrary commands using shell metacharacters (e.g. `;`, `&`, `|`) if user input is not sanitized or strictly constrained.
+**Prevention:** Always use `execFileSync` (or `execFile`) with arguments passed as an array to execute the binary directly without shell interpretation. Additionally, pass `--` before the dynamic arguments to avoid argument injection where values starting with `-` could be misconstrued as command flags.
