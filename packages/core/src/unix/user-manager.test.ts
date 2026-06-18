@@ -29,12 +29,12 @@ import {
 
 // Mock execSync for system-dependent tests
 vi.mock('node:child_process', () => ({
-  execSync: vi.fn(),
+  execFileSync: vi.fn(),
 }));
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
-const mockedExecSync = vi.mocked(execSync);
+const mockedExecSync = vi.mocked(execFileSync);
 
 describe('user-manager', () => {
   beforeEach(() => {
