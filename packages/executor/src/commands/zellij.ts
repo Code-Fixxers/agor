@@ -120,12 +120,15 @@ export async function handleZellijAttach(
     // os.homedir() doesn't work correctly with sudo impersonation - it returns the original user's home
     // We must use getent passwd to get the correct values for the impersonated user
     const fs = await import('node:fs');
-    const { execSync } = await import('node:child_process');
+    const { execFileSync } = await import('node:child_process');
 
     let actualHome = '/tmp'; // Fallback
     let userShell = '/bin/bash'; // Fallback
     try {
-      const passwdEntry = execSync(`getent passwd $(whoami)`, { encoding: 'utf-8' }).trim();
+      const whoami = execFileSync('whoami', { encoding: 'utf-8' }).trim();
+      const passwdEntry = execFileSync('getent', ['passwd', '--', whoami], {
+        encoding: 'utf-8',
+      }).trim();
       const fields = passwdEntry.split(':');
       // passwd format: name:password:uid:gid:gecos:home:shell
       if (fields.length >= 6 && fields[5]) {
