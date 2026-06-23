@@ -642,7 +642,7 @@ export async function handleUnixSyncUser(
 
     // Handle delete mode
     if (payload.params.delete) {
-      const userExists = await checkCommand(`id ${unixUsername} > /dev/null 2>&1`);
+      const userExists = await checkCommand(UnixUserCommands.userExists(unixUsername));
       if (userExists) {
         // Remove from agor_users group first
         const inGroup = await checkCommand(
@@ -665,7 +665,7 @@ export async function handleUnixSyncUser(
     console.log(`[unix.sync-user] Syncing user ${userId.substring(0, 8)} (${unixUsername})`);
 
     // Ensure user exists
-    const userExists = await checkCommand(`id ${unixUsername} > /dev/null 2>&1`);
+    const userExists = await checkCommand(UnixUserCommands.userExists(unixUsername));
     if (!userExists) {
       // Create user with home directory
       await runCommand(UnixUserCommands.createUser(unixUsername));
