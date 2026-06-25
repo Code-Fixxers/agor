@@ -58,6 +58,9 @@ function validateConfig(config: AgorConfig): void {
   }
 }
 
+let cachedConfig: AgorConfig | null = null;
+let configLastMtime: number = 0;
+
 /**
  * Load config from ~/.agor/config.yaml
  *
@@ -67,10 +70,19 @@ export async function loadConfig(): Promise<AgorConfig> {
   const configPath = getConfigPath();
 
   try {
+    const stat = await fs.stat(configPath);
+    if (cachedConfig && stat.mtimeMs === configLastMtime) {
+      return cachedConfig;
+    }
+
     const content = await fs.readFile(configPath, 'utf-8');
     const config = yaml.load(content) as AgorConfig;
     const finalConfig = config || {};
     validateConfig(finalConfig);
+
+    cachedConfig = finalConfig;
+    configLastMtime = stat.mtimeMs;
+
     return finalConfig;
   } catch (error) {
     // File doesn't exist or parse error - return default config
@@ -112,6 +124,10 @@ export async function saveConfig(config: AgorConfig): Promise<void> {
 
   await fs.writeFile(configPath, content, { encoding: 'utf-8', mode: 0o600 });
   await fs.chmod(configPath, 0o600);
+
+  // Invalidate cache
+  cachedConfig = null;
+  configLastMtime = 0;
 }
 
 /**
