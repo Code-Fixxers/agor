@@ -798,6 +798,56 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
+    // Determine list of servers to process
+    let serversToProcess: MCPServer[] = [];
+    if (Array.isArray(context.result)) {
+      serversToProcess = context.result;
+    } else if (context.result?.data && Array.isArray(context.result.data)) {
+      serversToProcess = context.result.data;
+    } else if (context.result?.mcp_server_id) {
+      serversToProcess = [context.result];
+    }
+
+    if (serversToProcess.length === 0) {
+      return context;
+    }
+
+    // Filter to only those requiring OAuth injection
+    const oauthServers = serversToProcess.filter((s) => s.auth?.type === 'oauth');
+    if (oauthServers.length === 0) {
+      return context;
+    }
+
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+
+    // Collect IDs by mode (per_user vs shared) to fetch in batches
+    const perUserServerIds = oauthServers
+      .filter((s) => (s.auth?.oauth_mode ?? 'per_user') === 'per_user')
+      .map((s) => s.mcp_server_id);
+    const sharedServerIds = oauthServers
+      .filter((s) => s.auth?.oauth_mode === 'shared')
+      .map((s) => s.mcp_server_id);
+
+    // ⚡ Bolt Performance Optimization:
+    // Batch fetch all required token rows in up to 2 queries (one for per_user, one for shared)
+    // instead of executing N+1 DB queries in a Promise.all loop.
+    const [perUserTokens, sharedTokens] = await Promise.all([
+      perUserServerIds.length > 0
+        ? userTokenRepo.getTokensForServers(
+            userId as import('@agor/core/types').UserID,
+            perUserServerIds
+          )
+        : Promise.resolve([]),
+      sharedServerIds.length > 0
+        ? userTokenRepo.getTokensForServers(null, sharedServerIds)
+        : Promise.resolve([]),
+    ]);
+
+    // Build a lookup map: serverId -> tokenRow
+    const tokenMap = new Map<string, (typeof perUserTokens)[0]>();
+    for (const t of perUserTokens) tokenMap.set(t.mcp_server_id, t);
+    for (const t of sharedTokens) tokenMap.set(t.mcp_server_id, t);
+
     const injectToken = async (server: MCPServer) => {
       if (server.auth?.type !== 'oauth') {
         return server;
@@ -811,8 +861,7 @@ export function registerHooks(ctx: RegisterHooksContext): void {
         mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
 
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const row = tokenMap.get(server.mcp_server_id);
 
         if (!row) {
           console.log(
