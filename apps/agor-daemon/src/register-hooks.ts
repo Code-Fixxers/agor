@@ -40,7 +40,7 @@ import type {
   Session,
   User,
 } from '@agor/core/types';
-import { hasMinimumRole, ROLES } from '@agor/core/types';
+import { hasMinimumRole, type MCPServerID, ROLES } from '@agor/core/types';
 import type {
   BoardsServiceImpl,
   MessagesServiceImpl,
@@ -798,6 +798,36 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
+    // Extract all server IDs to fetch tokens in a single batch
+    let servers: MCPServer[] = [];
+    if (Array.isArray(context.result)) {
+      servers = context.result;
+    } else if (context.result?.data && Array.isArray(context.result.data)) {
+      servers = context.result.data;
+    } else if (context.result?.mcp_server_id) {
+      servers = [context.result];
+    }
+
+    if (servers.length === 0) {
+      return context;
+    }
+
+    const mcpServerIds = servers
+      .filter((s) => s.auth?.type === 'oauth')
+      .map((s) => s.mcp_server_id as MCPServerID);
+
+    // Fetch tokens in batch and build a map keyed by server ID and mode
+    const tokensMap = new Map<string, import('@agor/core/db').UserMCPOAuthToken>();
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+    if (mcpServerIds.length > 0) {
+      const typedUserId = (userId as import('@agor/core/types').UserID) ?? null;
+      const tokens = await userTokenRepo.getTokensForServers(typedUserId, mcpServerIds);
+      for (const token of tokens) {
+        const key = `${token.mcp_server_id}:${token.user_id ?? 'shared'}`;
+        tokensMap.set(key, token);
+      }
+    }
+
     const injectToken = async (server: MCPServer) => {
       if (server.auth?.type !== 'oauth') {
         return server;
@@ -811,9 +841,8 @@ export function registerHooks(ctx: RegisterHooksContext): void {
         mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
 
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
-
+        const key = `${server.mcp_server_id}:${tokenUserId ?? 'shared'}`;
+        const row = tokensMap.get(key);
         if (!row) {
           console.log(
             `[MCP OAuth] No token row for user=${tokenUserId ?? '<shared>'} server=${server.name}`
