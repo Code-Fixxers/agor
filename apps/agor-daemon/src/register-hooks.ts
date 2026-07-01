@@ -798,6 +798,30 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
+    // Batch fetch tokens to eliminate N+1 queries
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+    let tokensMap = new Map<string, import('@agor/core/db').UserMCPOAuthToken>();
+
+    // Gather server IDs
+    const serversToProcess: MCPServer[] = [];
+    if (Array.isArray(context.result)) {
+      serversToProcess.push(...context.result);
+    } else if (context.result?.data && Array.isArray(context.result.data)) {
+      serversToProcess.push(...context.result.data);
+    } else if (context.result?.mcp_server_id) {
+      serversToProcess.push(context.result);
+    }
+
+    const serverIds = serversToProcess
+      .filter((s) => s.auth?.type === 'oauth')
+      .map((s) => s.mcp_server_id);
+    if (serverIds.length > 0) {
+      tokensMap = await userTokenRepo.getTokensForServers(
+        userId as import('@agor/core/types').UserID,
+        serverIds
+      );
+    }
+
     const injectToken = async (server: MCPServer) => {
       if (server.auth?.type !== 'oauth') {
         return server;
@@ -811,8 +835,8 @@ export function registerHooks(ctx: RegisterHooksContext): void {
         mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
 
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const key = `${server.mcp_server_id}:${tokenUserId ?? 'shared'}`;
+        const row = tokensMap.get(key);
 
         if (!row) {
           console.log(
@@ -836,7 +860,8 @@ export function registerHooks(ctx: RegisterHooksContext): void {
               mcpServerId: server.mcp_server_id,
             });
             // Re-read to pick up the rotated expiry for the UI.
-            const fresh = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+            const userTokenRepoRefresh = new UserMCPOAuthTokenRepository(db);
+            const fresh = await userTokenRepoRefresh.getToken(tokenUserId, server.mcp_server_id);
             if (fresh) expiresAt = fresh.oauth_token_expires_at;
           } catch (refreshErr) {
             if (refreshErr instanceof InvalidGrantError) {
