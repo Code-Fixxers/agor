@@ -11,7 +11,7 @@
  */
 
 import type { MCPServerID, UserID } from '@agor/core/types';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { Database } from '../client';
 import { deleteFrom, insert, select, update } from '../database-wrapper';
 import {
@@ -91,6 +91,35 @@ export class UserMCPOAuthTokenRepository {
     } catch (error) {
       throw new RepositoryError(
         `Failed to get OAuth token: ${error instanceof Error ? error.message : String(error)}`,
+        error
+      );
+    }
+  }
+
+  /**
+   * Look up all token rows for a list of servers and a specific user.
+   * Fetches both shared-mode tokens (user_id IS NULL) and per-user tokens (user_id = userId).
+   */
+  async getTokensForServers(
+    userId: UserID | null,
+    serverIds: MCPServerID[]
+  ): Promise<UserMCPOAuthToken[]> {
+    if (serverIds.length === 0) return [];
+    try {
+      const conditions = [isNull(userMcpOauthTokens.user_id)];
+      if (userId) {
+        conditions.push(eq(userMcpOauthTokens.user_id, userId));
+      }
+
+      const rows = await select(this.db)
+        .from(userMcpOauthTokens)
+        .where(and(inArray(userMcpOauthTokens.mcp_server_id, serverIds), or(...conditions)))
+        .all();
+
+      return rows.map(rowToToken);
+    } catch (error) {
+      throw new RepositoryError(
+        `Failed to get OAuth tokens: ${error instanceof Error ? error.message : String(error)}`,
         error
       );
     }
