@@ -798,90 +798,105 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
-    const injectToken = async (server: MCPServer) => {
-      if (server.auth?.type !== 'oauth') {
-        return server;
-      }
+    // Extract array of servers to process
+    let serversToProcess: MCPServer[] = [];
+    if (Array.isArray(context.result)) {
+      serversToProcess = context.result;
+    } else if (context.result?.data && Array.isArray(context.result.data)) {
+      serversToProcess = context.result.data;
+    } else if (context.result?.mcp_server_id) {
+      serversToProcess = [context.result];
+    }
 
-      // Tokens for both modes live in user_mcp_oauth_tokens:
-      //   - per_user  → row keyed by (userId, serverId)
-      //   - shared    → row keyed by (NULL, serverId)
-      const mode = server.auth.oauth_mode ?? 'per_user';
-      const tokenUserId: import('@agor/core/types').UserID | null =
-        mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
+    // Batch fetch tokens for all OAuth servers
+    const oauthServers = serversToProcess.filter((s) => s.auth?.type === 'oauth');
+
+    if (oauthServers.length > 0) {
+      const serverIds = oauthServers.map((s) => s.mcp_server_id);
+      const userTokenRepo = new UserMCPOAuthTokenRepository(db);
 
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const tokenRows = await userTokenRepo.getTokensForServers(
+          userId as import('@agor/core/types').UserID,
+          serverIds
+        );
 
-        if (!row) {
-          console.log(
-            `[MCP OAuth] No token row for user=${tokenUserId ?? '<shared>'} server=${server.name}`
-          );
-          return server;
+        // Index tokens by <user_id>:<server_id> to handle both shared and per-user tokens
+        const tokenMap = new Map<string, (typeof tokenRows)[0]>();
+        for (const row of tokenRows) {
+          const keyUserId = row.user_id === null ? 'null' : row.user_id;
+          tokenMap.set(`${keyUserId}:${row.mcp_server_id}`, row);
         }
 
-        // JIT refresh — see `refreshAndPersistToken` for mutexing + invalid_grant cleanup.
-        let accessToken = row.oauth_access_token;
-        let expiresAt = row.oauth_token_expires_at;
-        const { needsRefresh, refreshAndPersistToken, InvalidGrantError } = await import(
-          '@agor/core/tools/mcp/oauth-refresh'
-        );
-        if (needsRefresh(row.oauth_token_expires_at) && row.oauth_refresh_token) {
-          console.log(`[MCP OAuth] Token near/past expiry for ${server.name} — refreshing`);
-          try {
-            accessToken = await refreshAndPersistToken({
-              db,
-              userId: tokenUserId,
-              mcpServerId: server.mcp_server_id,
-            });
-            // Re-read to pick up the rotated expiry for the UI.
-            const fresh = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
-            if (fresh) expiresAt = fresh.oauth_token_expires_at;
-          } catch (refreshErr) {
-            if (refreshErr instanceof InvalidGrantError) {
-              console.warn(
-                `[MCP OAuth] invalid_grant refreshing ${server.name} — user must re-auth`
-              );
-              return server;
-            }
-            // Transient error: fall through with the stale access_token. The
-            // MCP call may still succeed or fail cleanly at the transport.
-            console.warn(
-              `[MCP OAuth] Refresh failed for ${server.name} (using stale token):`,
-              refreshErr instanceof Error ? refreshErr.message : refreshErr
-            );
+        const _injectTokenBatch = async (server: MCPServer) => {
+          if (server.auth?.type !== 'oauth') {
+            return server;
           }
-        }
 
-        return {
-          ...server,
-          auth: {
-            ...server.auth,
-            oauth_access_token: accessToken,
-            // Surface expiry so the UI can render "expires in X" tooltips.
-            // Stored as Date in the repo, emitted as ms epoch to match MCPAuth.
-            oauth_token_expires_at:
-              expiresAt instanceof Date ? expiresAt.getTime() : (expiresAt ?? undefined),
-          },
+          const mode = server.auth.oauth_mode ?? 'per_user';
+          const tokenUserId = mode === 'per_user' ? userId : 'null';
+          const row = tokenMap.get(`${tokenUserId}:${server.mcp_server_id}`);
+
+          if (!row) {
+            console.log(
+              `[MCP OAuth] No token row for user=${tokenUserId === 'null' ? '<shared>' : tokenUserId} server=${server.name}`
+            );
+            return server;
+          }
+
+          let accessToken = row.oauth_access_token;
+          let expiresAt = row.oauth_token_expires_at;
+          const { needsRefresh, refreshAndPersistToken, InvalidGrantError } = await import(
+            '@agor/core/tools/mcp/oauth-refresh'
+          );
+
+          if (needsRefresh(row.oauth_token_expires_at) && row.oauth_refresh_token) {
+            console.log(`[MCP OAuth] Token near/past expiry for ${server.name} — refreshing`);
+            try {
+              const refreshUserId =
+                mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
+              accessToken = await refreshAndPersistToken({
+                db,
+                userId: refreshUserId,
+                mcpServerId: server.mcp_server_id,
+              });
+              const fresh = await userTokenRepo.getToken(refreshUserId, server.mcp_server_id);
+              if (fresh) expiresAt = fresh.oauth_token_expires_at;
+            } catch (refreshErr) {
+              if (refreshErr instanceof InvalidGrantError) {
+                console.warn(
+                  `[MCP OAuth] invalid_grant refreshing ${server.name} — user must re-auth`
+                );
+                return server;
+              }
+              console.warn(
+                `[MCP OAuth] Refresh failed for ${server.name} (using stale token):`,
+                refreshErr instanceof Error ? refreshErr.message : refreshErr
+              );
+            }
+          }
+
+          return {
+            ...server,
+            auth: {
+              ...server.auth,
+              oauth_access_token: accessToken,
+              oauth_token_expires_at:
+                expiresAt instanceof Date ? expiresAt.getTime() : (expiresAt ?? undefined),
+            },
+          };
         };
-      } catch (error) {
-        console.warn(
-          `[MCP OAuth] Failed to resolve OAuth token for ${server.name}:`,
-          error instanceof Error ? error.message : error
-        );
+
+        if (Array.isArray(context.result)) {
+          context.result = await Promise.all(context.result.map(_injectTokenBatch));
+        } else if (context.result?.data && Array.isArray(context.result.data)) {
+          context.result.data = await Promise.all(context.result.data.map(_injectTokenBatch));
+        } else if (context.result?.mcp_server_id) {
+          context.result = await _injectTokenBatch(context.result);
+        }
+      } catch (e) {
+        console.warn(`[MCP OAuth] Error during batched token injection:`, e);
       }
-
-      return server;
-    };
-
-    // Handle both single result and array/paginated results
-    if (Array.isArray(context.result)) {
-      context.result = await Promise.all(context.result.map(injectToken));
-    } else if (context.result?.data && Array.isArray(context.result.data)) {
-      context.result.data = await Promise.all(context.result.data.map(injectToken));
-    } else if (context.result?.mcp_server_id) {
-      context.result = await injectToken(context.result);
     }
 
     return context;
