@@ -7,3 +7,8 @@
 **Vulnerability:** The daemon configuration file (`~/.agor/config.yaml`) and its parent directory (`~/.agor`) were created with default file permissions (e.g., `0o755`/`0o644`), which made them readable by other users on the system. This file stores extremely sensitive information such as API keys and master JWT secrets.
 **Learning:** Default Node.js filesystem operations (`fs.writeFile` and `fs.mkdir`) do not enforce strict permissions unless explicitly specified with a `mode` parameter. When handling sensitive files, relying on the system `umask` is insufficient.
 **Prevention:** Always specify `mode: 0o600` for sensitive files and `mode: 0o700` for their parent directories. Additionally, use `fs.chmod` to retroactively secure existing files and directories that might have been created with permissive defaults.
+
+## 2025-05-24 - [Command Injection Risk in id-lookups.ts via execSync]
+**Vulnerability:** Found `execSync` commands constructed via string interpolation (e.g., `execSync(\`id -u "${username}"\`)`) in system query helpers. An attacker with control over the username input could inject arbitrary shell commands.
+**Learning:** Node's `execSync` evaluates the entire string in a shell. Double quoting does not fully prevent command execution if inputs contain backticks, `$(...)`, or if quotes are escaped.
+**Prevention:** Use `execFileSync` instead of `execSync`. `execFileSync` avoids invoking a shell by directly spawning the executable with an array of strictly typed arguments. Always pass dynamic values as strings, and use `--` to indicate the end of flags.
