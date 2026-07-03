@@ -798,6 +798,35 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
+    // Extract items to process
+    let items: MCPServer[] = [];
+    if (Array.isArray(context.result)) {
+      items = context.result;
+    } else if (context.result?.data && Array.isArray(context.result.data)) {
+      items = context.result.data;
+    } else if (context.result?.mcp_server_id) {
+      items = [context.result];
+    }
+
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+
+    // ⚡ Bolt Performance Optimization:
+    // Pre-fetch all needed tokens in a single batched query to prevent N+1 DB roundtrips.
+    // A compound key is used to map both 'per_user' and 'shared' tokens natively.
+    const serverIds = items.filter((s) => s.auth?.type === 'oauth').map((s) => s.mcp_server_id);
+
+    const tokenMap = new Map<string, import('@agor/core/db').UserMCPOAuthToken>();
+    if (serverIds.length > 0) {
+      const tokens = await userTokenRepo.getTokensForServers(
+        userId as import('@agor/core/types').UserID,
+        serverIds
+      );
+      for (const token of tokens) {
+        const key = `${token.mcp_server_id}:${token.user_id ?? 'shared'}`;
+        tokenMap.set(key, token);
+      }
+    }
+
     const injectToken = async (server: MCPServer) => {
       if (server.auth?.type !== 'oauth') {
         return server;
@@ -811,8 +840,7 @@ export function registerHooks(ctx: RegisterHooksContext): void {
         mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
 
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const row = tokenMap.get(`${server.mcp_server_id}:${tokenUserId ?? 'shared'}`) || null;
 
         if (!row) {
           console.log(
