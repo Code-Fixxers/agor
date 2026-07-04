@@ -798,6 +798,33 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+
+    const buildTokenMap = async (servers: MCPServer[]) => {
+      const serverIds = servers.filter((s) => s.auth?.type === 'oauth').map((s) => s.mcp_server_id);
+      if (serverIds.length === 0)
+        return new Map<string, import('@agor/core/db').UserMCPOAuthToken>();
+
+      const rows = await userTokenRepo.getTokensForServers(
+        userId as import('@agor/core/types').UserID,
+        serverIds
+      );
+      const tokenMap = new Map<string, import('@agor/core/db').UserMCPOAuthToken>();
+      for (const row of rows) {
+        tokenMap.set(`${row.mcp_server_id}:${row.user_id || 'null'}`, row);
+      }
+      return tokenMap;
+    };
+
+    let tokenMap = new Map<string, import('@agor/core/db').UserMCPOAuthToken>();
+    if (Array.isArray(context.result)) {
+      tokenMap = await buildTokenMap(context.result);
+    } else if (context.result?.data && Array.isArray(context.result.data)) {
+      tokenMap = await buildTokenMap(context.result.data);
+    } else if (context.result?.mcp_server_id) {
+      tokenMap = await buildTokenMap([context.result]);
+    }
+
     const injectToken = async (server: MCPServer) => {
       if (server.auth?.type !== 'oauth') {
         return server;
@@ -811,8 +838,11 @@ export function registerHooks(ctx: RegisterHooksContext): void {
         mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
 
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const row = tokenMap.get(`${server.mcp_server_id}:${tokenUserId || 'null'}`);
+        if (!row && tokenUserId !== null) {
+          // If we requested per_user but didn't find it, and there's no shared one either,
+          // then row is naturally undefined
+        }
 
         if (!row) {
           console.log(
@@ -837,6 +867,9 @@ export function registerHooks(ctx: RegisterHooksContext): void {
             });
             // Re-read to pick up the rotated expiry for the UI.
             const fresh = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+            if (fresh) {
+              tokenMap.set(`${fresh.mcp_server_id}:${fresh.user_id || 'null'}`, fresh);
+            }
             if (fresh) expiresAt = fresh.oauth_token_expires_at;
           } catch (refreshErr) {
             if (refreshErr instanceof InvalidGrantError) {
