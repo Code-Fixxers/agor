@@ -10,7 +10,7 @@
  */
 
 import type { Session } from '@agor-live/client';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ForkSpawnModal } from './ForkSpawnModal';
 
@@ -65,7 +65,9 @@ describe('ForkSpawnModal prompt preservation', () => {
     fireEvent.change(textarea, { target: { value: typedPrompt } });
 
     // Submit
-    fireEvent.click(screen.getByRole('button', { name: /Fork Session/i }));
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /Fork Session/i }));
+    });
 
     // Fork should have been attempted with the typed prompt
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(typedPrompt));
@@ -95,7 +97,9 @@ describe('ForkSpawnModal prompt preservation', () => {
     const textarea = screen.getByTestId('prompt-textarea') as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: 'do the thing' } });
 
-    fireEvent.click(screen.getByRole('button', { name: /Fork Session/i }));
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /Fork Session/i }));
+    });
 
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith('do the thing'));
     await waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1));
