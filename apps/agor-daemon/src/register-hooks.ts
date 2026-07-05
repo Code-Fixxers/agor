@@ -798,6 +798,37 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
+    // Pre-fetch tokens to avoid N+1 queries.
+    let servers: MCPServer[] = [];
+    if (Array.isArray(context.result)) {
+      servers = context.result;
+    } else if (context.result?.data && Array.isArray(context.result.data)) {
+      servers = context.result.data;
+    } else if (context.result?.mcp_server_id) {
+      servers = [context.result as MCPServer];
+    }
+
+    const oauthServerIds = servers
+      .filter((s) => s.auth?.type === 'oauth')
+      .map((s) => s.mcp_server_id);
+
+    const tokenMap = new Map<
+      string,
+      Awaited<ReturnType<typeof userTokenRepo.getTokensForServers>>[number]
+    >();
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+
+    if (oauthServerIds.length > 0) {
+      const batchTokens = await userTokenRepo.getTokensForServers(
+        userId as import('@agor/core/types').UserID,
+        oauthServerIds
+      );
+      for (const token of batchTokens) {
+        const key = `${token.mcp_server_id}:${token.user_id === null ? 'shared' : token.user_id}`;
+        tokenMap.set(key, token);
+      }
+    }
+
     const injectToken = async (server: MCPServer) => {
       if (server.auth?.type !== 'oauth') {
         return server;
@@ -809,10 +840,10 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       const mode = server.auth.oauth_mode ?? 'per_user';
       const tokenUserId: import('@agor/core/types').UserID | null =
         mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
+      const mapKey = `${server.mcp_server_id}:${tokenUserId === null ? 'shared' : tokenUserId}`;
 
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const row = tokenMap.get(mapKey) ?? null;
 
         if (!row) {
           console.log(

@@ -4,3 +4,6 @@
 ## 2026-05-16 - [Batch FeathersJS user fetches with $in operator to fix N+1 query]
 **Learning:** FeathersJS allows passing `$in` clauses through the query parameter (e.g. `user_id: { $in: ownerIds }`). When writing custom Feathers service logic, you can easily parse this array and pass it to Drizzle's `inArray()` to perform a batched query, instead of looping over `service.get(id)` causing N+1 database roundtrips.
 **Action:** When implementing or updating custom Feathers `find()` methods, extract and parse the `$in` parameters to support batched Drizzle `inArray()` lookups, and always replace `Promise.all(ids.map(id => service.get(id)))` with a single batched `find()` call.
+## 2023-11-20 - [Batch Fetching OAuth Tokens mapped properly]
+**Learning:** When pre-fetching records into a Map to prevent N+1 queries, using `tokenMap.get(key) ?? await db.get(key)` is an anti-pattern. If the record genuinely does not exist, the map miss triggers the database query anyway, re-introducing the N+1 problem for missing tokens.
+**Action:** When pre-fetching records into an in-memory Map, never include a fallback database query. Instead, treat a Map miss as a definitive non-existent record and return `null` or `undefined`.
