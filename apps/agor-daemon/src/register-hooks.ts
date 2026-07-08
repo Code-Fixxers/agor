@@ -798,6 +798,40 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+
+    // Pre-fetch tokens for all servers if we are processing a list.
+    // We map by composite key `<mcp_server_id>:<user_id>` to correctly match both per-user and shared tokens.
+    const tokenCache = new Map<string, import('@agor/core/db').UserMCPOAuthToken>();
+
+    // We only need to fetch tokens for servers that actually use OAuth.
+    let serversToProcess: MCPServer[] = [];
+    if (Array.isArray(context.result)) {
+      serversToProcess = context.result;
+    } else if (context.result?.data && Array.isArray(context.result.data)) {
+      serversToProcess = context.result.data;
+    } else if (context.result?.mcp_server_id) {
+      serversToProcess = [context.result as MCPServer];
+    }
+
+    const oauthServers = serversToProcess.filter((s) => s.auth?.type === 'oauth');
+
+    if (oauthServers.length > 0) {
+      const serverIds = oauthServers.map((s) => s.mcp_server_id);
+      try {
+        const tokens = await userTokenRepo.getTokensForServers(
+          userId as import('@agor/core/types').UserID,
+          serverIds
+        );
+        for (const t of tokens) {
+          const uId = t.user_id === null ? 'shared' : t.user_id;
+          tokenCache.set(`${t.mcp_server_id}:${uId}`, t);
+        }
+      } catch (err) {
+        console.warn('[MCP OAuth] Pre-fetching tokens failed', err);
+      }
+    }
+
     const injectToken = async (server: MCPServer) => {
       if (server.auth?.type !== 'oauth') {
         return server;
@@ -811,8 +845,8 @@ export function registerHooks(ctx: RegisterHooksContext): void {
         mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
 
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const cacheKey = `${server.mcp_server_id}:${tokenUserId === null ? 'shared' : tokenUserId}`;
+        const row = tokenCache.get(cacheKey);
 
         if (!row) {
           console.log(
