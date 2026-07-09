@@ -105,15 +105,15 @@ export function jsonExtract(db: Database, column: SQL.Aliased | SQL | any, path:
   } else {
     // PostgreSQL: column->'path'->'to'->>'field'
     // Use -> for all but the last part (keeps as JSON), ->> for the last part (extracts as text)
-    // IMPORTANT: Use sql.raw() for JSON keys to avoid parameterization
+    // IMPORTANT: Use parameterized values with type casting instead of sql.raw to prevent SQL injection
     if (parts.length === 1) {
       // Single level: column->>'key'
-      return sql`${column}${sql.raw(`->>'${parts[0]}'`)}`;
+      return sql`${column} ->> (${parts[0]}::text)`;
     } else {
       // Multiple levels: column->'key1'->'key2'->>'key3'
-      const objectParts = parts.slice(0, -1).map((p) => sql.raw(`->'${p}'`));
+      const objectParts = parts.slice(0, -1).map((p) => sql`->(${p}::text)`);
       const lastPart = parts[parts.length - 1];
-      return sql`${column}${sql.join(objectParts, sql``)}${sql.raw(`->>'${lastPart}'`)}`;
+      return sql`${column}${sql.join(objectParts, sql``)} ->> (${lastPart}::text)`;
     }
   }
 }
