@@ -798,6 +798,36 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
+    const typedUserId = userId as import('@agor/core/types').UserID;
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+
+    const serversToProcess: MCPServer[] = Array.isArray(context.result)
+      ? context.result
+      : context.result?.data && Array.isArray(context.result.data)
+        ? context.result.data
+        : context.result?.mcp_server_id
+          ? [context.result]
+          : [];
+
+    const oauthServers = serversToProcess.filter((s) => s.auth?.type === 'oauth');
+
+    // Map to store pre-fetched tokens. Compound key: `${tokenUserId}:${mcpServerId}`
+    const tokensMap = new Map<string, import('@agor/core/db').UserMCPOAuthToken>();
+
+    if (oauthServers.length > 0) {
+      const serverIds = oauthServers.map((s) => s.mcp_server_id);
+
+      try {
+        const tokens = await userTokenRepo.getTokensForServers(typedUserId, serverIds);
+        for (const token of tokens) {
+          const key = `${token.user_id}:${token.mcp_server_id}`;
+          tokensMap.set(key, token);
+        }
+      } catch (error) {
+        console.warn('[MCP OAuth] Failed to pre-fetch OAuth tokens:', error);
+      }
+    }
+
     const injectToken = async (server: MCPServer) => {
       if (server.auth?.type !== 'oauth') {
         return server;
@@ -807,12 +837,11 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       //   - per_user  → row keyed by (userId, serverId)
       //   - shared    → row keyed by (NULL, serverId)
       const mode = server.auth.oauth_mode ?? 'per_user';
-      const tokenUserId: import('@agor/core/types').UserID | null =
-        mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
+      const tokenUserId = mode === 'per_user' ? typedUserId : null;
 
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const key = `${tokenUserId}:${server.mcp_server_id}`;
+        const row = tokensMap.get(key);
 
         if (!row) {
           console.log(
