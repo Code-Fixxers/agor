@@ -798,6 +798,41 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
+    // Pre-fetch tokens for all servers in the result to prevent N+1 queries.
+    // The repository method getTokensForServers resolves both per-user and shared tokens.
+    const resultsArray = Array.isArray(context.result)
+      ? context.result
+      : context.result?.data && Array.isArray(context.result.data)
+        ? context.result.data
+        : context.result?.mcp_server_id
+          ? [context.result]
+          : [];
+
+    const oauthServerIds = resultsArray
+      .filter((s: MCPServer) => s.auth?.type === 'oauth')
+      .map((s: MCPServer) => s.mcp_server_id);
+
+    const tokenMap = new Map<
+      string,
+      import('@agor/core/db/repositories/user-mcp-oauth-tokens').UserMCPOAuthToken
+    >();
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+
+    if (oauthServerIds.length > 0) {
+      try {
+        const tokens = await userTokenRepo.getTokensForServers(
+          userId as import('@agor/core/types').UserID,
+          oauthServerIds
+        );
+        for (const token of tokens) {
+          const keyUserId = token.user_id === null ? 'shared' : token.user_id;
+          tokenMap.set(`${token.mcp_server_id}:${keyUserId}`, token);
+        }
+      } catch (error) {
+        console.warn(`[MCP OAuth] Failed to pre-fetch tokens for servers: ${error}`);
+      }
+    }
+
     const injectToken = async (server: MCPServer) => {
       if (server.auth?.type !== 'oauth') {
         return server;
@@ -811,8 +846,9 @@ export function registerHooks(ctx: RegisterHooksContext): void {
         mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
 
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const keyUserId = tokenUserId === null ? 'shared' : tokenUserId;
+        const mapKey = `${server.mcp_server_id}:${keyUserId}`;
+        const row = tokenMap.get(mapKey) ?? undefined;
 
         if (!row) {
           console.log(
