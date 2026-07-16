@@ -30,6 +30,11 @@ import {
   userQueryValidator,
   worktreeQueryValidator,
 } from '@agor/core/lib/feathers-validation';
+import {
+  InvalidGrantError,
+  needsRefresh,
+  refreshAndPersistToken,
+} from '@agor/core/tools/mcp/oauth-refresh';
 import type {
   AuthenticatedParams,
   Board,
@@ -798,6 +803,29 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
+    const mcpServers = Array.isArray(context.result)
+      ? context.result
+      : context.result?.data && Array.isArray(context.result.data)
+        ? context.result.data
+        : context.result?.mcp_server_id
+          ? [context.result]
+          : [];
+
+    const oauthServers = mcpServers.filter((s: MCPServer) => s.auth?.type === 'oauth');
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+    let tokensMap = new Map<
+      string,
+      import('@agor/core/db').UserMCPOAuthToken
+    >();
+
+    if (oauthServers.length > 0) {
+      const serverIds = oauthServers.map((s: MCPServer) => s.mcp_server_id);
+      tokensMap = await userTokenRepo.getTokensForServers(
+        serverIds,
+        userId as import('@agor/core/types').UserID
+      );
+    }
+
     const injectToken = async (server: MCPServer) => {
       if (server.auth?.type !== 'oauth') {
         return server;
@@ -810,9 +838,10 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       const tokenUserId: import('@agor/core/types').UserID | null =
         mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
 
+      const tokenKey = `${server.mcp_server_id}:${tokenUserId === null ? 'null' : tokenUserId}`;
+
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const row = tokensMap.get(tokenKey);
 
         if (!row) {
           console.log(
@@ -824,9 +853,7 @@ export function registerHooks(ctx: RegisterHooksContext): void {
         // JIT refresh — see `refreshAndPersistToken` for mutexing + invalid_grant cleanup.
         let accessToken = row.oauth_access_token;
         let expiresAt = row.oauth_token_expires_at;
-        const { needsRefresh, refreshAndPersistToken, InvalidGrantError } = await import(
-          '@agor/core/tools/mcp/oauth-refresh'
-        );
+
         if (needsRefresh(row.oauth_token_expires_at) && row.oauth_refresh_token) {
           console.log(`[MCP OAuth] Token near/past expiry for ${server.name} — refreshing`);
           try {

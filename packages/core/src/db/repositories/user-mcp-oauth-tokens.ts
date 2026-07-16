@@ -11,7 +11,7 @@
  */
 
 import type { MCPServerID, UserID } from '@agor/core/types';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { Database } from '../client';
 import { deleteFrom, insert, select, update } from '../database-wrapper';
 import {
@@ -75,6 +75,54 @@ function matchKey(userId: UserID | null, serverId: MCPServerID) {
 
 export class UserMCPOAuthTokenRepository {
   constructor(private db: Database) {}
+
+  /**
+   * Fetch tokens for multiple servers for a user (and shared) in a single batched query
+   * to avoid N+1 queries. Returns a map keyed by `<mcp_server_id>:<user_id>`.
+   * For shared tokens, the user_id in the key is 'null'.
+   */
+  async getTokensForServers(
+    serverIds: MCPServerID[],
+    userId: UserID | null
+  ): Promise<Map<string, UserMCPOAuthToken>> {
+    if (serverIds.length === 0) return new Map();
+
+    try {
+      const conditions = [];
+      if (userId) {
+        conditions.push(
+          and(
+            eq(userMcpOauthTokens.user_id, userId),
+            inArray(userMcpOauthTokens.mcp_server_id, serverIds)
+          )
+        );
+      }
+      conditions.push(
+        and(
+          isNull(userMcpOauthTokens.user_id),
+          inArray(userMcpOauthTokens.mcp_server_id, serverIds)
+        )
+      );
+
+      const rows = await select(this.db)
+        .from(userMcpOauthTokens)
+        .where(or(...conditions))
+        .all();
+
+      const tokensMap = new Map<string, UserMCPOAuthToken>();
+      for (const row of rows) {
+        const tokenUserId = row.user_id === null ? 'null' : String(row.user_id);
+        const key = `${row.mcp_server_id}:${tokenUserId}`;
+        tokensMap.set(key, rowToToken(row));
+      }
+      return tokensMap;
+    } catch (error) {
+      throw new RepositoryError(
+        `Failed to batched get OAuth tokens: ${error instanceof Error ? error.message : String(error)}`,
+        error
+      );
+    }
+  }
 
   /**
    * Look up the token row for a (user, server) pair. Pass `null` for userId
