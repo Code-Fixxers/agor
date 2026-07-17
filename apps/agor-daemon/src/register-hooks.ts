@@ -798,6 +798,61 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
+    // Prepare servers
+    let servers: MCPServer[] = [];
+    if (Array.isArray(context.result)) {
+      servers = context.result;
+    } else if (context.result?.data && Array.isArray(context.result.data)) {
+      servers = context.result.data;
+    } else if (context.result?.mcp_server_id) {
+      servers = [context.result];
+    }
+
+    if (servers.length === 0) {
+      return context;
+    }
+
+    // Determine which servers need a token and in which mode
+    const serverModes = servers
+      .filter((s) => s.auth?.type === 'oauth')
+      .map((s) => {
+        const mode = s.auth?.oauth_mode ?? 'per_user';
+        const tokenUserId =
+          mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
+        return { server: s, mode, tokenUserId, serverId: s.mcp_server_id };
+      });
+
+    if (serverModes.length === 0) {
+      return context;
+    }
+
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+
+    // Group the required lookups. Because getTokensForServers accepts a single userId
+    // we must do at most two queries: one for `tokenUserId = null` (shared) and one for `tokenUserId = userId` (per_user)
+    const perUserIds = serverModes.filter((m) => m.tokenUserId !== null).map((m) => m.serverId);
+    const sharedIds = serverModes.filter((m) => m.tokenUserId === null).map((m) => m.serverId);
+
+    const [perUserTokens, sharedTokens] = await Promise.all([
+      perUserIds.length > 0
+        ? userTokenRepo.getTokensForServers(userId as import('@agor/core/types').UserID, perUserIds)
+        : Promise.resolve([]),
+      sharedIds.length > 0
+        ? userTokenRepo.getTokensForServers(null, sharedIds)
+        : Promise.resolve([]),
+    ]);
+
+    const tokenMap = new Map<string, import('@agor/core/db').UserMCPOAuthToken>();
+    for (const t of perUserTokens) {
+      tokenMap.set(`${userId}:${t.mcp_server_id}`, t);
+    }
+    for (const t of sharedTokens) {
+      tokenMap.set(`null:${t.mcp_server_id}`, t);
+    }
+
+    // NOTE: This optimization fixes an N+1 database querying issue by doing one single JIT lookup Map
+    // instead of individual Promise.all `.map(injectToken)` looping with `.getToken()` queries per item
+
     const injectToken = async (server: MCPServer) => {
       if (server.auth?.type !== 'oauth') {
         return server;
@@ -809,10 +864,10 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       const mode = server.auth.oauth_mode ?? 'per_user';
       const tokenUserId: import('@agor/core/types').UserID | null =
         mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
+      const key = `${tokenUserId === null ? 'null' : tokenUserId}:${server.mcp_server_id}`;
 
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const row = tokenMap.get(key);
 
         if (!row) {
           console.log(
