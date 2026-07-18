@@ -798,6 +798,33 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
+    // ⚡ Bolt Performance Optimization:
+    // Pre-fetch OAuth tokens for all servers in the result to eliminate N+1 database queries.
+    const serversToProcess = Array.isArray(context.result)
+      ? context.result
+      : context.result?.data
+        ? context.result.data
+        : context.result?.mcp_server_id
+          ? [context.result]
+          : [];
+
+    const oauthServers = serversToProcess.filter((s: MCPServer) => s.auth?.type === 'oauth');
+
+    let tokensMap = new Map<string, import('@agor/core/db').UserMCPOAuthToken>();
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+
+    if (oauthServers.length > 0) {
+      const serverIds = oauthServers.map((s: MCPServer) => s.mcp_server_id);
+      try {
+        tokensMap = await userTokenRepo.getTokensForServers(
+          userId as import('@agor/core/types').UserID,
+          serverIds
+        );
+      } catch (err) {
+        console.warn(`[MCP OAuth] Failed to batch fetch tokens:`, err);
+      }
+    }
+
     const injectToken = async (server: MCPServer) => {
       if (server.auth?.type !== 'oauth') {
         return server;
@@ -811,8 +838,8 @@ export function registerHooks(ctx: RegisterHooksContext): void {
         mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
 
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const mapKey = `${tokenUserId ?? 'shared'}:${server.mcp_server_id}`;
+        const row = tokensMap.get(mapKey);
 
         if (!row) {
           console.log(
