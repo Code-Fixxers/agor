@@ -11,7 +11,7 @@
  */
 
 import type { MCPServerID, UserID } from '@agor/core/types';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Database } from '../client';
 import { deleteFrom, insert, select, update } from '../database-wrapper';
 import {
@@ -75,6 +75,35 @@ function matchKey(userId: UserID | null, serverId: MCPServerID) {
 
 export class UserMCPOAuthTokenRepository {
   constructor(private db: Database) {}
+
+  /**
+   * Batch look up token rows for multiple servers.
+   */
+  async getTokensForServers(
+    userId: UserID | null,
+    serverIds: MCPServerID[]
+  ): Promise<UserMCPOAuthToken[]> {
+    if (serverIds.length === 0) return [];
+    try {
+      const rows = await select(this.db)
+        .from(userMcpOauthTokens)
+        .where(
+          and(
+            inArray(userMcpOauthTokens.mcp_server_id, serverIds),
+            userId === null
+              ? isNull(userMcpOauthTokens.user_id)
+              : eq(userMcpOauthTokens.user_id, userId)
+          )
+        )
+        .all();
+      return rows.map(rowToToken);
+    } catch (error) {
+      throw new RepositoryError(
+        `Failed to get OAuth tokens: ${error instanceof Error ? error.message : String(error)}`,
+        error
+      );
+    }
+  }
 
   /**
    * Look up the token row for a (user, server) pair. Pass `null` for userId

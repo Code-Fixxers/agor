@@ -798,6 +798,47 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
+    let serversToProcess: MCPServer[] = [];
+    if (Array.isArray(context.result)) {
+      serversToProcess = context.result;
+    } else if (context.result?.data && Array.isArray(context.result.data)) {
+      serversToProcess = context.result.data;
+    } else if (context.result?.mcp_server_id) {
+      serversToProcess = [context.result];
+    }
+
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+
+    const perUserServers = serversToProcess.filter(
+      (s) => s.auth?.type === 'oauth' && (s.auth.oauth_mode ?? 'per_user') === 'per_user'
+    );
+    const sharedServers = serversToProcess.filter(
+      (s) => s.auth?.type === 'oauth' && s.auth.oauth_mode === 'shared'
+    );
+
+    const [perUserTokens, sharedTokens] = await Promise.all([
+      perUserServers.length > 0
+        ? userTokenRepo.getTokensForServers(
+            userId as import('@agor/core/types').UserID,
+            perUserServers.map((s) => s.mcp_server_id)
+          )
+        : Promise.resolve([]),
+      sharedServers.length > 0
+        ? userTokenRepo.getTokensForServers(
+            null,
+            sharedServers.map((s) => s.mcp_server_id)
+          )
+        : Promise.resolve([]),
+    ]);
+
+    const tokensMap = new Map<string, import('@agor/core/db').UserMCPOAuthToken>();
+    for (const token of perUserTokens) {
+      tokensMap.set(`${token.mcp_server_id}:${token.user_id}`, token);
+    }
+    for (const token of sharedTokens) {
+      tokensMap.set(`${token.mcp_server_id}:shared`, token);
+    }
+
     const injectToken = async (server: MCPServer) => {
       if (server.auth?.type !== 'oauth') {
         return server;
@@ -810,9 +851,13 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       const tokenUserId: import('@agor/core/types').UserID | null =
         mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
 
+      const mapKey =
+        mode === 'per_user'
+          ? `${server.mcp_server_id}:${tokenUserId}`
+          : `${server.mcp_server_id}:shared`;
+
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const row = tokensMap.get(mapKey);
 
         if (!row) {
           console.log(
