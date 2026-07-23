@@ -7,3 +7,8 @@
 **Vulnerability:** The daemon configuration file (`~/.agor/config.yaml`) and its parent directory (`~/.agor`) were created with default file permissions (e.g., `0o755`/`0o644`), which made them readable by other users on the system. This file stores extremely sensitive information such as API keys and master JWT secrets.
 **Learning:** Default Node.js filesystem operations (`fs.writeFile` and `fs.mkdir`) do not enforce strict permissions unless explicitly specified with a `mode` parameter. When handling sensitive files, relying on the system `umask` is insufficient.
 **Prevention:** Always specify `mode: 0o600` for sensitive files and `mode: 0o700` for their parent directories. Additionally, use `fs.chmod` to retroactively secure existing files and directories that might have been created with permissive defaults.
+
+## 2026-07-23 - [SQL Injection Risk via sql.raw in jsonExtract]
+**Vulnerability:** The `jsonExtract` function in `packages/core/src/db/database-wrapper.ts` used `sql.raw` to insert JSON path keys into PostgreSQL `->` and `->>` operators without parameterization.
+**Learning:** Using `sql.raw` directly injects strings into the SQL query, bypassing parameterization and creating a potential SQL injection vulnerability if any JSON path keys are derived from user input.
+**Prevention:** In Drizzle ORM, never use `sql.raw()` to interpolate dynamic variables. To prevent SQL injection when working with PostgreSQL JSON operators (`->`, `->>`), always explicitly cast dynamic parameters to text (e.g., `sql\`->> (${key}::text)\``) to properly resolve the overloaded operator type. Use `sql.join` to safely combine these parameterized template literals when chaining multi-level paths.
