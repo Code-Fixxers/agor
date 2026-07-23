@@ -4,3 +4,6 @@
 ## 2026-05-16 - [Batch FeathersJS user fetches with $in operator to fix N+1 query]
 **Learning:** FeathersJS allows passing `$in` clauses through the query parameter (e.g. `user_id: { $in: ownerIds }`). When writing custom Feathers service logic, you can easily parse this array and pass it to Drizzle's `inArray()` to perform a batched query, instead of looping over `service.get(id)` causing N+1 database roundtrips.
 **Action:** When implementing or updating custom Feathers `find()` methods, extract and parse the `$in` parameters to support batched Drizzle `inArray()` lookups, and always replace `Promise.all(ids.map(id => service.get(id)))` with a single batched `find()` call.
+## 2026-06-25 - [Batch MCP OAuth Token fetches across servers]
+**Learning:** When retrieving OAuth tokens for multiple MCP servers in `injectPerUserOAuthTokens` hooks, using `Promise.all` with individual `getToken` calls introduces an N+1 query problem, increasing latency with the number of servers.
+**Action:** Always batch fetch token lookups in a single Drizzle query using `inArray` and `or`, and store the results in an in-memory Map keyed by a composite of server ID and user ID (`${server_id}:${user_id ?? 'shared'}`) to allow efficient O(1) lookups during iteration.
