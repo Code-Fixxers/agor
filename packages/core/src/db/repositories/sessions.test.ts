@@ -5,8 +5,8 @@
  * genealogy tracking, and JSON field handling.
  */
 
-import type { Session, UUID } from '@agor/core/types';
-import { SessionStatus } from '@agor/core/types';
+import type { Session, UUID } from '../../types';
+import { SessionStatus } from '../../types';
 import { describe, expect } from 'vitest';
 import { generateId } from '../../lib/ids';
 import { dbTest } from '../test-helpers';
