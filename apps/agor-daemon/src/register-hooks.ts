@@ -1,3 +1,4 @@
+import type { UserMCPOAuthToken } from '@agor/core/db';
 /**
  * Service Hooks Registration
  *
@@ -788,14 +789,43 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       : queryForUserId
         ? 'query-param'
         : 'none';
+
+    let servers: MCPServer[] = [];
+    if (Array.isArray(context.result)) {
+      servers = context.result;
+    } else if (context.result?.data && Array.isArray(context.result.data)) {
+      servers = context.result.data;
+    } else if (context.result?.mcp_server_id) {
+      servers = [context.result];
+    }
+
     console.log(
       `[MCP OAuth] injectPerUserOAuthTokens called - userId: ${userId || 'NONE'}, ` +
         `source: ${source}, provider: ${context.params?.provider || 'internal'}, ` +
-        `method: ${context.method}, resultCount: ${Array.isArray(context.result) ? context.result.length : 1}`
+        `method: ${context.method}, resultCount: ${servers.length}`
     );
     if (!userId) {
       console.log('[MCP OAuth] No user ID - skipping token injection');
       return context;
+    }
+
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+    const tokenMap = new Map<string, UserMCPOAuthToken>();
+
+    const serverIds = servers
+      .filter((s) => s.auth?.type === 'oauth')
+      .map((s) => s.mcp_server_id as import('@agor/core/types').MCPServerID);
+
+    if (serverIds.length > 0) {
+      const batchedTokens = await userTokenRepo.getTokensForServers(
+        userId as import('@agor/core/types').UserID,
+        serverIds
+      );
+
+      for (const token of batchedTokens) {
+        const keyUserId = token.user_id ?? 'shared';
+        tokenMap.set(`${token.mcp_server_id}:${keyUserId}`, token);
+      }
     }
 
     const injectToken = async (server: MCPServer) => {
@@ -811,8 +841,8 @@ export function registerHooks(ctx: RegisterHooksContext): void {
         mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
 
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const keyUserId = tokenUserId ?? 'shared';
+        const row = tokenMap.get(`${server.mcp_server_id}:${keyUserId}`);
 
         if (!row) {
           console.log(
