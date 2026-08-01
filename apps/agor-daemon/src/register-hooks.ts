@@ -798,6 +798,28 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return context;
     }
 
+    // Handle both single result and array/paginated results
+    const servers = Array.isArray(context.result)
+      ? context.result
+      : context.result?.data && Array.isArray(context.result.data)
+        ? context.result.data
+        : context.result?.mcp_server_id
+          ? [context.result]
+          : [];
+
+    const serverIds = servers
+      .filter((s: MCPServer) => s.auth?.type === 'oauth')
+      .map((s: MCPServer) => s.mcp_server_id);
+
+    const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+    const tokenMap =
+      serverIds.length > 0
+        ? await userTokenRepo.getTokensForServers(
+            userId as import('@agor/core/types').UserID,
+            serverIds
+          )
+        : new Map();
+
     const injectToken = async (server: MCPServer) => {
       if (server.auth?.type !== 'oauth') {
         return server;
@@ -811,8 +833,7 @@ export function registerHooks(ctx: RegisterHooksContext): void {
         mode === 'per_user' ? (userId as import('@agor/core/types').UserID) : null;
 
       try {
-        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
-        const row = await userTokenRepo.getToken(tokenUserId, server.mcp_server_id);
+        const row = tokenMap.get(`${server.mcp_server_id}:${tokenUserId || ''}`);
 
         if (!row) {
           console.log(
@@ -875,7 +896,6 @@ export function registerHooks(ctx: RegisterHooksContext): void {
       return server;
     };
 
-    // Handle both single result and array/paginated results
     if (Array.isArray(context.result)) {
       context.result = await Promise.all(context.result.map(injectToken));
     } else if (context.result?.data && Array.isArray(context.result.data)) {
