@@ -9,9 +9,7 @@
  * @see context/guides/rbac-and-unix-isolation.md
  */
 
-import { execSync } from 'node:child_process';
-import { UnixGroupCommands } from './group-manager.js';
-import { UnixUserCommands } from './user-manager.js';
+import { execFileSync } from 'node:child_process';
 
 // ============================================================
 // USER QUERIES
@@ -27,7 +25,7 @@ import { UnixUserCommands } from './user-manager.js';
  */
 export function getUserGroups(username: string): string[] {
   try {
-    const output = execSync(UnixUserCommands.getUserGroups(username), {
+    const output = execFileSync('id', ['-nG', '--', String(username)], {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'ignore'],
     });
@@ -36,6 +34,8 @@ export function getUserGroups(username: string): string[] {
     return [];
   }
 }
+
+import { execSync } from 'node:child_process';
 
 /**
  * List all agor_* users on the system (auto-generated format: agor_<8-hex>)
@@ -69,7 +69,7 @@ export function listAgorUsers(): string[] {
  */
 export function groupExists(groupName: string): boolean {
   try {
-    execSync(UnixGroupCommands.groupExists(groupName), { stdio: 'ignore' });
+    execFileSync('getent', ['group', '--', String(groupName)], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -84,12 +84,7 @@ export function groupExists(groupName: string): boolean {
  * @returns true if user is in group
  */
 export function isUserInGroup(username: string, groupName: string): boolean {
-  try {
-    execSync(UnixGroupCommands.isUserInGroup(username, groupName), { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
+  return getUserGroups(username).includes(groupName);
 }
 
 /**
@@ -100,11 +95,12 @@ export function isUserInGroup(username: string, groupName: string): boolean {
  */
 export function getGroupMembers(groupName: string): string[] {
   try {
-    const output = execSync(UnixGroupCommands.listGroupMembers(groupName), {
+    const output = execFileSync('getent', ['group', '--', String(groupName)], {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'ignore'],
     });
-    return output.trim().split(',').filter(Boolean);
+    const parts = output.trim().split(':');
+    return parts[3] ? parts[3].split(',').filter(Boolean) : [];
   } catch {
     return [];
   }
