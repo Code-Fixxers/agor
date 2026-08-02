@@ -4,3 +4,6 @@
 ## 2026-05-16 - [Batch FeathersJS user fetches with $in operator to fix N+1 query]
 **Learning:** FeathersJS allows passing `$in` clauses through the query parameter (e.g. `user_id: { $in: ownerIds }`). When writing custom Feathers service logic, you can easily parse this array and pass it to Drizzle's `inArray()` to perform a batched query, instead of looping over `service.get(id)` causing N+1 database roundtrips.
 **Action:** When implementing or updating custom Feathers `find()` methods, extract and parse the `$in` parameters to support batched Drizzle `inArray()` lookups, and always replace `Promise.all(ids.map(id => service.get(id)))` with a single batched `find()` call.
+## $(date +%Y-%m-%d) - [Batch FeathersJS token injection with inArray to fix N+1 query]
+**Learning:** When retrieving records during a FeathersJS hook (e.g. `after: { find: [injectPerUserOAuthTokens] }`), making a database lookup per item inside `Promise.all(context.result.map(injectToken))` results in an N+1 query problem. Pre-fetching all necessary relationships using a single `inArray()` lookup based on a map eliminates this performance bottleneck.
+**Action:** Always extract all relevant foreign keys from the `context.result` array, perform a single batched database lookup, construct a mapping, and then sync the array with the map in memory instead of executing a query per record.

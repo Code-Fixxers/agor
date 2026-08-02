@@ -11,7 +11,7 @@
  */
 
 import type { MCPServerID, UserID } from '@agor/core/types';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import type { Database } from '../client';
 import { deleteFrom, insert, select, update } from '../database-wrapper';
 import {
@@ -75,6 +75,36 @@ function matchKey(userId: UserID | null, serverId: MCPServerID) {
 
 export class UserMCPOAuthTokenRepository {
   constructor(private db: Database) {}
+
+  async getTokensForServers(
+    userId: UserID | null,
+    serverIds: MCPServerID[]
+  ): Promise<Map<string, UserMCPOAuthToken>> {
+    try {
+      if (serverIds.length === 0) return new Map();
+      const conditions = [];
+      if (userId) conditions.push(eq(userMcpOauthTokens.user_id, userId));
+      conditions.push(isNull(userMcpOauthTokens.user_id));
+
+      const rows = await select(this.db)
+        .from(userMcpOauthTokens)
+        .where(and(inArray(userMcpOauthTokens.mcp_server_id, serverIds), or(...conditions)))
+        .all();
+
+      const map = new Map<string, UserMCPOAuthToken>();
+      for (const row of rows) {
+        const token = rowToToken(row);
+        const key = `${token.mcp_server_id}:${token.user_id ?? 'shared'}`;
+        map.set(key, token);
+      }
+      return map;
+    } catch (error) {
+      throw new RepositoryError(
+        `Failed to get OAuth tokens for servers: ${error instanceof Error ? error.message : String(error)}`,
+        error
+      );
+    }
+  }
 
   /**
    * Look up the token row for a (user, server) pair. Pass `null` for userId
